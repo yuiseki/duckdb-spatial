@@ -9,7 +9,7 @@
 #include "spatial/core/index/rtree/rtree.hpp"
 
 namespace duckdb {
-	class PhysicalOperator;
+class PhysicalOperator;
 }
 
 namespace spatial {
@@ -34,7 +34,7 @@ public:
 
 	static unique_ptr<BoundIndex> Create(CreateIndexInput &input) {
 		auto res = make_uniq<RTreeIndex>(input.name, input.constraint_type, input.column_ids, input.table_io_manager,
-						 input.unbound_expressions, input.db, input.options, input.storage_info);
+		                                 input.unbound_expressions, input.db, input.options, input.storage_info);
 		return std::move(res);
 	}
 

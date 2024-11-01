@@ -14,7 +14,8 @@ public:
 	idx_t item_count;
 
 	explicit ManagedCollectionBlock(idx_t item_capacity)
-	    : handle(nullptr), item_capacity(item_capacity), item_count(0) {}
+	    : handle(nullptr), item_capacity(item_capacity), item_count(0) {
+	}
 	ManagedCollectionBlock(shared_ptr<BlockHandle> handle, idx_t item_capacity)
 	    : handle(std::move(handle)), item_capacity(item_capacity), item_count(0) {
 	}
@@ -83,7 +84,8 @@ void ManagedCollection<T>::InitializeAppend(ManagedCollectionAppendState &state,
 
 	if (initial_smaller_capacity < block_capacity) {
 		// Allocate a new small block
-		blocks.emplace_back(manager.RegisterSmallMemory(initial_smaller_capacity * sizeof(T)), initial_smaller_capacity);
+		blocks.emplace_back(manager.RegisterSmallMemory(initial_smaller_capacity * sizeof(T)),
+		                    initial_smaller_capacity);
 		state.block = &blocks.back();
 		state.block->item_count = 0;
 		state.block->item_capacity = initial_smaller_capacity;

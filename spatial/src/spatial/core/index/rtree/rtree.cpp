@@ -416,7 +416,7 @@ void RTree::RootInsert(RTreeEntry &root_entry, const RTreeEntry &new_entry) {
 // Delete
 //------------------------------------------------------------------------------
 DeleteResult RTree::NodeDelete(RTreeEntry &entry, const RTreeEntry &target, vector<RTreeEntry> &orphans) {
-	if(!entry.bounds.Intersects(target.bounds)) {
+	if (!entry.bounds.Intersects(target.bounds)) {
 		return {false, false, false};
 	}
 	const auto is_leaf = entry.pointer.IsLeafPage();
@@ -493,8 +493,9 @@ DeleteResult RTree::LeafDelete(RTreeEntry &entry, const RTreeEntry &target, vect
 
 	// Do a binary search with std::lower_bound to find the matching rowid
 	// This is faster than a linear search
-	const auto it = std::lower_bound(node.begin(), node.end(), target.pointer.GetRowId(),
-	                           [](const RTreeEntry &item, const row_t &row) { return item.pointer.GetRowId() < row; });
+	const auto it =
+	    std::lower_bound(node.begin(), node.end(), target.pointer.GetRowId(),
+	                     [](const RTreeEntry &item, const row_t &row) { return item.pointer.GetRowId() < row; });
 	if (it == node.end()) {
 		// Not found in this leaf
 		return {false, false, false};
@@ -503,7 +504,7 @@ DeleteResult RTree::LeafDelete(RTreeEntry &entry, const RTreeEntry &target, vect
 	const auto &child = *it;
 
 	// Ok, did the binary search actually find the rowid?
-	if(child.pointer.GetRowId() != target.pointer.GetRowId()) {
+	if (child.pointer.GetRowId() != target.pointer.GetRowId()) {
 		return {false, false, false};
 	}
 
@@ -608,16 +609,16 @@ string RTree::ToString() const {
 
 	stack.emplace_back(root.pointer);
 
-	while(!stack.empty()) {
+	while (!stack.empty()) {
 		auto &frame = stack.back();
 		const auto &node = Ref(frame.pointer);
 		const auto count = node.GetCount();
 
-		if(frame.pointer.IsLeafPage()) {
-			while(frame.entry_idx < count) {
+		if (frame.pointer.IsLeafPage()) {
+			while (frame.entry_idx < count) {
 				auto &entry = node[frame.entry_idx];
 				// TODO: Print entry
-				for(idx_t i = 0; i < level; i++) {
+				for (idx_t i = 0; i < level; i++) {
 					result += "  ";
 				}
 
@@ -627,14 +628,13 @@ string RTree::ToString() const {
 			}
 			stack.pop_back();
 			level--;
-		}
-		else {
+		} else {
 			D_ASSERT(frame.pointer.IsBranchPage());
-			if(frame.entry_idx < count) {
+			if (frame.entry_idx < count) {
 				auto &entry = node[frame.entry_idx];
 
 				// TODO: Print entry
-				for(idx_t i = 0; i < level; i++) {
+				for (idx_t i = 0; i < level; i++) {
 					result += "  ";
 				}
 
@@ -650,14 +650,12 @@ string RTree::ToString() const {
 		}
 	}
 
-
 	return result;
 }
 
 void RTree::Print() const {
 	Printer::Print(ToString());
 }
-
 
 } // namespace core
 

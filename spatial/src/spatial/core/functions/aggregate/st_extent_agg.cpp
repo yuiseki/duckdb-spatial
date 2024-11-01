@@ -97,7 +97,7 @@ static constexpr const char *DOC_EXAMPLE = R"(
 	-- POLYGON ((1 1, 1 5, 5 5, 5 1, 1 1))
 )";
 
-static constexpr const char* DOC_ALIAS_DESCRIPTION = R"(
+static constexpr const char *DOC_ALIAS_DESCRIPTION = R"(
 	Alias for [ST_Extent_Agg](#st_extent_agg).
 
 	Computes the minimal-bounding-box polygon containing the set of input geometries.
@@ -109,7 +109,7 @@ static constexpr const char* DOC_ALIAS_DESCRIPTION = R"(
 void CoreAggregateFunctions::RegisterStExtentAgg(DatabaseInstance &db) {
 
 	auto function = AggregateFunction::UnaryAggregate<ExtentAggState, geometry_t, geometry_t, ExtentAggFunction>(
-			GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY());
+	    GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY());
 
 	// Register the function
 	function.name = "ST_Extent_Agg";
@@ -120,7 +120,6 @@ void CoreAggregateFunctions::RegisterStExtentAgg(DatabaseInstance &db) {
 	function.name = "ST_Envelope_Agg";
 	ExtensionUtil::RegisterFunction(db, function);
 	DocUtil::AddDocumentation(db, "ST_Envelope_Agg", DOC_ALIAS_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
-
 }
 
 } // namespace core

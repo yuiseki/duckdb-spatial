@@ -338,7 +338,7 @@ static unique_ptr<GlobalFunctionData> InitGlobal(ClientContext &context, Functio
 //===--------------------------------------------------------------------===//
 
 static OGRGeometryUniquePtr OGRGeometryFromValue(const LogicalType &type, const Value &value, ArenaAllocator &arena) {
-	if(value.IsNull()) {
+	if (value.IsNull()) {
 		return nullptr;
 	}
 
@@ -515,7 +515,8 @@ static void Sink(ExecutionContext &context, FunctionData &bdata, GlobalFunctionD
 			if (IsGeometryType(type)) {
 				// TODO: check how many geometry fields there are and use the correct one.
 				auto geom = OGRGeometryFromValue(type, value, local_state.arena);
-				if (geom && bind_data.geometry_type != wkbUnknown && geom->getGeometryType() != bind_data.geometry_type) {
+				if (geom && bind_data.geometry_type != wkbUnknown &&
+				    geom->getGeometryType() != bind_data.geometry_type) {
 					auto got_name =
 					    StringUtil::Replace(StringUtil::Upper(OGRGeometryTypeToName(geom->getGeometryType())), " ", "");
 					auto expected_name =

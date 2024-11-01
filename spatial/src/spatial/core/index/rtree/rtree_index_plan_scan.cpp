@@ -55,7 +55,7 @@ public:
 			rewrite_possible = false;
 		}
 		ExpressionIterator::EnumerateChildren(
-			expr, [&](Expression &child) { RewriteIndexExpression(index, get, child, rewrite_possible); });
+		    expr, [&](Expression &child) { RewriteIndexExpression(index, get, child, rewrite_possible); });
 	}
 
 	static bool IsSpatialPredicate(const ScalarFunction &function, const unordered_set<string> &predicates) {
@@ -99,7 +99,8 @@ public:
 		return true;
 	}
 
-	static bool TryOptimize(Binder &binder, ClientContext &context, unique_ptr<LogicalOperator> &plan, unique_ptr<LogicalOperator> &root) {
+	static bool TryOptimize(Binder &binder, ClientContext &context, unique_ptr<LogicalOperator> &plan,
+	                        unique_ptr<LogicalOperator> &root) {
 		// Look for a FILTER with a spatial predicate followed by a LOGICAL_GET table scan
 		auto &op = *plan;
 
@@ -127,7 +128,7 @@ public:
 		}
 
 		// We cant optimize if the table already has filters pushed down :(
-		if(get.dynamic_filters && get.dynamic_filters->HasFilters()) {
+		if (get.dynamic_filters && get.dynamic_filters->HasFilters()) {
 			return false;
 		}
 
@@ -144,17 +145,16 @@ public:
 		auto &table_info = *table.GetStorage().GetDataTableInfo();
 		unique_ptr<RTreeIndexScanBindData> bind_data = nullptr;
 
-
-		unordered_set<string> spatial_predicates = { "ST_Equals", "ST_Intersects", "ST_Touches", "ST_Crosses",
-		"ST_Within", "ST_Contains", "ST_Overlaps", "ST_Covers",
-		"ST_CoveredBy", "ST_ContainsProperly" };
+		unordered_set<string> spatial_predicates = {"ST_Equals",    "ST_Intersects",      "ST_Touches",  "ST_Crosses",
+		                                            "ST_Within",    "ST_Contains",        "ST_Overlaps", "ST_Covers",
+		                                            "ST_CoveredBy", "ST_ContainsProperly"};
 
 		table_info.GetIndexes().BindAndScan<RTreeIndex>(context, table_info, [&](RTreeIndex &index_entry) {
 			// Create the bind data for this index given the bounding box
 			auto index_expr = index_entry.unbound_expressions[0]->Copy();
 			bool rewrite_possible = true;
 			RewriteIndexExpression(index_entry, get, *index_expr, rewrite_possible);
-			if(!rewrite_possible) {
+			if (!rewrite_possible) {
 				// Could not rewrite!
 				return false;
 			}
@@ -168,7 +168,7 @@ public:
 			matcher.matchers.push_back(make_uniq<ConstantExpressionMatcher>());
 
 			vector<reference<Expression>> bindings;
-			if(!matcher.Match(*filter_expr, bindings)) {
+			if (!matcher.Match(*filter_expr, bindings)) {
 				return false;
 			}
 
@@ -179,7 +179,7 @@ public:
 			// Compute the bounding box
 			auto constant_value = bindings[2].get().Cast<BoundConstantExpression>().value;
 			Box2D<float> bbox;
-			if(!TryGetBoundingBox(constant_value, bbox)) {
+			if (!TryGetBoundingBox(constant_value, bbox)) {
 				return false;
 			}
 
@@ -198,7 +198,7 @@ public:
 		get.has_estimated_cardinality = cardinality->has_estimated_cardinality;
 		get.estimated_cardinality = cardinality->estimated_cardinality;
 		get.bind_data = std::move(bind_data);
-		if(get.table_filters.filters.empty()) {
+		if (get.table_filters.filters.empty()) {
 			return true;
 		}
 		get.projection_ids.clear();
@@ -208,11 +208,11 @@ public:
 		// does not support regular filter pushdown.
 		auto new_filter = make_uniq<LogicalFilter>();
 		auto &column_ids = get.GetColumnIds();
-		for(const auto &entry : get.table_filters.filters) {
+		for (const auto &entry : get.table_filters.filters) {
 			idx_t column_id = entry.first;
 			auto &type = get.returned_types[column_id];
 			bool found = false;
-			for(idx_t i = 0; i < column_ids.size(); i++) {
+			for (idx_t i = 0; i < column_ids.size(); i++) {
 				if (column_ids[i] == column_id) {
 					column_id = i;
 					found = true;
@@ -231,7 +231,8 @@ public:
 		return true;
 	}
 
-	static void OptimizeRecursive(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan, unique_ptr<LogicalOperator> &root) {
+	static void OptimizeRecursive(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan,
+	                              unique_ptr<LogicalOperator> &root) {
 		if (!TryOptimize(input.optimizer.binder, input.context, plan, root)) {
 			// No match: continue with the children
 			for (auto &child : plan->children) {

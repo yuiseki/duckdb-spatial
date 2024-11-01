@@ -137,14 +137,14 @@ static string RTreeIndexScanToString(const FunctionData *bind_data_p) {
 // De/Serialize
 //-------------------------------------------------------------------------
 static void RTreeScanSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
-							   const TableFunction &function) {
+                               const TableFunction &function) {
 	auto &bind_data = bind_data_p->Cast<RTreeIndexScanBindData>();
 	serializer.WriteProperty(100, "catalog", bind_data.table.schema.catalog.GetName());
 	serializer.WriteProperty(101, "schema", bind_data.table.schema.name);
 	serializer.WriteProperty(102, "table", bind_data.table.name);
 	serializer.WriteProperty(103, "index_name", bind_data.index.GetIndexName());
 
-	serializer.WriteObject(104, "bbox", [&](Serializer &ser){
+	serializer.WriteObject(104, "bbox", [&](Serializer &ser) {
 		ser.WriteProperty<float>(10, "min_x", bind_data.bbox.min.x);
 		ser.WriteProperty<float>(11, "min_y", bind_data.bbox.min.y);
 		ser.WriteProperty<float>(20, "max_x", bind_data.bbox.max.x);
@@ -158,8 +158,7 @@ static unique_ptr<FunctionData> RTreeScanDeserialize(Deserializer &deserializer,
 	const auto catalog = deserializer.ReadProperty<string>(100, "catalog");
 	const auto schema = deserializer.ReadProperty<string>(101, "schema");
 	const auto table = deserializer.ReadProperty<string>(102, "table");
-	auto &catalog_entry =
-		Catalog::GetEntry<TableCatalogEntry>(context, catalog, schema, table);
+	auto &catalog_entry = Catalog::GetEntry<TableCatalogEntry>(context, catalog, schema, table);
 	if (catalog_entry.type != CatalogType::TABLE_ENTRY) {
 		throw SerializationException("Cant find table for %s.%s", schema, table);
 	}
@@ -167,7 +166,7 @@ static unique_ptr<FunctionData> RTreeScanDeserialize(Deserializer &deserializer,
 	// Now also lookup the index by name
 	const auto index_name = deserializer.ReadProperty<string>(103, "index_name");
 	RTreeBounds bbox;
-	deserializer.ReadObject(104, "bbox", [&](Deserializer &ser){
+	deserializer.ReadObject(104, "bbox", [&](Deserializer &ser) {
 		bbox.min.x = ser.ReadProperty<float>(10, "min_x");
 		bbox.min.y = ser.ReadProperty<float>(11, "min_y");
 		bbox.max.x = ser.ReadProperty<float>(20, "max_x");
@@ -187,13 +186,11 @@ static unique_ptr<FunctionData> RTreeScanDeserialize(Deserializer &deserializer,
 		return false;
 	});
 
-	if(!result) {
+	if (!result) {
 		throw SerializationException("Could not find index %s on table %s.%s", index_name, schema, table);
 	}
 	return std::move(result);
 }
-
-
 
 //-------------------------------------------------------------------------
 // Get Function

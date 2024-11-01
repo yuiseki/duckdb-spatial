@@ -42,8 +42,8 @@ void LogicalCreateRTreeIndex::ResolveColumnBindings(ColumnBindingResolver &res, 
 	                                             [&](unique_ptr<Expression> *child) { res.VisitExpression(child); });
 }
 
-static unique_ptr<PhysicalOperator> CreateNullFilter(const LogicalOperator &op,
-                                                     const vector<LogicalType> &types, ClientContext &context) {
+static unique_ptr<PhysicalOperator> CreateNullFilter(const LogicalOperator &op, const vector<LogicalType> &types,
+                                                     ClientContext &context) {
 	vector<unique_ptr<Expression>> filter_select_list;
 
 	// Filter NOT NULL on the GEOMETRY column
@@ -75,9 +75,8 @@ static unique_ptr<PhysicalOperator> CreateNullFilter(const LogicalOperator &op,
 	return make_uniq<PhysicalFilter>(types, std::move(filter_select_list), op.estimated_cardinality);
 }
 
-static unique_ptr<PhysicalOperator> CreateBoundingBoxProjection(const LogicalOperator &op,
-                                                                const vector<LogicalType> &types,
-                                                                ClientContext &context) {
+static unique_ptr<PhysicalOperator>
+CreateBoundingBoxProjection(const LogicalOperator &op, const vector<LogicalType> &types, ClientContext &context) {
 	auto &catalog = Catalog::GetSystemCatalog(context);
 
 	// Get the bounding box function
@@ -103,8 +102,8 @@ static unique_ptr<PhysicalOperator> CreateBoundingBoxProjection(const LogicalOpe
 	return make_uniq<PhysicalProjection>(types, std::move(select_list), op.estimated_cardinality);
 }
 
-static unique_ptr<PhysicalOperator> CreateOrderByMinX(const LogicalOperator &op,
-                                                      const vector<LogicalType> &types, ClientContext &context) {
+static unique_ptr<PhysicalOperator> CreateOrderByMinX(const LogicalOperator &op, const vector<LogicalType> &types,
+                                                      ClientContext &context) {
 	auto &catalog = Catalog::GetSystemCatalog(context);
 
 	// Get the centroid value function
@@ -136,7 +135,6 @@ static unique_ptr<PhysicalOperator> CreateOrderByMinX(const LogicalOperator &op,
 	vector<idx_t> projections = {0, 1};
 	return make_uniq<PhysicalOrder>(types, std::move(orders), projections, op.estimated_cardinality);
 }
-
 
 unique_ptr<PhysicalOperator> RTreeIndex::CreatePlan(PlanIndexInput &input) {
 
@@ -204,7 +202,6 @@ unique_ptr<PhysicalOperator> RTreeIndex::CreatePlan(PlanIndexInput &input) {
 	physical_create_index->children.push_back(std::move(physical_order));
 
 	return std::move(physical_create_index);
-
 }
 
 // TODO: Remove this

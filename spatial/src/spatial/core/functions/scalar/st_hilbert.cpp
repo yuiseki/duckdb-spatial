@@ -77,14 +77,13 @@ inline uint32_t HilbertEncode(uint32_t n, uint32_t x, uint32_t y) {
 	return ((Interleave(i1) << 1) | Interleave(i0)) >> (32 - 2 * n);
 }
 
-static uint32_t FloatToUint32(float f)
-{
+static uint32_t FloatToUint32(float f) {
 	if (std::isnan(f)) {
 		return 0xFFFFFFFF;
 	}
 	uint32_t res;
 	memcpy(&res, &f, sizeof(res));
-	if((res & 0x80000000) != 0) {
+	if ((res & 0x80000000) != 0) {
 		res ^= 0xFFFFFFFF;
 	} else {
 		res |= 0x80000000;
@@ -140,13 +139,14 @@ static void HilbertEncodeBoundsFunction(DataChunk &args, ExpressionState &state,
 	    input_vec, bounds_vec, result, count, [&](const GEOM_TYPE &geom_type, const BOX_TYPE &bounds) {
 		    const auto geom = geom_type.val;
 
-	    	Box2D<double> geom_bounds;
-			if(!geom.TryGetCachedBounds(geom_bounds)) {
-				throw InvalidInputException("ST_Hilbert(geom, bounds) requires that all geometries have a bounding box");
-			}
+		    Box2D<double> geom_bounds;
+		    if (!geom.TryGetCachedBounds(geom_bounds)) {
+			    throw InvalidInputException(
+			        "ST_Hilbert(geom, bounds) requires that all geometries have a bounding box");
+		    }
 
-			const auto dx = geom_bounds.min.x + (geom_bounds.max.x - geom_bounds.min.x) / 2;
-			const auto dy = geom_bounds.min.y + (geom_bounds.max.y - geom_bounds.min.y) / 2;
+		    const auto dx = geom_bounds.min.x + (geom_bounds.max.x - geom_bounds.min.x) / 2;
+		    const auto dy = geom_bounds.min.y + (geom_bounds.max.y - geom_bounds.min.y) / 2;
 
 		    const auto hilbert_width = max_hilbert / (bounds.c_val - bounds.a_val);
 		    const auto hilbert_height = max_hilbert / (bounds.d_val - bounds.b_val);
@@ -167,29 +167,28 @@ static void HilbertEncodeGeometryFunction(DataChunk &args, ExpressionState &stat
 	auto &input_vec = args.data[0];
 
 	UnaryExecutor::ExecuteWithNulls<geometry_t, uint32_t>(
-		input_vec, result, count, [&](const geometry_t &geom, ValidityMask &mask, idx_t out_idx) -> uint32_t {
-			Box2D<double> bounds;
-			if(!geom.TryGetCachedBounds(bounds)) {
-				mask.SetInvalid(out_idx);
-				return 0;
-			}
+	    input_vec, result, count, [&](const geometry_t &geom, ValidityMask &mask, idx_t out_idx) -> uint32_t {
+		    Box2D<double> bounds;
+		    if (!geom.TryGetCachedBounds(bounds)) {
+			    mask.SetInvalid(out_idx);
+			    return 0;
+		    }
 
-			Box2D<float> bounds_f;
-			bounds_f.min.x = MathUtil::DoubleToFloatDown(bounds.min.x);
-			bounds_f.min.y = MathUtil::DoubleToFloatDown(bounds.min.y);
-			bounds_f.max.x = MathUtil::DoubleToFloatUp(bounds.max.x);
-			bounds_f.max.y = MathUtil::DoubleToFloatUp(bounds.max.y);
+		    Box2D<float> bounds_f;
+		    bounds_f.min.x = MathUtil::DoubleToFloatDown(bounds.min.x);
+		    bounds_f.min.y = MathUtil::DoubleToFloatDown(bounds.min.y);
+		    bounds_f.max.x = MathUtil::DoubleToFloatUp(bounds.max.x);
+		    bounds_f.max.y = MathUtil::DoubleToFloatUp(bounds.max.y);
 
-			const auto dx = bounds_f.min.x + (bounds_f.max.x - bounds_f.min.x) / 2;
-			const auto dy = bounds_f.min.y + (bounds_f.max.y - bounds_f.min.y) / 2;
+		    const auto dx = bounds_f.min.x + (bounds_f.max.x - bounds_f.min.x) / 2;
+		    const auto dy = bounds_f.min.y + (bounds_f.max.y - bounds_f.min.y) / 2;
 
-			const auto hx = FloatToUint32(dx);
-			const auto hy = FloatToUint32(dy);
+		    const auto hx = FloatToUint32(dx);
+		    const auto hy = FloatToUint32(dy);
 
-			return HilbertEncode(16, hx, hy);
-		});
+		    return HilbertEncode(16, hx, hy);
+	    });
 }
-
 
 //------------------------------------------------------------------------------
 // BOX_2D/BOX_2DF
