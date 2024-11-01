@@ -25,7 +25,8 @@ struct DocUtil {
 		AddDocumentation(db, function_name, description, example, tag_map);
 	}
 
-	static void AddFunctionParameterNames(duckdb::DatabaseInstance &db, const char *function_name, duckdb::vector<duckdb::string> names);
+	static void AddFunctionParameterNames(duckdb::DatabaseInstance &db, const char *function_name,
+	                                      duckdb::vector<duckdb::string> names);
 };
 
 } // namespace spatial

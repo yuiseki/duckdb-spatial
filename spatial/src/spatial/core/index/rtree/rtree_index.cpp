@@ -310,11 +310,8 @@ void RTreeModule::RegisterIndex(DatabaseInstance &db) {
 	IndexType index_type;
 
 	index_type.name = RTreeIndex::TYPE_NAME;
-	index_type.create_instance = [](CreateIndexInput &input) -> unique_ptr<BoundIndex> {
-		auto res = make_uniq<RTreeIndex>(input.name, input.constraint_type, input.column_ids, input.table_io_manager,
-		                                 input.unbound_expressions, input.db, input.options, input.storage_info);
-		return std::move(res);
-	};
+	index_type.create_instance = RTreeIndex::Create;
+	index_type.create_plan = RTreeIndex::CreatePlan;
 
 	// Register the index type
 	db.config.GetIndexTypes().RegisterIndexType(index_type);

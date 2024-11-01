@@ -1,6 +1,7 @@
 #pragma once
 #include "duckdb/planner/operator/logical_extension_operator.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 
 #include "spatial/common.hpp"
 namespace spatial {
@@ -31,7 +32,8 @@ public:
 		LogicalExtensionOperator::Serialize(writer);
 		writer.WritePropertyWithDefault(300, "operator_type", string("logical_rtree_create_index"));
 		writer.WritePropertyWithDefault<unique_ptr<CreateIndexInfo>>(400, "info", info);
-		writer.WritePropertyWithDefault<vector<unique_ptr<Expression>>>(401, "unbound_expressions", unbound_expressions);
+		writer.WritePropertyWithDefault<vector<unique_ptr<Expression>>>(401, "unbound_expressions",
+		                                                                unbound_expressions);
 	}
 
 	string GetExtensionName() const override {
@@ -58,10 +60,12 @@ public:
 		const auto operator_type = reader.ReadPropertyWithDefault<string>(300, "operator_type");
 		// We only have one extension operator type right now
 		if (operator_type != "logical_rtree_create_index") {
-			throw SerializationException("This version of the spatial extension does not support operator type '%s!", operator_type);
+			throw SerializationException("This version of the spatial extension does not support operator type '%s!",
+			                             operator_type);
 		}
 		auto create_info = reader.ReadPropertyWithDefault<unique_ptr<CreateInfo>>(400, "info");
-		auto unbound_expressions = reader.ReadPropertyWithDefault<vector<unique_ptr<Expression>>>(401, "unbound_expressions");
+		auto unbound_expressions =
+		    reader.ReadPropertyWithDefault<vector<unique_ptr<Expression>>>(401, "unbound_expressions");
 
 		auto info = unique_ptr_cast<CreateInfo, CreateIndexInfo>(std::move(create_info));
 
@@ -76,7 +80,6 @@ public:
 		return make_uniq<LogicalCreateRTreeIndex>(std::move(info), std::move(unbound_expressions), table_entry);
 	}
 };
-
 
 } // namespace core
 

@@ -98,7 +98,7 @@ void spatial::DocUtil::AddFunctionParameterNames(duckdb::DatabaseInstance &db, c
 			catalog_entry = schema.GetEntry(data, CatalogType::TABLE_FUNCTION_ENTRY, function_name);
 			if (!catalog_entry) {
 				throw duckdb::InvalidInputException("Function with name \"%s\" not found in DocUtil::AddDocumentation",
-													function_name);
+				                                    function_name);
 			}
 		}
 	}
@@ -106,7 +106,6 @@ void spatial::DocUtil::AddFunctionParameterNames(duckdb::DatabaseInstance &db, c
 	auto &func_entry = catalog_entry->Cast<FunctionEntry>();
 	func_entry.parameter_names = std::move(names);
 }
-
 
 namespace duckdb {
 

@@ -70,8 +70,8 @@ public:
 		} catch (...) {
 		}
 
-		if(remaining_bytes != 0) {
-			if(file_handle->SeekPosition() == file_handle->GetFileSize()) {
+		if (remaining_bytes != 0) {
+			if (file_handle->SeekPosition() == file_handle->GetFileSize()) {
 				// Is at EOF!
 				is_eof = true;
 			}
@@ -136,7 +136,9 @@ public:
 		return pszFilename + client_prefix.size();
 	}
 
-	string AddPrefix(const string &value) { return client_prefix + value; }
+	string AddPrefix(const string &value) {
+		return client_prefix + value;
+	}
 
 	VSIVirtualHandle *Open(const char *prefixed_file_name, const char *access, bool bSetError,
 	                       CSLConstList /* papszOptions */) override {
@@ -339,7 +341,8 @@ public:
 		auto &fs = FileSystem::GetFileSystem(context);
 		CPLStringList files;
 
-		auto file_name_without_ext = fs.JoinPath(StringUtil::GetFilePath(file_name), StringUtil::GetFileStem(file_name));
+		auto file_name_without_ext =
+		    fs.JoinPath(StringUtil::GetFilePath(file_name), StringUtil::GetFileStem(file_name));
 		auto file_glob = file_name_without_ext + ".*";
 
 		auto file_vector = fs.Glob(file_glob);

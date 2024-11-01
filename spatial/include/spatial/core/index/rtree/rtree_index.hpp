@@ -8,6 +8,10 @@
 #include "spatial/core/index/rtree/rtree_node.hpp"
 #include "spatial/core/index/rtree/rtree.hpp"
 
+namespace duckdb {
+class PhysicalOperator;
+}
+
 namespace spatial {
 
 namespace core {
@@ -27,6 +31,14 @@ public:
 
 	unique_ptr<IndexScanState> InitializeScan(const Box2D<float> &query) const;
 	idx_t Scan(IndexScanState &state, Vector &result) const;
+
+	static unique_ptr<BoundIndex> Create(CreateIndexInput &input) {
+		auto res = make_uniq<RTreeIndex>(input.name, input.constraint_type, input.column_ids, input.table_io_manager,
+		                                 input.unbound_expressions, input.db, input.options, input.storage_info);
+		return std::move(res);
+	}
+
+	static unique_ptr<PhysicalOperator> CreatePlan(PlanIndexInput &input);
 
 public:
 	//! Called when data is appended to the index. The lock obtained from InitializeLock must be held

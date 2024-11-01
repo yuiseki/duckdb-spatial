@@ -186,7 +186,6 @@ unique_ptr<FunctionData> GdalTableFunction::Bind(ClientContext &context, TableFu
 		}
 	}
 
-
 	result->raw_file_name = input.inputs[0].GetValue<string>();
 	result->prefixed_file_name = ctx_state.GetPrefix(result->raw_file_name);
 

@@ -20,11 +20,10 @@ static void GeometryMultiFunction(DataChunk &args, ExpressionState &state, Vecto
 	auto &input = args.data[0];
 
 	UnaryExecutor::Execute<geometry_t, geometry_t>(input, result, args.size(), [&](const geometry_t &geom_blob) {
-
 		const bool has_z = geom_blob.GetProperties().HasZ();
 		const bool has_m = geom_blob.GetProperties().HasM();
 
-		switch(geom_blob.GetType()) {
+		switch (geom_blob.GetType()) {
 		case GeometryType::POINT: {
 			auto mpoint = MultiPoint::Create(arena, 1, has_z, has_m);
 			MultiPoint::Part(mpoint, 0) = Geometry::Deserialize(arena, geom_blob);
@@ -72,7 +71,7 @@ static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}, {"category", "construc
 // Register functions
 //------------------------------------------------------------------------------
 void CoreScalarFunctions::RegisterStMulti(DatabaseInstance &db) {
-	ScalarFunction function("ST_Multi",{GeoTypes::GEOMETRY()}, GeoTypes::GEOMETRY(), GeometryMultiFunction);
+	ScalarFunction function("ST_Multi", {GeoTypes::GEOMETRY()}, GeoTypes::GEOMETRY(), GeometryMultiFunction);
 	function.init_local_state = GeometryFunctionLocalState::Init;
 	ExtensionUtil::RegisterFunction(db, function);
 	DocUtil::AddDocumentation(db, "ST_Multi", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
