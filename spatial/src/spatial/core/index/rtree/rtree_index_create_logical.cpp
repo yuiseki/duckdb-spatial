@@ -42,7 +42,7 @@ void LogicalCreateRTreeIndex::ResolveColumnBindings(ColumnBindingResolver &res, 
 	                                             [&](unique_ptr<Expression> *child) { res.VisitExpression(child); });
 }
 
-static unique_ptr<PhysicalOperator> CreateNullFilter(const LogicalCreateRTreeIndex &op,
+static unique_ptr<PhysicalOperator> CreateNullFilter(const LogicalOperator &op,
                                                      const vector<LogicalType> &types, ClientContext &context) {
 	vector<unique_ptr<Expression>> filter_select_list;
 
@@ -75,7 +75,7 @@ static unique_ptr<PhysicalOperator> CreateNullFilter(const LogicalCreateRTreeInd
 	return make_uniq<PhysicalFilter>(types, std::move(filter_select_list), op.estimated_cardinality);
 }
 
-static unique_ptr<PhysicalOperator> CreateBoundingBoxProjection(const LogicalCreateRTreeIndex &op,
+static unique_ptr<PhysicalOperator> CreateBoundingBoxProjection(const LogicalOperator &op,
                                                                 const vector<LogicalType> &types,
                                                                 ClientContext &context) {
 	auto &catalog = Catalog::GetSystemCatalog(context);
@@ -103,7 +103,7 @@ static unique_ptr<PhysicalOperator> CreateBoundingBoxProjection(const LogicalCre
 	return make_uniq<PhysicalProjection>(types, std::move(select_list), op.estimated_cardinality);
 }
 
-static unique_ptr<PhysicalOperator> CreateOrderByMinX(const LogicalCreateRTreeIndex &op,
+static unique_ptr<PhysicalOperator> CreateOrderByMinX(const LogicalOperator &op,
                                                       const vector<LogicalType> &types, ClientContext &context) {
 	auto &catalog = Catalog::GetSystemCatalog(context);
 
@@ -137,15 +137,87 @@ static unique_ptr<PhysicalOperator> CreateOrderByMinX(const LogicalCreateRTreeIn
 	return make_uniq<PhysicalOrder>(types, std::move(orders), projections, op.estimated_cardinality);
 }
 
+
+unique_ptr<PhysicalOperator> RTreeIndex::CreatePlan(PlanIndexInput &input) {
+
+	auto &op = input.op;
+	auto &table_scan = input.table_scan;
+	auto &context = input.context;
+
+	// generate a physical plan for the parallel index creation which consists of the following operators
+	// table scan - projection (for expression execution) - filter (NOT NULL) - order - create index
+	D_ASSERT(op.children.size() == 1);
+
+	// Validate that we only have one expression
+	if (op.unbound_expressions.size() != 1) {
+		throw BinderException("RTree indexes can only be created over a single column.");
+	}
+
+	auto &expr = op.unbound_expressions[0];
+
+	// Validate that we have the right type of expression (float array)
+	if (expr->return_type != GeoTypes::GEOMETRY()) {
+		throw BinderException("RTree indexes can only be created over GEOMETRY columns.");
+	}
+
+	// Validate that the expression does not have side effects
+	if (!expr->IsConsistent()) {
+		throw BinderException("RTree index keys cannot contain expressions with side "
+		                      "effects.");
+	}
+
+	// projection to execute expressions on the key columns
+	vector<LogicalType> new_column_types;
+	vector<unique_ptr<Expression>> select_list;
+
+	// Add the geometry expression to the select list
+	auto geom_expr = op.expressions[0]->Copy();
+	new_column_types.push_back(geom_expr->return_type);
+	select_list.push_back(std::move(geom_expr));
+
+	// Add the row ID to the select list
+	new_column_types.emplace_back(LogicalType::ROW_TYPE);
+	select_list.push_back(make_uniq<BoundReferenceExpression>(LogicalType::ROW_TYPE, op.info->scan_types.size() - 1));
+
+	// Project the expressions
+	auto projection = make_uniq<PhysicalProjection>(new_column_types, std::move(select_list), op.estimated_cardinality);
+	projection->children.push_back(std::move(table_scan));
+
+	// Filter operator for (IS_NOT_NULL) and (NOT ST_IsEmpty) on the geometry column
+	auto null_filter = CreateNullFilter(op, new_column_types, context);
+	null_filter->children.push_back(std::move(projection));
+
+	// Project the bounding box and the row ID
+	vector<LogicalType> projected_types = {GeoTypes::BOX_2DF(), LogicalType::ROW_TYPE};
+	auto bbox_proj = CreateBoundingBoxProjection(op, projected_types, context);
+	bbox_proj->children.push_back(std::move(null_filter));
+
+	// Create an ORDER_BY operator to sort the bounding boxes by the xmin value
+	auto physical_order = CreateOrderByMinX(op, projected_types, context);
+	physical_order->children.push_back(std::move(bbox_proj));
+
+	// Now finally create the actual physical create index operator
+	auto physical_create_index =
+	    make_uniq<PhysicalCreateRTreeIndex>(op, op.table, op.info->column_ids, std::move(op.info),
+	                                        std::move(op.unbound_expressions), op.estimated_cardinality);
+
+	physical_create_index->children.push_back(std::move(physical_order));
+
+	return std::move(physical_create_index);
+
+}
+
+// TODO: Remove this
 unique_ptr<PhysicalOperator> LogicalCreateRTreeIndex::CreatePlan(ClientContext &context,
                                                                  PhysicalPlanGenerator &generator) {
+
+	auto table_scan = generator.CreatePlan(std::move(children[0]));
 
 	auto &op = *this;
 
 	// generate a physical plan for the parallel index creation which consists of the following operators
 	// table scan - projection (for expression execution) - filter (NOT NULL) - order - create index
 	D_ASSERT(op.children.size() == 1);
-	auto table_scan = generator.CreatePlan(std::move(op.children[0]));
 
 	// Validate that we only have one expression
 	if (op.unbound_expressions.size() != 1) {

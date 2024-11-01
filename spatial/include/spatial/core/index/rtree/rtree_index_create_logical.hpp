@@ -1,6 +1,7 @@
 #pragma once
 #include "duckdb/planner/operator/logical_extension_operator.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 
 #include "spatial/common.hpp"
 namespace spatial {
