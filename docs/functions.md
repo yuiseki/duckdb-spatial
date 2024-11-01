@@ -1059,7 +1059,15 @@ ANY ST_GeometryType (col0 WKB_BLOB)
 
 #### Description
 
-Returns a 'GEOMETRY_TYPE' enum identifying the input geometry type.
+Returns a 'GEOMETRY_TYPE' enum identifying the input geometry type. Possible enum return types are: `POINT`, `LINESTRING`, `POLYGON`, `MULTIPOINT`, `MULTILINESTRING`, `MULTIPOLYGON`, and `GEOMETRYCOLLECTION`
+
+#### Example
+
+```sql
+SELECT DISTINCT ST_GeometryType(ST_GeomFromText('POINT(1 1)'));
+----
+POINT  
+```
 
 ----
 
