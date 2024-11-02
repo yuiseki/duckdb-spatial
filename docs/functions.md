@@ -496,8 +496,8 @@ select st_collectionextract('MULTIPOINT(1 2,3 4)'::geometry, 1);
 #### Signatures
 
 ```sql
-BOOLEAN ST_Contains (col0 POLYGON_2D, col1 POINT_2D)
-BOOLEAN ST_Contains (col0 GEOMETRY, col1 GEOMETRY)
+BOOLEAN ST_Contains (geom1 POLYGON_2D, geom2 POINT_2D)
+BOOLEAN ST_Contains (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -520,7 +520,7 @@ true
 #### Signature
 
 ```sql
-BOOLEAN ST_ContainsProperly (col0 GEOMETRY, col1 GEOMETRY)
+BOOLEAN ST_ContainsProperly (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -550,7 +550,7 @@ Returns the convex hull enclosing the geometry
 #### Signature
 
 ```sql
-BOOLEAN ST_CoveredBy (col0 GEOMETRY, col1 GEOMETRY)
+BOOLEAN ST_CoveredBy (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -565,7 +565,7 @@ Returns true if geom1 is "covered" by geom2
 #### Signature
 
 ```sql
-BOOLEAN ST_Covers (col0 GEOMETRY, col1 GEOMETRY)
+BOOLEAN ST_Covers (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -580,7 +580,7 @@ Returns if geom1 "covers" geom2
 #### Signature
 
 ```sql
-BOOLEAN ST_Crosses (col0 GEOMETRY, col1 GEOMETRY)
+BOOLEAN ST_Crosses (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -1171,7 +1171,7 @@ For the BOX_2D and BOX_2DF variants, the center of the box is used as the point 
 #### Signature
 
 ```sql
-GEOMETRY ST_Intersection (col0 GEOMETRY, col1 GEOMETRY)
+GEOMETRY ST_Intersection (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -1391,7 +1391,7 @@ Returns the minimum M value of a geometry
 #### Signature
 
 ```sql
-GEOMETRY ST_MakeEnvelope (col0 DOUBLE, col1 DOUBLE, col2 DOUBLE, col3 DOUBLE)
+GEOMETRY ST_MakeEnvelope (min_x DOUBLE, min_y DOUBLE, max_x DOUBLE, max_y DOUBLE)
 ```
 
 #### Description
@@ -1600,7 +1600,7 @@ Returns the number of vertices within a geometry
 #### Signature
 
 ```sql
-BOOLEAN ST_Overlaps (col0 GEOMETRY, col1 GEOMETRY)
+BOOLEAN ST_Overlaps (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -1652,7 +1652,7 @@ Returns `0.0` for any geometry that is not a `POLYGON`, `MULTIPOLYGON` or `GEOME
 #### Signature
 
 ```sql
-GEOMETRY ST_Point (col0 DOUBLE, col1 DOUBLE)
+GEOMETRY ST_Point (x DOUBLE, y DOUBLE)
 ```
 
 #### Description
@@ -1667,7 +1667,7 @@ Creates a GEOMETRY point
 #### Signature
 
 ```sql
-POINT_2D ST_Point2D (col0 DOUBLE, col1 DOUBLE)
+POINT_2D ST_Point2D (x DOUBLE, y DOUBLE)
 ```
 
 #### Description
@@ -1682,7 +1682,7 @@ Creates a POINT_2D
 #### Signature
 
 ```sql
-POINT_3D ST_Point3D (col0 DOUBLE, col1 DOUBLE, col2 DOUBLE)
+POINT_3D ST_Point3D (x DOUBLE, y DOUBLE, z DOUBLE)
 ```
 
 #### Description
@@ -1697,7 +1697,7 @@ Creates a POINT_3D
 #### Signature
 
 ```sql
-POINT_4D ST_Point4D (col0 DOUBLE, col1 DOUBLE, col2 DOUBLE, col3 DOUBLE)
+POINT_4D ST_Point4D (x DOUBLE, y DOUBLE, z DOUBLE, m DOUBLE)
 ```
 
 #### Description
@@ -1770,8 +1770,8 @@ MULTIPOINT Z EMPTY
 #### Signatures
 
 ```sql
-VARCHAR ST_QuadKey (col0 DOUBLE, col1 DOUBLE, col2 INTEGER)
-VARCHAR ST_QuadKey (col0 GEOMETRY, col1 INTEGER)
+VARCHAR ST_QuadKey (longitude DOUBLE, latitude DOUBLE, level INTEGER)
+VARCHAR ST_QuadKey (point GEOMETRY, level INTEGER)
 ```
 
 #### Description
@@ -1849,7 +1849,7 @@ Returns a new version of the input geometry with the order of its vertices rever
 #### Signature
 
 ```sql
-GEOMETRY ST_ShortestLine (col0 GEOMETRY, col1 GEOMETRY)
+GEOMETRY ST_ShortestLine (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -1917,7 +1917,7 @@ select ST_StartPoint('LINESTRING(0 0, 1 1)'::geometry);
 #### Signature
 
 ```sql
-BOOLEAN ST_Touches (col0 GEOMETRY, col1 GEOMETRY)
+BOOLEAN ST_Touches (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -2024,8 +2024,8 @@ MULTIPOINT (1 2, 3 4)
 #### Signatures
 
 ```sql
-BOOLEAN ST_Within (col0 POINT_2D, col1 POLYGON_2D)
-BOOLEAN ST_Within (col0 GEOMETRY, col1 GEOMETRY)
+BOOLEAN ST_Within (geom1 POINT_2D, geom2 POLYGON_2D)
+BOOLEAN ST_Within (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
