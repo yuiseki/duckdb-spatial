@@ -28,6 +28,7 @@ jobs:
     with:
       duckdb_version: v1.1.3
       extension_name: spatial
+      ci_tools_version: v1.1.3
 
   duckdb-stable-deploy:
     name: Deploy extension binaries
