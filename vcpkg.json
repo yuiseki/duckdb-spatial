@@ -1,6 +1,8 @@
 {
-    "dependencies": [
-       "openssl",
-      "zlib"
-    ]
+  "dependencies": [
+    "openssl",
+    "zlib",
+    "geographiclib",
+    "geos"
+  ]
 }
