@@ -29,6 +29,7 @@ jobs:
       duckdb_version: main
       extension_name: spatial
       ci_tools_version: main
+      vcpkg_commit: 5e5d0e1cd7785623065e77eff011afdeec1a3574
 
   duckdb-latest-deploy:
     name: Deploy extension binaries
