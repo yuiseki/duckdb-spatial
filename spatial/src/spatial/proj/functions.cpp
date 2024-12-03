@@ -510,7 +510,8 @@ void ProjFunctions::Register(DatabaseInstance &db) {
 	    GeometryTransformFunction, TransformBind, nullptr, nullptr, ProjFunctionLocalState::Init));
 
 	ExtensionUtil::RegisterFunction(db, set);
-	DocUtil::AddDocumentation(db, "ST_Transform", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS, {"geom", "source_crs", "target_crs", "always_xy"});
+	DocUtil::AddDocumentation(db, "ST_Transform", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS,
+	                          {"geom", "source_crs", "target_crs", "always_xy"});
 	GenerateSpatialRefSysTable::Register(db);
 }
 

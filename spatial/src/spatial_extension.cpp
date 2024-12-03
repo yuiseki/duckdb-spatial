@@ -54,7 +54,7 @@ static string RemoveIndentAndTrailingWhitespace(const char *text) {
 void spatial::DocUtil::AddDocumentation(duckdb::DatabaseInstance &db, const char *function_name,
                                         const char *description, const char *example,
                                         const duckdb::unordered_map<duckdb::string, duckdb::string> &tags,
-										duckdb::vector<duckdb::string> parameter_names) {
+                                        duckdb::vector<duckdb::string> parameter_names) {
 
 	auto &system_catalog = Catalog::GetSystemCatalog(db);
 	auto data = CatalogTransaction::GetSystemTransaction(db);
