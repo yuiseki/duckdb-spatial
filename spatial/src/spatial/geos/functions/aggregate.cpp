@@ -197,8 +197,9 @@ void GeosAggregateFunctions::Register(DatabaseInstance &db) {
 
 	AggregateFunctionSet st_intersection_agg("ST_Intersection_Agg");
 	st_intersection_agg.AddFunction(
-	    AggregateFunction::UnaryAggregateDestructor<GEOSAggState, geometry_t, geometry_t, IntersectionAggFunction>(
-	        core::GeoTypes::GEOMETRY(), core::GeoTypes::GEOMETRY()));
+	    AggregateFunction::UnaryAggregateDestructor<GEOSAggState, geometry_t, geometry_t, IntersectionAggFunction,
+	                                                AggregateDestructorType::LEGACY>(core::GeoTypes::GEOMETRY(),
+	                                                                                 core::GeoTypes::GEOMETRY()));
 
 	ExtensionUtil::RegisterFunction(db, st_intersection_agg);
 	DocUtil::AddDocumentation(db, "ST_Intersection_Agg", INTERSECTION_DOC_DESCRIPTION, INTERSECTION_DOC_EXAMPLE,
@@ -206,8 +207,9 @@ void GeosAggregateFunctions::Register(DatabaseInstance &db) {
 
 	AggregateFunctionSet st_union_agg("ST_Union_Agg");
 	st_union_agg.AddFunction(
-	    AggregateFunction::UnaryAggregateDestructor<GEOSAggState, geometry_t, geometry_t, UnionAggFunction>(
-	        core::GeoTypes::GEOMETRY(), core::GeoTypes::GEOMETRY()));
+	    AggregateFunction::UnaryAggregateDestructor<GEOSAggState, geometry_t, geometry_t, UnionAggFunction,
+	                                                AggregateDestructorType::LEGACY>(core::GeoTypes::GEOMETRY(),
+	                                                                                 core::GeoTypes::GEOMETRY()));
 
 	ExtensionUtil::RegisterFunction(db, st_union_agg);
 	DocUtil::AddDocumentation(db, "ST_Union_Agg", UNION_DOC_DESCRIPTION, UNION_DOC_EXAMPLE, DOC_TAGS);

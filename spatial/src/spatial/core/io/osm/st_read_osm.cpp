@@ -836,10 +836,12 @@ static double Progress(ClientContext &context, const FunctionData *bind_data,
 	return state.GetProgress();
 }
 
-static idx_t GetBatchIndex(ClientContext &context, const FunctionData *bind_data_p,
-                           LocalTableFunctionState *local_state, GlobalTableFunctionState *global_state) {
-	auto &state = (LocalState &)*local_state;
-	return state.block->block_idx;
+static OperatorPartitionData GetPartitionData(ClientContext &context, TableFunctionGetPartitionInput &input) {
+	if (input.partition_info.RequiresPartitionColumns()) {
+		throw InternalException("ST_ReadOSM::GetPartitionData: partition columns not supported");
+	}
+	auto &state = input.local_state->Cast<LocalState>();
+	return OperatorPartitionData(state.block->block_idx);
 }
 
 static unique_ptr<TableRef> ReadOsmPBFReplacementScan(ClientContext &context, ReplacementScanInput &input,
@@ -898,7 +900,7 @@ static constexpr const char *DOC_EXAMPLE = R"(
 void CoreTableFunctions::RegisterOsmTableFunction(DatabaseInstance &db) {
 	TableFunction read("ST_ReadOSM", {LogicalType::VARCHAR}, Execute, Bind, InitGlobal, InitLocal);
 
-	read.get_batch_index = GetBatchIndex;
+	read.get_partition_data = GetPartitionData;
 	read.table_scan_progress = Progress;
 
 	ExtensionUtil::RegisterFunction(db, read);

@@ -46,7 +46,7 @@ public:
 			column_t referenced_column = column_ids[bound_colref.binding.column_index];
 			// search for the referenced column in the set of column_ids
 			for (idx_t i = 0; i < get_column_ids.size(); i++) {
-				if (get_column_ids[i] == referenced_column) {
+				if (get_column_ids[i].GetPrimaryIndex() == referenced_column) {
 					bound_colref.binding.column_index = i;
 					return;
 				}
@@ -193,8 +193,8 @@ public:
 		}
 
 		// If there are no table filters pushed down into the get, we can just replace the get with the index scan
-		const auto cardinality = get.function.cardinality(context, bind_data.get());
 		get.function = RTreeIndexScanFunction::GetFunction();
+		const auto cardinality = get.function.cardinality(context, bind_data.get());
 		get.has_estimated_cardinality = cardinality->has_estimated_cardinality;
 		get.estimated_cardinality = cardinality->estimated_cardinality;
 		get.bind_data = std::move(bind_data);
@@ -213,7 +213,7 @@ public:
 			auto &type = get.returned_types[column_id];
 			bool found = false;
 			for (idx_t i = 0; i < column_ids.size(); i++) {
-				if (column_ids[i] == column_id) {
+				if (column_ids[i].GetPrimaryIndex() == column_id) {
 					column_id = i;
 					found = true;
 					break;

@@ -1,13 +1,11 @@
 #include "spatial/common.hpp"
 #include "spatial/core/types.hpp"
+#include "spatial/core/function_builder.hpp"
+
 #include "spatial/geos/functions/scalar.hpp"
 #include "spatial/geos/functions/common.hpp"
 #include "spatial/geos/geos_wrappers.hpp"
 #include "spatial/geos/geos_executor.hpp"
-
-#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
-#include "duckdb/common/vector_operations/unary_executor.hpp"
-#include "duckdb/common/vector_operations/binary_executor.hpp"
 
 namespace spatial {
 
@@ -32,21 +30,25 @@ Returns true if geom1 "touches" geom2
 )";
 
 static constexpr const char *DOC_EXAMPLE = R"()";
-
-static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}, {"category", "relation"}};
-;
 //------------------------------------------------------------------------------
 // Register Functions
 //------------------------------------------------------------------------------
 void GEOSScalarFunctions::RegisterStTouches(DatabaseInstance &db) {
+	FunctionBuilder::RegisterScalar(db, "ST_Touches", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("geom1", GeoTypes::GEOMETRY());
+			variant.AddParameter("geom2", GeoTypes::GEOMETRY());
+			variant.SetReturnType(LogicalType::BOOLEAN);
+			variant.SetFunction(TouchesFunction);
+			variant.SetInit(GEOSFunctionLocalState::Init);
 
-	ScalarFunctionSet set("ST_Touches");
+			variant.SetExample(DOC_EXAMPLE);
+			variant.SetDescription(DOC_DESCRIPTION);
+		});
 
-	set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY()}, LogicalType::BOOLEAN, TouchesFunction,
-	                               nullptr, nullptr, nullptr, GEOSFunctionLocalState::Init));
-
-	ExtensionUtil::RegisterFunction(db, set);
-	DocUtil::AddDocumentation(db, "ST_Touches", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "relation");
+	});
 }
 
 } // namespace geos

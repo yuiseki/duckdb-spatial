@@ -4,10 +4,7 @@
 #include "spatial/geos/functions/common.hpp"
 #include "spatial/geos/geos_wrappers.hpp"
 #include "spatial/geos/geos_executor.hpp"
-
-#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
-#include "duckdb/common/vector_operations/unary_executor.hpp"
-#include "duckdb/common/vector_operations/binary_executor.hpp"
+#include "spatial/core/function_builder.hpp"
 
 namespace spatial {
 
@@ -31,24 +28,27 @@ static constexpr const char *DOC_DESCRIPTION = R"(
     Returns true if geom1 "overlaps" geom2
 )";
 
-static constexpr const char *DOC_EXAMPLE = R"(
-
-)";
-
-static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}, {"category", "relation"}};
+static constexpr const char *DOC_EXAMPLE = R"()";
 //------------------------------------------------------------------------------
 // Register Functions
 //------------------------------------------------------------------------------
 
 void GEOSScalarFunctions::RegisterStOverlaps(DatabaseInstance &db) {
+	FunctionBuilder::RegisterScalar(db, "ST_Overlaps", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("geom1", GeoTypes::GEOMETRY());
+			variant.AddParameter("geom2", GeoTypes::GEOMETRY());
+			variant.SetReturnType(LogicalType::BOOLEAN);
+			variant.SetFunction(OverlapsFunction);
+			variant.SetInit(GEOSFunctionLocalState::Init);
 
-	ScalarFunctionSet set("ST_Overlaps");
+			variant.SetExample(DOC_EXAMPLE);
+			variant.SetDescription(DOC_DESCRIPTION);
+		});
 
-	set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY()}, LogicalType::BOOLEAN, OverlapsFunction,
-	                               nullptr, nullptr, nullptr, GEOSFunctionLocalState::Init));
-
-	ExtensionUtil::RegisterFunction(db, set);
-	DocUtil::AddDocumentation(db, "ST_Overlaps", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "relation");
+	});
 }
 
 } // namespace geos

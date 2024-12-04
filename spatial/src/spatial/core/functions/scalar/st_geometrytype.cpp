@@ -84,10 +84,14 @@ static void WKBTypeFunction(DataChunk &args, ExpressionState &state, Vector &res
 // Documentation
 //------------------------------------------------------------------------------
 static constexpr const char *DOC_DESCRIPTION = R"(
-    Returns a 'GEOMETRY_TYPE' enum identifying the input geometry type.
+	Returns a 'GEOMETRY_TYPE' enum identifying the input geometry type. Possible enum return types are: `POINT`, `LINESTRING`, `POLYGON`, `MULTIPOINT`, `MULTILINESTRING`, `MULTIPOLYGON`, and `GEOMETRYCOLLECTION`.
 )";
 
-static constexpr const char *DOC_EXAMPLE = R"()";
+static constexpr const char *DOC_EXAMPLE = R"(
+SELECT DISTINCT ST_GeometryType(ST_GeomFromText('POINT(1 1)'));
+----
+POINT  
+)";
 
 static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}, {"category", "property"}};
 //------------------------------------------------------------------------------

@@ -675,7 +675,7 @@ void GdalTableFunction::Register(DatabaseInstance &db) {
 	                   GdalTableFunction::InitGlobal, GdalTableFunction::InitLocal);
 
 	scan.cardinality = GdalTableFunction::Cardinality;
-	scan.get_batch_index = ArrowTableFunction::ArrowGetBatchIndex;
+	scan.get_partition_data = ArrowTableFunction::ArrowGetPartitionData;
 
 	scan.projection_pushdown = true;
 	scan.filter_pushdown = true;
