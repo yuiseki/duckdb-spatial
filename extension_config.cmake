@@ -13,6 +13,5 @@ duckdb_extension_load(spatial
         SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}
         INCLUDE_DIR ${CMAKE_CURRENT_LIST_DIR}/spatial/include
         ${DO_TESTS}
-        DONT_LINK
         LINKED_LIBS "../../deps/local/lib/*.a"
 )

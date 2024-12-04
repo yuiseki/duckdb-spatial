@@ -6,6 +6,7 @@
 #include "spatial/core/functions/common.hpp"
 #include "spatial/core/geometry/geometry.hpp"
 #include "spatial/core/types.hpp"
+#include "spatial/core/function_builder.hpp"
 
 #include <cmath>
 
@@ -106,23 +107,37 @@ SELECT ST_QuadKey(st_point(11.08, 49.45), 10);
 ----
 1333203202
 )";
-
-static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}, {"category", "property"}};
 //------------------------------------------------------------------------------
 // Register functions
 //------------------------------------------------------------------------------
 void CoreScalarFunctions::RegisterStQuadKey(DatabaseInstance &db) {
 
-	ScalarFunctionSet set("ST_QuadKey");
+	FunctionBuilder::RegisterScalar(db, "ST_QuadKey", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("longitude", LogicalType::DOUBLE);
+			variant.AddParameter("latitude", LogicalType::DOUBLE);
+			variant.AddParameter("level", LogicalType::INTEGER);
+			variant.SetReturnType(LogicalType::VARCHAR);
+			variant.SetFunction(CoordinateQuadKeyFunction);
 
-	set.AddFunction(ScalarFunction({LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::INTEGER},
-	                               LogicalType::VARCHAR, CoordinateQuadKeyFunction));
-	set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY(), LogicalType::INTEGER}, LogicalType::VARCHAR,
-	                               GeometryQuadKeyFunction, nullptr, nullptr, nullptr,
-	                               GeometryFunctionLocalState::Init));
+			variant.SetExample(DOC_EXAMPLE);
+			variant.SetDescription(DOC_DESCRIPTION);
+		});
 
-	ExtensionUtil::RegisterFunction(db, set);
-	DocUtil::AddDocumentation(db, "ST_QuadKey", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("point", GeoTypes::GEOMETRY());
+			variant.AddParameter("level", LogicalType::INTEGER);
+			variant.SetReturnType(LogicalType::VARCHAR);
+			variant.SetFunction(GeometryQuadKeyFunction);
+			variant.SetInit(GeometryFunctionLocalState::Init);
+
+			variant.SetExample(DOC_EXAMPLE);
+			variant.SetDescription(DOC_DESCRIPTION);
+		});
+
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "property");
+	});
 }
 
 } // namespace core

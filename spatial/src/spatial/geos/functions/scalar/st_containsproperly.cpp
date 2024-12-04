@@ -1,13 +1,14 @@
+#include "duckdb/common/vector_operations/binary_executor.hpp"
+#include "duckdb/common/vector_operations/unary_executor.hpp"
+#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "spatial/common.hpp"
 #include "spatial/core/types.hpp"
-#include "spatial/geos/functions/scalar.hpp"
 #include "spatial/geos/functions/common.hpp"
-#include "spatial/geos/geos_wrappers.hpp"
+#include "spatial/geos/functions/scalar.hpp"
 #include "spatial/geos/geos_executor.hpp"
+#include "spatial/geos/geos_wrappers.hpp"
 
-#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
-#include "duckdb/common/vector_operations/unary_executor.hpp"
-#include "duckdb/common/vector_operations/binary_executor.hpp"
+#include "spatial/core/function_builder.hpp"
 
 namespace spatial {
 
@@ -62,30 +63,28 @@ static constexpr const char *DOC_DESCRIPTION = R"(
 static constexpr const char *DOC_EXAMPLE = R"(
 
 )";
-
-static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}, {"category", "relation"}};
 //------------------------------------------------------------------------------
 // Register functions
 //------------------------------------------------------------------------------
 void GEOSScalarFunctions::RegisterStContainsProperly(DatabaseInstance &db) {
 
-	ScalarFunctionSet set("ST_ContainsProperly");
+	FunctionBuilder::RegisterScalar(db, "ST_ContainsProperly", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("geom1", GeoTypes::GEOMETRY());
+			variant.AddParameter("geom2", GeoTypes::GEOMETRY());
+			variant.SetReturnType(LogicalType::BOOLEAN);
+			variant.SetFunction(ContainsProperlyFunction);
+			variant.SetInit(GEOSFunctionLocalState::Init);
 
-	set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY()}, LogicalType::BOOLEAN,
-	                               ContainsProperlyFunction, nullptr, nullptr, nullptr, GEOSFunctionLocalState::Init));
+			variant.SetExample(DOC_EXAMPLE);
+			variant.SetDescription(DOC_DESCRIPTION);
+		});
 
-	ExtensionUtil::RegisterFunction(db, set);
-	DocUtil::AddDocumentation(db, "ST_ContainsProperly", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "relation");
+	});
 }
 
 } // namespace geos
 
 } // namespace spatial
-
-/*
-
-ST_Within(
-ST_GeomFromText('POLYGON((339 346, 459 346, 399 311, 340 277, 399 173, 280 242, 339 415, 280 381, 460 207, 339 346))'),
-ST_GeomFromText('POLYGON((339 207, 280 311, 460 138, 399 242, 459 277, 459 415, 399 381, 519 311, 520 242, 519 173, 399
-450, 339 207))'));
-*/

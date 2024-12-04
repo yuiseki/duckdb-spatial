@@ -1778,7 +1778,7 @@ MULTIPOINT Z EMPTY
 #### Signatures
 
 ```sql
-VARCHAR ST_QuadKey (longitude DOUBLE, latitude DOUBLE, level INTEGER)
+VARCHAR ST_QuadKey (lon DOUBLE, lat DOUBLE, level INTEGER)
 VARCHAR ST_QuadKey (point GEOMETRY, level INTEGER)
 ```
 
@@ -2350,7 +2350,7 @@ SELECT * FROM ST_Drivers();
 #### Signature
 
 ```sql
-ST_Read (col0 VARCHAR, keep_wkb BOOLEAN, max_batch_size INTEGER, sequential_layer_scan BOOLEAN, layer VARCHAR, spatial_filter WKB_BLOB, spatial_filter_box BOX_2D, sibling_files VARCHAR[], allowed_drivers VARCHAR[], open_options VARCHAR[])
+ST_Read (col0 VARCHAR, keep_wkb BOOLEAN, max_batch_size INTEGER, sequential_layer_scan BOOLEAN, layer VARCHAR, sibling_files VARCHAR[], spatial_filter WKB_BLOB, spatial_filter_box BOX_2D, allowed_drivers VARCHAR[], open_options VARCHAR[])
 ```
 
 #### Description

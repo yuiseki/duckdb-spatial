@@ -1,10 +1,10 @@
 #include "spatial/common.hpp"
 #include "spatial/core/types.hpp"
+#include "spatial/core/function_builder.hpp"
 #include "spatial/geos/functions/scalar.hpp"
 #include "spatial/geos/functions/common.hpp"
 #include "spatial/geos/geos_wrappers.hpp"
 
-#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
 
 namespace spatial {
@@ -38,20 +38,26 @@ static constexpr const char *DOC_DESCRIPTION = R"(
 static constexpr const char *DOC_EXAMPLE = R"(
 
 )";
-
-static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}, {"category", "construction"}};
 //------------------------------------------------------------------------------
 // Register Functions
 //------------------------------------------------------------------------------
 void GEOSScalarFunctions::RegisterStShortestLine(DatabaseInstance &db) {
 
-	ScalarFunctionSet set("ST_ShortestLine");
+	FunctionBuilder::RegisterScalar(db, "ST_ShortestLine", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("geom1", GeoTypes::GEOMETRY());
+			variant.AddParameter("geom2", GeoTypes::GEOMETRY());
+			variant.SetReturnType(GeoTypes::GEOMETRY());
+			variant.SetFunction(ShortestLineFunction);
+			variant.SetInit(GEOSFunctionLocalState::Init);
 
-	set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY()}, GeoTypes::GEOMETRY(),
-	                               ShortestLineFunction, nullptr, nullptr, nullptr, GEOSFunctionLocalState::Init));
+			variant.SetExample(DOC_EXAMPLE);
+			variant.SetDescription(DOC_DESCRIPTION);
+		});
 
-	ExtensionUtil::RegisterFunction(db, set);
-	DocUtil::AddDocumentation(db, "ST_ShortestLine", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "construction");
+	});
 }
 
 } // namespace geos

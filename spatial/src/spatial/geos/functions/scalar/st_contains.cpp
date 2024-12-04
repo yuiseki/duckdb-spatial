@@ -9,6 +9,8 @@
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
 
+#include "spatial/core/function_builder.hpp"
+
 namespace spatial {
 
 namespace geos {
@@ -37,18 +39,28 @@ select st_contains('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'::geometry, 'POINT(0.5 0.
 true
 )";
 
-static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}, {"category", "relation"}};
 //------------------------------------------------------------------------------
 // Register functions
 //------------------------------------------------------------------------------
 void GEOSScalarFunctions::RegisterStContains(DatabaseInstance &db) {
-	ScalarFunctionSet set("ST_Contains");
 
-	set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY()}, LogicalType::BOOLEAN, ContainsFunction,
-	                               nullptr, nullptr, nullptr, GEOSFunctionLocalState::Init));
+	FunctionBuilder::RegisterScalar(db, "ST_Contains", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("geom1", GeoTypes::GEOMETRY());
+			variant.AddParameter("geom2", GeoTypes::GEOMETRY());
+			variant.SetReturnType(LogicalType::BOOLEAN);
+			variant.SetFunction(ContainsFunction);
+			variant.SetInit(GEOSFunctionLocalState::Init);
 
-	ExtensionUtil::AddFunctionOverload(db, set);
-	DocUtil::AddDocumentation(db, "ST_Contains", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
+			variant.SetExample(DOC_EXAMPLE);
+			variant.SetDescription(DOC_DESCRIPTION);
+		});
+
+		func.SetDescription(DOC_DESCRIPTION);
+
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "relation");
+	});
 }
 
 } // namespace geos

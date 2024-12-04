@@ -4,6 +4,7 @@
 #include "spatial/geos/functions/common.hpp"
 #include "spatial/geos/geos_wrappers.hpp"
 #include "spatial/geos/geos_executor.hpp"
+#include "spatial/core/function_builder.hpp"
 
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
@@ -32,20 +33,26 @@ static constexpr const char *DOC_DESCRIPTION = R"(
 )";
 
 static constexpr const char *DOC_EXAMPLE = R"()";
-
-static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}, {"category", "relation"}};
 //------------------------------------------------------------------------------
 // Register functions
 //------------------------------------------------------------------------------
 void GEOSScalarFunctions::RegisterStCovers(DatabaseInstance &db) {
 
-	ScalarFunctionSet set("ST_Covers");
+	FunctionBuilder::RegisterScalar(db, "ST_Covers", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("geom1", GeoTypes::GEOMETRY());
+			variant.AddParameter("geom2", GeoTypes::GEOMETRY());
+			variant.SetReturnType(LogicalType::BOOLEAN);
+			variant.SetFunction(CoversFunction);
+			variant.SetInit(GEOSFunctionLocalState::Init);
 
-	set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY()}, LogicalType::BOOLEAN, CoversFunction,
-	                               nullptr, nullptr, nullptr, GEOSFunctionLocalState::Init));
+			variant.SetExample(DOC_EXAMPLE);
+			variant.SetDescription(DOC_DESCRIPTION);
+		});
 
-	ExtensionUtil::RegisterFunction(db, set);
-	DocUtil::AddDocumentation(db, "ST_Covers", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "relation");
+	});
 }
 
 } // namespace geos

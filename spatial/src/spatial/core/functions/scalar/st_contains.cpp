@@ -1,8 +1,8 @@
 #include "spatial/common.hpp"
-#include "spatial/core/types.hpp"
 #include "spatial/core/functions/scalar.hpp"
+#include "spatial/core/types.hpp"
+#include "spatial/core/function_builder.hpp"
 
-#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 namespace spatial {
 
 namespace core {
@@ -148,18 +148,24 @@ static void PointWithinPolygonFunction(DataChunk &args, ExpressionState &state, 
 //------------------------------------------------------------------------------
 void CoreScalarFunctions::RegisterStContains(DatabaseInstance &db) {
 
+	FunctionBuilder::RegisterScalar(db, "ST_Contains", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("geom1", GeoTypes::POLYGON_2D());
+			variant.AddParameter("geom2", GeoTypes::POINT_2D());
+			variant.SetReturnType(LogicalType::BOOLEAN);
+			variant.SetFunction(PolygonContainsPointFunction);
+		});
+	});
+
 	// ST_Within is the inverse of ST_Contains
-	ScalarFunctionSet contains_function_set("ST_Contains");
-	ScalarFunctionSet within_function_set("ST_Within");
-
-	// POLYGON_2D - POINT_2D
-	contains_function_set.AddFunction(ScalarFunction({GeoTypes::POLYGON_2D(), GeoTypes::POINT_2D()},
-	                                                 LogicalType::BOOLEAN, PolygonContainsPointFunction));
-	within_function_set.AddFunction(ScalarFunction({GeoTypes::POINT_2D(), GeoTypes::POLYGON_2D()}, LogicalType::BOOLEAN,
-	                                               PointWithinPolygonFunction));
-
-	ExtensionUtil::RegisterFunction(db, contains_function_set);
-	ExtensionUtil::RegisterFunction(db, within_function_set);
+	FunctionBuilder::RegisterScalar(db, "ST_Within", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("geom1", GeoTypes::POINT_2D());
+			variant.AddParameter("geom2", GeoTypes::POLYGON_2D());
+			variant.SetReturnType(LogicalType::BOOLEAN);
+			variant.SetFunction(PointWithinPolygonFunction);
+		});
+	});
 }
 
 } // namespace core
