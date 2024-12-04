@@ -4,6 +4,7 @@
 #include "spatial/geos/functions/common.hpp"
 #include "spatial/geos/geos_wrappers.hpp"
 #include "spatial/geos/geos_executor.hpp"
+#include "spatial/core/function_builder.hpp"
 
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
@@ -31,23 +32,27 @@ static constexpr const char *DOC_DESCRIPTION = R"(
     Returns true if geom1 "crosses" geom2
 )";
 
-static constexpr const char *DOC_EXAMPLE = R"(
-
-)";
-
-static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}, {"category", "relation"}};
+static constexpr const char *DOC_EXAMPLE = R"()";
 //------------------------------------------------------------------------------
 // Register functions
 //------------------------------------------------------------------------------
 void GEOSScalarFunctions::RegisterStCrosses(DatabaseInstance &db) {
 
-	ScalarFunctionSet set("ST_Crosses");
+	FunctionBuilder::RegisterScalar(db, "ST_Crosses", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("geom1", GeoTypes::GEOMETRY());
+			variant.AddParameter("geom2", GeoTypes::GEOMETRY());
+			variant.SetReturnType(LogicalType::BOOLEAN);
+			variant.SetFunction(CrossesFunction);
+			variant.SetInit(GEOSFunctionLocalState::Init);
 
-	set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY()}, LogicalType::BOOLEAN, CrossesFunction,
-	                               nullptr, nullptr, nullptr, GEOSFunctionLocalState::Init));
+			variant.SetExample(DOC_EXAMPLE);
+			variant.SetDescription(DOC_DESCRIPTION);
+		});
 
-	ExtensionUtil::RegisterFunction(db, set);
-	DocUtil::AddDocumentation(db, "ST_Crosses", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "relation");
+	});
 }
 
 } // namespace geos

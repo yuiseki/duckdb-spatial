@@ -31,7 +31,7 @@ BindInfo RTreeIndexScanBindInfo(const optional_ptr<FunctionData> bind_data_p) {
 struct RTreeIndexScanGlobalState : public GlobalTableFunctionState {
 	ColumnFetchState fetch_state;
 	TableScanState local_storage_state;
-	vector<storage_t> column_ids;
+	vector<StorageIndex> column_ids;
 
 	// Index scan state
 	unique_ptr<IndexScanState> index_state;
@@ -54,7 +54,7 @@ static unique_ptr<GlobalTableFunctionState> RTreeIndexScanInitGlobal(ClientConte
 		if (id != DConstants::INVALID_INDEX) {
 			col_id = bind_data.table.GetColumn(LogicalIndex(id)).StorageOid();
 		}
-		result->column_ids.push_back(col_id);
+		result->column_ids.emplace_back(col_id);
 	}
 
 	// Initialize the storage scan state
@@ -128,9 +128,13 @@ unique_ptr<NodeStatistics> RTreeIndexScanCardinality(ClientContext &context, con
 //-------------------------------------------------------------------------
 // ToString
 //-------------------------------------------------------------------------
-static string RTreeIndexScanToString(const FunctionData *bind_data_p) {
-	auto &bind_data = bind_data_p->Cast<RTreeIndexScanBindData>();
-	return bind_data.table.name + " (RTREE INDEX SCAN : " + bind_data.index.GetIndexName() + ")";
+static InsertionOrderPreservingMap<string> RTreeIndexScanToString(TableFunctionToStringInput &input) {
+	D_ASSERT(input.bind_data);
+	InsertionOrderPreservingMap<string> result;
+	auto &bind_data = input.bind_data->Cast<RTreeIndexScanBindData>();
+	result["Table"] = bind_data.table.name;
+	result["Index"] = bind_data.index.GetIndexName();
+	return result;
 }
 
 //-------------------------------------------------------------------------
@@ -205,7 +209,6 @@ TableFunction RTreeIndexScanFunction::GetFunction() {
 	func.pushdown_complex_filter = nullptr;
 	func.to_string = RTreeIndexScanToString;
 	func.table_scan_progress = nullptr;
-	func.get_batch_index = nullptr;
 	func.projection_pushdown = true;
 	func.filter_pushdown = false;
 	func.get_bind_info = RTreeIndexScanBindInfo;

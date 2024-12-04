@@ -46,7 +46,7 @@ public:
 			column_t referenced_column = column_ids[bound_colref.binding.column_index];
 			// search for the referenced column in the set of column_ids
 			for (idx_t i = 0; i < get_column_ids.size(); i++) {
-				if (get_column_ids[i] == referenced_column) {
+				if (get_column_ids[i].GetPrimaryIndex() == referenced_column) {
 					bound_colref.binding.column_index = i;
 					return;
 				}
@@ -213,7 +213,7 @@ public:
 			auto &type = get.returned_types[column_id];
 			bool found = false;
 			for (idx_t i = 0; i < column_ids.size(); i++) {
-				if (column_ids[i] == column_id) {
+				if (column_ids[i].GetPrimaryIndex() == column_id) {
 					column_id = i;
 					found = true;
 					break;

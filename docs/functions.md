@@ -47,7 +47,7 @@
 | [`ST_GeomFromHEXWKB`](#st_geomfromhexwkb) | Creates a GEOMETRY from a HEXWKB string |
 | [`ST_GeomFromText`](#st_geomfromtext) | Deserializes a GEOMETRY from a WKT string, optionally ignoring invalid geometries |
 | [`ST_GeomFromWKB`](#st_geomfromwkb) | Deserializes a GEOMETRY from a WKB encoded blob |
-| [`ST_GeometryType`](#st_geometrytype) | Returns a 'GEOMETRY_TYPE' enum identifying the input geometry type. |
+| [`ST_GeometryType`](#st_geometrytype) | Returns a 'GEOMETRY_TYPE' enum identifying the input geometry type. Possible enum return types are: `POINT`, `LINESTRING`, `POLYGON`, `MULTIPOINT`, `MULTILINESTRING`, `MULTIPOLYGON`, and `GEOMETRYCOLLECTION`. |
 | [`ST_HasM`](#st_hasm) | Check if the input geometry has M values. |
 | [`ST_HasZ`](#st_hasz) | Check if the input geometry has Z values. |
 | [`ST_Hilbert`](#st_hilbert) | Encodes the X and Y values as the hilbert curve index for a curve covering the given bounding box. |
@@ -496,8 +496,8 @@ select st_collectionextract('MULTIPOINT(1 2,3 4)'::geometry, 1);
 #### Signatures
 
 ```sql
-BOOLEAN ST_Contains (col0 POLYGON_2D, col1 POINT_2D)
-BOOLEAN ST_Contains (col0 GEOMETRY, col1 GEOMETRY)
+BOOLEAN ST_Contains (geom1 POLYGON_2D, geom2 POINT_2D)
+BOOLEAN ST_Contains (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -520,7 +520,7 @@ true
 #### Signature
 
 ```sql
-BOOLEAN ST_ContainsProperly (col0 GEOMETRY, col1 GEOMETRY)
+BOOLEAN ST_ContainsProperly (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -550,7 +550,7 @@ Returns the convex hull enclosing the geometry
 #### Signature
 
 ```sql
-BOOLEAN ST_CoveredBy (col0 GEOMETRY, col1 GEOMETRY)
+BOOLEAN ST_CoveredBy (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -565,7 +565,7 @@ Returns true if geom1 is "covered" by geom2
 #### Signature
 
 ```sql
-BOOLEAN ST_Covers (col0 GEOMETRY, col1 GEOMETRY)
+BOOLEAN ST_Covers (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -580,7 +580,7 @@ Returns if geom1 "covers" geom2
 #### Signature
 
 ```sql
-BOOLEAN ST_Crosses (col0 GEOMETRY, col1 GEOMETRY)
+BOOLEAN ST_Crosses (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -610,14 +610,14 @@ Returns if two geometries are within a target distance of each-other
 #### Signature
 
 ```sql
-DOUBLE ST_DWithin_Spheroid (col0 POINT_2D, col1 POINT_2D, col2 DOUBLE)
+BOOLEAN ST_DWithin_Spheroid (col0 POINT_2D, col1 POINT_2D, col2 DOUBLE)
 ```
 
 #### Description
 
 Returns if two POINT_2D's are within a target distance in meters, using an ellipsoidal model of the earths surface
 
-The input geometry is assumed to be in the [EPSG:4326](https://en.wikipedia.org/wiki/World_Geodetic_System) coordinate system (WGS84), with [latitude, longitude] axis order and the distance is returned in meters. This function uses the [GeographicLib](https://geographiclib.sourceforge.io/) library to solve the [inverse geodesic problem](https://en.wikipedia.org/wiki/Geodesics_on_an_ellipsoid#Solution_of_the_direct_and_inverse_problems), calculating the distance between two points using an ellipsoidal model of the earth. This is a highly accurate method for calculating the distance between two arbitrary points taking the curvature of the earths surface into account, but is also the slowest.
+	The input geometry is assumed to be in the [EPSG:4326](https://en.wikipedia.org/wiki/World_Geodetic_System) coordinate system (WGS84), with [latitude, longitude] axis order and the distance is returned in meters. This function uses the [GeographicLib](https://geographiclib.sourceforge.io/) library to solve the [inverse geodesic problem](https://en.wikipedia.org/wiki/Geodesics_on_an_ellipsoid#Solution_of_the_direct_and_inverse_problems), calculating the distance between two points using an ellipsoidal model of the earth. This is a highly accurate method for calculating the distance between two arbitrary points taking the curvature of the earths surface into account, but is also the slowest.
 
 ----
 
@@ -1059,7 +1059,15 @@ ANY ST_GeometryType (col0 WKB_BLOB)
 
 #### Description
 
-Returns a 'GEOMETRY_TYPE' enum identifying the input geometry type.
+Returns a 'GEOMETRY_TYPE' enum identifying the input geometry type. Possible enum return types are: `POINT`, `LINESTRING`, `POLYGON`, `MULTIPOINT`, `MULTILINESTRING`, `MULTIPOLYGON`, and `GEOMETRYCOLLECTION`.
+
+#### Example
+
+```sql
+SELECT DISTINCT ST_GeometryType(ST_GeomFromText('POINT(1 1)'));
+----
+POINT
+```
 
 ----
 
@@ -1171,7 +1179,7 @@ For the BOX_2D and BOX_2DF variants, the center of the box is used as the point 
 #### Signature
 
 ```sql
-GEOMETRY ST_Intersection (col0 GEOMETRY, col1 GEOMETRY)
+GEOMETRY ST_Intersection (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -1391,7 +1399,7 @@ Returns the minimum M value of a geometry
 #### Signature
 
 ```sql
-GEOMETRY ST_MakeEnvelope (col0 DOUBLE, col1 DOUBLE, col2 DOUBLE, col3 DOUBLE)
+GEOMETRY ST_MakeEnvelope (min_x DOUBLE, min_y DOUBLE, max_x DOUBLE, max_y DOUBLE)
 ```
 
 #### Description
@@ -1600,7 +1608,7 @@ Returns the number of vertices within a geometry
 #### Signature
 
 ```sql
-BOOLEAN ST_Overlaps (col0 GEOMETRY, col1 GEOMETRY)
+BOOLEAN ST_Overlaps (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -1652,7 +1660,7 @@ Returns `0.0` for any geometry that is not a `POLYGON`, `MULTIPOLYGON` or `GEOME
 #### Signature
 
 ```sql
-GEOMETRY ST_Point (col0 DOUBLE, col1 DOUBLE)
+GEOMETRY ST_Point (x DOUBLE, y DOUBLE)
 ```
 
 #### Description
@@ -1667,7 +1675,7 @@ Creates a GEOMETRY point
 #### Signature
 
 ```sql
-POINT_2D ST_Point2D (col0 DOUBLE, col1 DOUBLE)
+POINT_2D ST_Point2D (x DOUBLE, y DOUBLE)
 ```
 
 #### Description
@@ -1682,7 +1690,7 @@ Creates a POINT_2D
 #### Signature
 
 ```sql
-POINT_3D ST_Point3D (col0 DOUBLE, col1 DOUBLE, col2 DOUBLE)
+POINT_3D ST_Point3D (x DOUBLE, y DOUBLE, z DOUBLE)
 ```
 
 #### Description
@@ -1697,7 +1705,7 @@ Creates a POINT_3D
 #### Signature
 
 ```sql
-POINT_4D ST_Point4D (col0 DOUBLE, col1 DOUBLE, col2 DOUBLE, col3 DOUBLE)
+POINT_4D ST_Point4D (x DOUBLE, y DOUBLE, z DOUBLE, m DOUBLE)
 ```
 
 #### Description
@@ -1770,8 +1778,8 @@ MULTIPOINT Z EMPTY
 #### Signatures
 
 ```sql
-VARCHAR ST_QuadKey (col0 DOUBLE, col1 DOUBLE, col2 INTEGER)
-VARCHAR ST_QuadKey (col0 GEOMETRY, col1 INTEGER)
+VARCHAR ST_QuadKey (lon DOUBLE, lat DOUBLE, level INTEGER)
+VARCHAR ST_QuadKey (point GEOMETRY, level INTEGER)
 ```
 
 #### Description
@@ -1849,7 +1857,7 @@ Returns a new version of the input geometry with the order of its vertices rever
 #### Signature
 
 ```sql
-GEOMETRY ST_ShortestLine (col0 GEOMETRY, col1 GEOMETRY)
+GEOMETRY ST_ShortestLine (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -1917,7 +1925,7 @@ select ST_StartPoint('LINESTRING(0 0, 1 1)'::geometry);
 #### Signature
 
 ```sql
-BOOLEAN ST_Touches (col0 GEOMETRY, col1 GEOMETRY)
+BOOLEAN ST_Touches (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description
@@ -2024,8 +2032,8 @@ MULTIPOINT (1 2, 3 4)
 #### Signatures
 
 ```sql
-BOOLEAN ST_Within (col0 POINT_2D, col1 POLYGON_2D)
-BOOLEAN ST_Within (col0 GEOMETRY, col1 GEOMETRY)
+BOOLEAN ST_Within (geom1 POINT_2D, geom2 POLYGON_2D)
+BOOLEAN ST_Within (geom1 GEOMETRY, geom2 GEOMETRY)
 ```
 
 #### Description

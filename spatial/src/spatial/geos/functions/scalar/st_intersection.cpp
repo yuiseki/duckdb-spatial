@@ -1,12 +1,12 @@
+#include "duckdb/common/vector_operations/binary_executor.hpp"
+#include "duckdb/common/vector_operations/unary_executor.hpp"
+#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "spatial/common.hpp"
 #include "spatial/core/types.hpp"
-#include "spatial/geos/functions/scalar.hpp"
 #include "spatial/geos/functions/common.hpp"
+#include "spatial/geos/functions/scalar.hpp"
 #include "spatial/geos/geos_wrappers.hpp"
-
-#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
-#include "duckdb/common/vector_operations/unary_executor.hpp"
-#include "duckdb/common/vector_operations/binary_executor.hpp"
+#include "spatial/core/function_builder.hpp"
 
 namespace spatial {
 
@@ -34,23 +34,27 @@ static constexpr const char *DOC_DESCRIPTION = R"(
     Returns the "intersection" of geom1 and geom2
 )";
 
-static constexpr const char *DOC_EXAMPLE = R"(
-
-)";
-
-static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}, {"category", "relation"}};
+static constexpr const char *DOC_EXAMPLE = R"()";
 //------------------------------------------------------------------------------
 // Register Functions
 //------------------------------------------------------------------------------
 void GEOSScalarFunctions::RegisterStIntersection(DatabaseInstance &db) {
 
-	ScalarFunctionSet set("ST_Intersection");
+	FunctionBuilder::RegisterScalar(db, "ST_Intersection", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("geom1", GeoTypes::GEOMETRY());
+			variant.AddParameter("geom2", GeoTypes::GEOMETRY());
+			variant.SetReturnType(GeoTypes::GEOMETRY());
+			variant.SetFunction(IntersectionFunction);
+			variant.SetInit(GEOSFunctionLocalState::Init);
 
-	set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY()}, GeoTypes::GEOMETRY(),
-	                               IntersectionFunction, nullptr, nullptr, nullptr, GEOSFunctionLocalState::Init));
+			variant.SetExample(DOC_EXAMPLE);
+			variant.SetDescription(DOC_DESCRIPTION);
+		});
 
-	ExtensionUtil::RegisterFunction(db, set);
-	DocUtil::AddDocumentation(db, "ST_Intersection", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "relation");
+	});
 }
 
 } // namespace geos

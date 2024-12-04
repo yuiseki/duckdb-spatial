@@ -4,6 +4,7 @@
 #include "spatial/core/functions/common.hpp"
 #include "spatial/core/geometry/geometry.hpp"
 #include "spatial/core/types.hpp"
+#include "spatial/core/function_builder.hpp"
 
 namespace spatial {
 
@@ -114,37 +115,67 @@ static void PointFunction(DataChunk &args, ExpressionState &state, Vector &resul
 //------------------------------------------------------------------------------
 // Register functions
 //------------------------------------------------------------------------------
-static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}, {"category", "construction"}};
-
 void CoreScalarFunctions::RegisterStPoint(DatabaseInstance &db) {
 
-	ScalarFunction st_point("ST_Point", {LogicalType::DOUBLE, LogicalType::DOUBLE}, GeoTypes::GEOMETRY(), PointFunction,
-	                        nullptr, nullptr, nullptr, GeometryFunctionLocalState::Init);
+	FunctionBuilder::RegisterScalar(db, "ST_Point", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("x", LogicalType::DOUBLE);
+			variant.AddParameter("y", LogicalType::DOUBLE);
+			variant.SetReturnType(GeoTypes::GEOMETRY());
+			variant.SetFunction(PointFunction);
+			variant.SetInit(GeometryFunctionLocalState::Init);
 
-	ExtensionUtil::RegisterFunction(db, st_point);
-	auto POINT_DOC_DESCRIPTION = "Creates a GEOMETRY point";
-	DocUtil::AddDocumentation(db, "ST_Point", POINT_DOC_DESCRIPTION, nullptr, DOC_TAGS);
+			variant.SetDescription("Creates a GEOMETRY point");
+		});
 
-	// Non-standard
-	ScalarFunction st_point2d("ST_Point2D", {LogicalType::DOUBLE, LogicalType::DOUBLE}, GeoTypes::POINT_2D(),
-	                          Point2DFunction);
-	ExtensionUtil::RegisterFunction(db, st_point2d);
-	auto POINT2D_DOC_DESCRIPTION = "Creates a POINT_2D";
-	DocUtil::AddDocumentation(db, "ST_Point2D", POINT2D_DOC_DESCRIPTION, nullptr, DOC_TAGS);
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "construction");
+	});
 
-	ScalarFunction st_point_3d("ST_Point3D", {LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE},
-	                           GeoTypes::POINT_3D(), Point3DFunction);
-	ExtensionUtil::RegisterFunction(db, st_point_3d);
-	auto POINT3D_DOC_DESCRIPTION = "Creates a POINT_3D";
-	DocUtil::AddDocumentation(db, "ST_Point3D", POINT3D_DOC_DESCRIPTION, nullptr, DOC_TAGS);
+	FunctionBuilder::RegisterScalar(db, "ST_Point2D", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("x", LogicalType::DOUBLE);
+			variant.AddParameter("y", LogicalType::DOUBLE);
+			variant.SetReturnType(GeoTypes::POINT_2D());
+			variant.SetFunction(Point2DFunction);
 
-	ScalarFunction st_point_4d("ST_Point4D",
-	                           {LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE},
-	                           GeoTypes::POINT_4D(), Point4DFunction);
+			variant.SetDescription("Creates a POINT_2D");
+		});
 
-	ExtensionUtil::RegisterFunction(db, st_point_4d);
-	auto POINT4D_DOC_DESCRIPTION = "Creates a POINT_4D";
-	DocUtil::AddDocumentation(db, "ST_Point4D", POINT4D_DOC_DESCRIPTION, nullptr, DOC_TAGS);
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "construction");
+	});
+
+	FunctionBuilder::RegisterScalar(db, "ST_Point3D", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("x", LogicalType::DOUBLE);
+			variant.AddParameter("y", LogicalType::DOUBLE);
+			variant.AddParameter("z", LogicalType::DOUBLE);
+			variant.SetReturnType(GeoTypes::POINT_3D());
+			variant.SetFunction(Point3DFunction);
+
+			variant.SetDescription("Creates a POINT_3D");
+		});
+
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "construction");
+	});
+
+	FunctionBuilder::RegisterScalar(db, "ST_Point4D", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("x", LogicalType::DOUBLE);
+			variant.AddParameter("y", LogicalType::DOUBLE);
+			variant.AddParameter("z", LogicalType::DOUBLE);
+			variant.AddParameter("m", LogicalType::DOUBLE);
+			variant.SetReturnType(GeoTypes::POINT_4D());
+			variant.SetFunction(Point4DFunction);
+
+			variant.SetDescription("Creates a POINT_4D");
+		});
+
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "construction");
+	});
 }
 
 } // namespace core

@@ -1,6 +1,7 @@
 import os
 import json
 
+# We just take the first non-empty description and example for now
 get_spatial_functions_sql = """
 SELECT
     json({ 
@@ -16,15 +17,17 @@ FROM (
         function_name,
         list({
             return: return_type,
-            params: list_zip(parameters, parameter_types)::STRUCT(name VARCHAR, type VARCHAR)[]
+            params: list_zip(parameters, parameter_types)::STRUCT(name VARCHAR, type VARCHAR)[],
+            description: description,
+            examples: examples
         }) as signatures,
+        list_filter(signatures, x -> x.description IS NOT NULL)[1].description as description,
+        list_filter(signatures, x -> len(x.examples) != 0)[1].examples[1] as example,
         any_value(tags) AS func_tags,
-        any_value(description) AS description,
-        any_value(example) AS example
     FROM duckdb_functions() as funcs
     WHERE function_type = '$FUNCTION_TYPE$'
     GROUP BY function_name, function_type
-    HAVING func_tags['ext'] = ['spatial']
+    HAVING func_tags['ext'] = 'spatial'
     ORDER BY function_name
 );
 """
@@ -40,7 +43,7 @@ def write_table_of_contents(f, functions):
     f.write('| --- | --- |\n')
     for function in functions:
         # Summary is the first line of the description
-        summary = function['description'].split('\n')[0]
+        summary = function['description'].split('\n')[0] if function['description'] else ""
         f.write(f"| [`{function['name']}`](#{to_kebab_case(function['name'])}) | {summary} |\n")
 
 
@@ -86,6 +89,8 @@ def main():
                     param_list = ", ".join([f"{param['name']} {param['type']}" for param in signature['params']])
                     f.write(f"{signature['return']} {function['name']} ({param_list})\n")
                 f.write("```\n\n")
+
+
 
                 if function['description']:
                     f.write("#### Description\n\n")

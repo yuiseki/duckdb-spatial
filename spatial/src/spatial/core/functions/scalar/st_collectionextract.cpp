@@ -196,8 +196,7 @@ void CoreScalarFunctions::RegisterStCollectionExtract(DatabaseInstance &db) {
 	                               GeometryFunctionLocalState::Init));
 
 	ExtensionUtil::RegisterFunction(db, set);
-	DocUtil::AddDocumentation(db, "ST_CollectionExtract", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
-	DocUtil::AddFunctionParameterNames(db, "ST_CollectionExtract", {"geom", "type"});
+	DocUtil::AddDocumentation(db, "ST_CollectionExtract", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS, {"geom", "type"});
 }
 
 } // namespace core

@@ -3,8 +3,8 @@
 #include "spatial/core/functions/scalar.hpp"
 #include "spatial/core/functions/common.hpp"
 #include "spatial/core/geometry/geometry.hpp"
+#include "spatial/core/function_builder.hpp"
 
-#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/common/vector_operations/generic_executor.hpp"
 
 namespace spatial {
@@ -41,21 +41,27 @@ static constexpr const char *DOC_DESCRIPTION = R"(
 static constexpr const char *DOC_EXAMPLE = R"(
 
 )";
-
-static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}, {"category", "construction"}};
 //------------------------------------------------------------------------------
 // Register Functions
 //------------------------------------------------------------------------------
 void CoreScalarFunctions::RegisterStMakeEnvelope(DatabaseInstance &db) {
+	FunctionBuilder::RegisterScalar(db, "ST_MakeEnvelope", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("min_x", LogicalType::DOUBLE);
+			variant.AddParameter("min_y", LogicalType::DOUBLE);
+			variant.AddParameter("max_x", LogicalType::DOUBLE);
+			variant.AddParameter("max_y", LogicalType::DOUBLE);
+			variant.SetReturnType(GeoTypes::GEOMETRY());
+			variant.SetFunction(MakeEnvelopeFunction);
+			variant.SetInit(GeometryFunctionLocalState::Init);
 
-	ScalarFunctionSet set("ST_MakeEnvelope");
+			variant.SetExample(DOC_EXAMPLE);
+			variant.SetDescription(DOC_DESCRIPTION);
+		});
 
-	set.AddFunction(ScalarFunction({LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE},
-	                               GeoTypes::GEOMETRY(), MakeEnvelopeFunction, nullptr, nullptr, nullptr,
-	                               GeometryFunctionLocalState::Init));
-
-	ExtensionUtil::RegisterFunction(db, set);
-	DocUtil::AddDocumentation(db, "ST_MakeEnvelope", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "construction");
+	});
 }
 
 } // namespace core

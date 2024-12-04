@@ -53,7 +53,8 @@ static string RemoveIndentAndTrailingWhitespace(const char *text) {
 
 void spatial::DocUtil::AddDocumentation(duckdb::DatabaseInstance &db, const char *function_name,
                                         const char *description, const char *example,
-                                        const duckdb::unordered_map<duckdb::string, duckdb::string> &tags) {
+                                        const duckdb::unordered_map<duckdb::string, duckdb::string> &tags,
+                                        duckdb::vector<duckdb::string> parameter_names) {
 
 	auto &system_catalog = Catalog::GetSystemCatalog(db);
 	auto data = CatalogTransaction::GetSystemTransaction(db);
@@ -73,38 +74,20 @@ void spatial::DocUtil::AddDocumentation(duckdb::DatabaseInstance &db, const char
 	}
 
 	auto &func_entry = catalog_entry->Cast<FunctionEntry>();
+	FunctionDescription func_description;
 	if (description != nullptr) {
-		func_entry.description = RemoveIndentAndTrailingWhitespace(description);
+		func_description.description = RemoveIndentAndTrailingWhitespace(description);
 	}
 	if (example != nullptr) {
-		func_entry.example = RemoveIndentAndTrailingWhitespace(example);
+		func_description.examples.push_back(RemoveIndentAndTrailingWhitespace(example));
 	}
+	if (!parameter_names.empty()) {
+		func_description.parameter_names = std::move(parameter_names);
+	}
+	func_entry.descriptions.push_back(std::move(func_description));
 	if (!tags.empty()) {
 		func_entry.tags = tags;
 	}
-}
-
-void spatial::DocUtil::AddFunctionParameterNames(duckdb::DatabaseInstance &db, const char *function_name,
-                                                 duckdb::vector<duckdb::string> names) {
-	auto &system_catalog = Catalog::GetSystemCatalog(db);
-	auto data = CatalogTransaction::GetSystemTransaction(db);
-	auto &schema = system_catalog.GetSchema(data, DEFAULT_SCHEMA);
-	auto catalog_entry = schema.GetEntry(data, CatalogType::SCALAR_FUNCTION_ENTRY, function_name);
-	if (!catalog_entry) {
-		// Try get a aggregate function
-		catalog_entry = schema.GetEntry(data, CatalogType::AGGREGATE_FUNCTION_ENTRY, function_name);
-		if (!catalog_entry) {
-			// Try get a table function
-			catalog_entry = schema.GetEntry(data, CatalogType::TABLE_FUNCTION_ENTRY, function_name);
-			if (!catalog_entry) {
-				throw duckdb::InvalidInputException("Function with name \"%s\" not found in DocUtil::AddDocumentation",
-				                                    function_name);
-			}
-		}
-	}
-
-	auto &func_entry = catalog_entry->Cast<FunctionEntry>();
-	func_entry.parameter_names = std::move(names);
 }
 
 namespace duckdb {

@@ -17,7 +17,9 @@ add_definitions(-DDUCKDB_PATCH_VERSION=${DUCKDB_PATCH_VERSION})
 # Enable network functionality (OpenSSL and GDAL's CURL based fs/drivers)
 option(SPATIAL_USE_NETWORK "Enable network functionality" ON)
 
-if (EMSCRIPTEN OR IOS OR ANDROID)
+if(EMSCRIPTEN
+   OR IOS
+   OR ANDROID)
   set(SPATIAL_USE_NETWORK OFF)
 endif()
 
@@ -32,7 +34,6 @@ include_directories(spatial/third_party/protozero/include)
 include_directories(spatial/third_party/shapelib)
 add_subdirectory(spatial/third_party/shapelib)
 
-
 add_library(${EXTENSION_NAME} STATIC ${EXTENSION_SOURCES})
 
 # Build dependencies TODO: in the future we should allow users to dynamically
@@ -44,10 +45,8 @@ if(NOT EXISTS ${CMAKE_BINARY_DIR}/deps)
   execute_process(
     # Generate project
     COMMAND
-      ${CMAKE_COMMAND} -G ${CMAKE_GENERATOR}
-      -DDUCKDB_ENABLE_DEPRECATED_API=1
-      -DWASM_LOADABLE_EXTENSIONS=1
-      -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+      ${CMAKE_COMMAND} -G ${CMAKE_GENERATOR} -DDUCKDB_ENABLE_DEPRECATED_API=1
+      -DWASM_LOADABLE_EXTENSIONS=1 -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
       -DOSX_BUILD_ARCH=${OSX_BUILD_ARCH}
       -DSPATIAL_USE_NETWORK=${SPATIAL_USE_NETWORK}
       -DOPENSSL_ROOT_DIR=$ENV{OPENSSL_ROOT_DIR}
@@ -55,7 +54,8 @@ if(NOT EXISTS ${CMAKE_BINARY_DIR}/deps)
       -DVCPKG_INSTALLED_DIR='${CMAKE_BINARY_DIR}/vcpkg_installed'
       -DCMAKE_TOOLCHAIN_FILE='${CMAKE_TOOLCHAIN_FILE}'
       -DVCPKG_TARGET_TRIPLET='${VCPKG_TARGET_TRIPLET}'
-      -S ${CMAKE_CURRENT_SOURCE_DIR}/deps -B ${CMAKE_BINARY_DIR}/deps
+      -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE='${VCPKG_CHAINLOAD_TOOLCHAIN_FILE}' -S
+      ${CMAKE_CURRENT_SOURCE_DIR}/deps -B ${CMAKE_BINARY_DIR}/deps
     RESULT_VARIABLE DEPENDENCIES_GENERATE_RESULT)
   if(NOT DEPENDENCIES_GENERATE_RESULT EQUAL 0)
     message(FATAL_ERROR "Could not generate dependencies project")
@@ -82,7 +82,7 @@ message(STATUS "Find libraries path: '${CMAKE_PREFIX_PATH}'")
 set(ZLIB_USE_STATIC_LIBS ON)
 set(OPENSSL_USE_STATIC_LIBS ON)
 
-if (EMSCRIPTEN)
+if(EMSCRIPTEN)
   set(OPENSSL_USE_STATIC_LIBS OFF)
 endif()
 
@@ -96,16 +96,15 @@ find_package(EXPAT REQUIRED)
 find_package(GeographicLib REQUIRED)
 
 # Important: The link order matters, its the reverse order of dependency
-set(EXTENSION_DEPENDENCIES 
-  GDAL::GDAL
-  GEOS::geos_c
-  PROJ::proj
-  EXPAT::EXPAT
-  SQLite::SQLite3
-  ZLIB::ZLIB
-  ${SQLITE3_MEMVFS}
-  ${GeographicLib_LIBRARIES}
-)
+set(EXTENSION_DEPENDENCIES
+    GDAL::GDAL
+    GEOS::geos_c
+    PROJ::proj
+    EXPAT::EXPAT
+    SQLite::SQLite3
+    ZLIB::ZLIB
+    ${SQLITE3_MEMVFS}
+    ${GeographicLib_LIBRARIES})
 
 if(SPATIAL_USE_NETWORK)
   message(STATUS "Building with network functionality")
@@ -124,7 +123,7 @@ if((NOT EMSCRIPTEN) AND (NOT IOS))
     find_library(CoreFoundation_Library CoreFoundation)
     find_library(SystemConfiguration_Library SystemConfiguration)
     list(APPEND EXTENSION_DEPENDENCIES ${CoreFoundation_Library}
-                                     ${SystemConfiguration_Library})
+         ${SystemConfiguration_Library})
   endif()
 endif()
 
@@ -138,7 +137,8 @@ target_link_libraries(${EXTENSION_NAME} PUBLIC ${EXTENSION_DEPENDENCIES})
 set(PARAMETERS "-warnings")
 build_loadable_extension(${TARGET_NAME} ${PARAMETERS} ${EXTENSION_SOURCES})
 
-target_link_libraries(${TARGET_NAME}_loadable_extension ${EXTENSION_DEPENDENCIES})
+target_link_libraries(${TARGET_NAME}_loadable_extension
+                      ${EXTENSION_DEPENDENCIES})
 
 install(
   TARGETS ${EXTENSION_NAME}
