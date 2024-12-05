@@ -24,7 +24,7 @@ private:
 	bool is_eof;
 
 public:
-	explicit DuckDBFileHandle(unique_ptr<FileHandle> file_handle_p) : file_handle(std::move(file_handle_p)) {
+	explicit DuckDBFileHandle(unique_ptr<FileHandle> file_handle_p) : file_handle(std::move(file_handle_p)), is_eof(false) {
 	}
 
 	vsi_l_offset Tell() override {
