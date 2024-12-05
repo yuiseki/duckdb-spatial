@@ -61,54 +61,6 @@ static void TryApplySpatialFilter(OGRLayer *layer, SpatialFilter *spatial_filter
 	}
 }
 
-// TODO: Verify that this actually corresponds to the same sql subset expected by OGR SQL
-static string FilterToGdal(const TableFilter &filter, const string &column_name) {
-
-	switch (filter.filter_type) {
-	case TableFilterType::CONSTANT_COMPARISON: {
-		auto &constant_filter = filter.Cast<ConstantFilter>();
-		return KeywordHelper::WriteOptionallyQuoted(column_name) +
-		       ExpressionTypeToOperator(constant_filter.comparison_type) + constant_filter.constant.ToSQLString();
-	}
-	case TableFilterType::CONJUNCTION_AND: {
-		auto &and_filter = filter.Cast<ConjunctionAndFilter>();
-		vector<string> filters;
-		for (const auto &child_filter : and_filter.child_filters) {
-			filters.push_back(FilterToGdal(*child_filter, column_name));
-		}
-		return StringUtil::Join(filters, " AND ");
-	}
-	case TableFilterType::CONJUNCTION_OR: {
-		auto &or_filter = filter.Cast<ConjunctionOrFilter>();
-		vector<string> filters;
-		for (const auto &child_filter : or_filter.child_filters) {
-			filters.push_back(FilterToGdal(*child_filter, column_name));
-		}
-		return StringUtil::Join(filters, " OR ");
-	}
-	case TableFilterType::IS_NOT_NULL: {
-		return KeywordHelper::WriteOptionallyQuoted(column_name) + " IS NOT NULL";
-	}
-	case TableFilterType::IS_NULL: {
-		return KeywordHelper::WriteOptionallyQuoted(column_name) + " IS NULL";
-	}
-	default:
-		throw NotImplementedException("FilterToGdal: filter type not implemented");
-	}
-}
-
-static string FilterToGdal(const TableFilterSet &set, const vector<idx_t> &column_ids,
-                           const vector<string> &column_names) {
-
-	vector<string> filters;
-	for (auto &input_filter : set.filters) {
-		auto col_idx = column_ids[input_filter.first];
-		auto &col_name = column_names[col_idx];
-		filters.push_back(FilterToGdal(*input_filter.second, col_name));
-	}
-	return StringUtil::Join(filters, " AND ");
-}
-
 struct GdalScanFunctionData : public TableFunctionData {
 	int layer_idx;
 	bool sequential_layer_scan = false;
@@ -152,11 +104,6 @@ struct GdalScanGlobalState : ArrowScanGlobalState {
 //------------------------------------------------------------------------------
 unique_ptr<FunctionData> GdalTableFunction::Bind(ClientContext &context, TableFunctionBindInput &input,
                                                  vector<LogicalType> &return_types, vector<string> &names) {
-
-	auto &config = DBConfig::GetConfig(context);
-	if (!config.options.enable_external_access) {
-		throw PermissionException("Scanning GDAL files is disabled through configuration");
-	}
 
 	auto result = make_uniq<GdalScanFunctionData>();
 
@@ -470,13 +417,6 @@ unique_ptr<GlobalTableFunctionState> GdalTableFunction::InitGlobal(ClientContext
 	TryApplySpatialFilter(layer, data.spatial_filter.get());
 	// TODO: Apply projection pushdown
 
-	// Apply predicate pushdown
-	// We simply create a string out of the predicates and pass it to GDAL.
-	if (input.filters) {
-		auto filter_clause = FilterToGdal(*input.filters, input.column_ids, data.all_names);
-		layer->SetAttributeFilter(filter_clause.c_str());
-	}
-
 	// Create arrow stream from layer
 
 	gstate.stream = make_uniq<ArrowArrayStreamWrapper>();
@@ -678,7 +618,6 @@ void GdalTableFunction::Register(DatabaseInstance &db) {
 	scan.get_partition_data = ArrowTableFunction::ArrowGetPartitionData;
 
 	scan.projection_pushdown = true;
-	scan.filter_pushdown = true;
 
 	scan.named_parameters["open_options"] = LogicalType::LIST(LogicalType::VARCHAR);
 	scan.named_parameters["allowed_drivers"] = LogicalType::LIST(LogicalType::VARCHAR);

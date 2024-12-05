@@ -10,6 +10,7 @@ namespace gdal {
 class DuckDBFileSystemHandler;
 
 class GDALClientContextState : public ClientContextState {
+	ClientContext &context;
 	string client_prefix;
 	DuckDBFileSystemHandler *fs_handler;
 

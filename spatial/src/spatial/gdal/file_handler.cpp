@@ -24,7 +24,8 @@ private:
 	bool is_eof;
 
 public:
-	explicit DuckDBFileHandle(unique_ptr<FileHandle> file_handle_p) : file_handle(std::move(file_handle_p)), is_eof(false) {
+	explicit DuckDBFileHandle(unique_ptr<FileHandle> file_handle_p)
+	    : file_handle(std::move(file_handle_p)), is_eof(false) {
 	}
 
 	vsi_l_offset Tell() override {
@@ -216,16 +217,24 @@ public:
 				return nullptr;
 			}
 
-			// Fall back to GDAL instead
-			auto handler = VSIFileManager::GetHandler(file_name);
-			if (handler) {
-				return handler->Open(file_name, access);
-			} else {
+			// Fall back to GDAL instead (if external access is enabled)
+			if (!context.db->config.options.enable_external_access) {
+				if (bSetError) {
+					VSIError(VSIE_FileError, "Failed to open file %s with GDAL: External access is disabled",
+					         file_name);
+				}
+				return nullptr;
+			}
+
+			const auto handler = VSIFileManager::GetHandler(file_name);
+			if (!handler) {
 				if (bSetError) {
 					VSIError(VSIE_FileError, "Failed to open file %s: %s", file_name, ex.what());
 				}
 				return nullptr;
 			}
+
+			return handler->Open(file_name, access);
 		}
 	}
 
@@ -377,7 +386,7 @@ public:
 // use their own attached file systems. This is necessary because GDAL is
 // not otherwise aware of the connection context.
 //
-GDALClientContextState::GDALClientContextState(ClientContext &context) {
+GDALClientContextState::GDALClientContextState(ClientContext &context) : context(context) {
 
 	// Create a new random prefix for this client
 	client_prefix = StringUtil::Format("/vsiduckdb-%s/", UUID::ToString(UUID::GenerateRandomUUID()));
@@ -387,6 +396,8 @@ GDALClientContextState::GDALClientContextState(ClientContext &context) {
 
 	// Register the file handler
 	VSIFileManager::InstallHandler(client_prefix, fs_handler);
+
+	// Also pass a reference to the client context
 }
 
 GDALClientContextState::~GDALClientContextState() {
@@ -404,6 +415,9 @@ void GDALClientContextState::QueryEnd() {
 string GDALClientContextState::GetPrefix(const string &value) const {
 	// If the user explicitly asked for a VSI prefix, we don't add our own
 	if (StringUtil::StartsWith(value, "/vsi")) {
+		if (!context.db->config.options.enable_external_access) {
+			throw PermissionException("Cannot open file '%s' with VSI prefix: External access is disabled", value);
+		}
 		return value;
 	}
 	return client_prefix + value;

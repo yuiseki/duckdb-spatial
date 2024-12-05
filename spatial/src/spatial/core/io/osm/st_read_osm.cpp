@@ -84,11 +84,6 @@ static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindIn
 	names.push_back("ref_types");
 
 	// Create bind data
-	auto &config = DBConfig::GetConfig(context);
-	if (!config.options.enable_external_access) {
-		throw PermissionException("Scanning OSM files is disabled through configuration");
-	}
-
 	auto file_name = StringValue::Get(input.inputs[0]);
 	auto result = make_uniq<BindData>(file_name);
 	return std::move(result);
