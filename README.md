@@ -15,7 +15,7 @@
 - [Limitations and Roadmap](#limitations-and-roadmap)
 
 # What is this?
-This is a prototype of a geospatial extension for DuckDB that adds support for working with spatial data and functions in the form of a `GEOMETRY` type based on the the "Simple Features" geometry model, as well as non-standard specialized columnar DuckDB native geometry types that provide better compression and faster execution in exchange for flexibility.
+This is a prototype of a geospatial extension for DuckDB that adds support for working with spatial data and functions in the form of a `GEOMETRY` type based on the "Simple Features" geometry model, as well as non-standard specialized columnar DuckDB native geometry types that provide better compression and faster execution in exchange for flexibility.
 
 Please note that this extension is still in a very early stage of development, and the internal storage format for the geometry types may change indiscriminately between commits. We are actively working on it, and we welcome both contributions and feedback. Please see the [function table](docs/functions.md) or the [roadmap entries](https://github.com/duckdblabs/duckdb_spatial/labels/roadmap) for the current implementation status.
 
