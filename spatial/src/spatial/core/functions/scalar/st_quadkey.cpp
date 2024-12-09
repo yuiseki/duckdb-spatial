@@ -93,7 +93,7 @@ static void GeometryQuadKeyFunction(DataChunk &args, ExpressionState &state, Vec
 static constexpr const char *DOC_DESCRIPTION = R"(
 
 Compute the [quadkey](https://learn.microsoft.com/en-us/bingmaps/articles/bing-maps-tile-system) for a given lon/lat point at a given level.
-Note that the the parameter order is __longitude__, __latitude__.
+Note that the parameter order is __longitude__, __latitude__.
 
 `level` has to be between 1 and 23, inclusive.
 
