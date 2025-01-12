@@ -54,8 +54,8 @@ void CoreScalarFunctions::RegisterStIsClosed(DatabaseInstance &db) {
 
 	ScalarFunctionSet set("ST_IsClosed");
 
-	set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::BOOLEAN, IsClosedFunction, nullptr, nullptr,
-	                               nullptr, GeometryFunctionLocalState::Init));
+	//set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::BOOLEAN, IsClosedFunction, nullptr, nullptr,
+	//                               nullptr, GeometryFunctionLocalState::Init));
 
 	ExtensionUtil::RegisterFunction(db, set);
 	DocUtil::AddDocumentation(db, "ST_IsClosed", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);

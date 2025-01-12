@@ -85,9 +85,10 @@ void CoreScalarFunctions::RegisterStIsEmpty(DatabaseInstance &db) {
 	    ScalarFunction({GeoTypes::LINESTRING_2D()}, LogicalType::BOOLEAN, LineIsEmptyFunction));
 	is_empty_function_set.AddFunction(
 	    ScalarFunction({GeoTypes::POLYGON_2D()}, LogicalType::BOOLEAN, PolygonIsEmptyFunction));
-	is_empty_function_set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::BOOLEAN,
-	                                                 GeometryIsEmptyFunction, nullptr, nullptr, nullptr,
-	                                                 GeometryFunctionLocalState::Init));
+
+	//is_empty_function_set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::BOOLEAN,
+	//                                                 GeometryIsEmptyFunction, nullptr, nullptr, nullptr,
+	//                                                 GeometryFunctionLocalState::Init));
 
 	ExtensionUtil::RegisterFunction(db, is_empty_function_set);
 	DocUtil::AddDocumentation(db, "ST_IsEmpty", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);

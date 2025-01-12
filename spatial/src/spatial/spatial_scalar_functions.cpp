@@ -8,6 +8,7 @@
 #define SGL_ASSERT(x) D_ASSERT(x)
 #include "sgl/sgl.hpp"
 
+#include "duckdb/common/vector_operations/generic_executor.hpp"
 
 namespace spatial {
 namespace core {
@@ -596,11 +597,30 @@ struct ST_Contains {
 
 struct ST_Dimension {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
+		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(),
+			[&](const string_t &blob) {
+				const auto geom = lstate.Deserialize(blob);
+				return sgl::ops::max_surface_dimension(&geom);
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Dimension", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::INTEGER);
 
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription("Returns the max surface dimension of a geometry");
+				// TODO: Set example
+			});
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
 	}
 };
 
@@ -743,11 +763,49 @@ struct ST_Has {
 
 struct ST_Haversine {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
+		BinaryExecutor::Execute<string_t, string_t, double>(args.data[0], args.data[1], result, args.size(),
+			[&](const string_t &l_blob, const string_t &r_blob) {
+				const auto lhs = lstate.Deserialize(l_blob);
+				const auto rhs = lstate.Deserialize(r_blob);
+
+				if(lhs.get_type() != sgl::geometry_type::POINT || rhs.get_type() != sgl::geometry_type::POINT) {
+					throw InvalidInputException("ST_Distance_Sphere only accepts POINT geometries");
+				}
+
+				if(lhs.is_empty() || rhs.is_empty()) {
+					throw InvalidInputException("ST_Distance_Sphere does not accept empty geometries");
+				}
+
+				const auto lv = lhs.get_vertex_xy(0);
+				const auto rv = rhs.get_vertex_xy(0);
+
+				return sgl::util::haversine_distance(lv.x, lv.y, rv.x, rv.y);
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Distance_Sphere", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom1", GeoTypes::GEOMETRY());
+				variant.AddParameter("geom2", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::DOUBLE);
 
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription(R"(
+				    Returns the haversine distance between two geometries.
+
+				    - Only supports POINT geometries.
+				    - Returns the distance in meters.
+				    - The input is expected to be in WGS84 (EPSG:4326) coordinates, using a [latitude, longitude] axis order.
+				)");
+			});
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
 	}
 };
 
@@ -783,51 +841,317 @@ struct ST_IntersectsExtent {
 
 struct ST_IsClosed {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
+		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(),
+			[&](const string_t &blob) {
+				const auto geom = lstate.Deserialize(blob);
+				switch(geom.get_type()) {
+					case sgl::geometry_type::LINESTRING:
+						return sgl::linestring::is_closed(&geom);
+					case sgl::geometry_type::MULTI_LINESTRING:
+						return sgl::multi_linestring::is_closed(&geom);
+					default:
+						// TODO: We should support more than just LINESTRING and MULTILINESTRING (like PostGIS does)
+						throw InvalidInputException("ST_IsClosed only accepts LINESTRING and MULTILINESTRING geometries");
+				}
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_IsClosed", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::BOOLEAN);
 
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription("Check if a geometry is closed");
+				// TODO: Set example
+			});
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
 	}
 };
 
 struct ST_IsEmpty {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
+		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(),
+			[&](const string_t &blob) {
+				const auto geom = lstate.Deserialize(blob);
+				const auto vertex_count = sgl::ops::vertex_count(&geom);
+				return vertex_count == 0;
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_IsEmpty", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::BOOLEAN);
 
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription("Check if a geometry is empty");
+				// todo: Set example
+			});
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
 	}
 };
 
 struct ST_Length {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
+		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(),
+			[&](const string_t &blob) {
+				const auto geom = lstate.Deserialize(blob);
+				return sgl::ops::length(&geom);
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Length", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::DOUBLE);
 
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription("Compute the length of a geometry");
+				// TODO: Set example
+			});
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
 	}
 };
 
 struct ST_MakeEnvelope {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
+		auto &min_x_vec = args.data[0];
+		auto &min_y_vec = args.data[1];
+		auto &max_x_vec = args.data[2];
+		auto &max_y_vec = args.data[3];
+
+		using DOUBLE_TYPE = PrimitiveType<double>;
+		using STRING_TYPE = PrimitiveType<string_t>;
+
+		GenericExecutor::ExecuteQuaternary<DOUBLE_TYPE, DOUBLE_TYPE, DOUBLE_TYPE, DOUBLE_TYPE, STRING_TYPE>(
+			min_x_vec, min_y_vec, max_x_vec, max_y_vec, result, args.size(),
+			[&](const DOUBLE_TYPE vmin_x, const DOUBLE_TYPE vmin_y, const DOUBLE_TYPE vmax_x, const DOUBLE_TYPE vmax_y) {
+
+				const auto min_x = vmin_x.val;
+				const auto min_y = vmin_y.val;
+				const auto max_x = vmax_x.val;
+				const auto max_y = vmax_y.val;
+
+				// This is pretty cool, we dont even need to allocate anything
+				const double buffer[10] = {min_x, min_y, min_x, max_y, max_x, max_y, max_x, min_y, min_x, min_y};
+
+				auto ring = sgl::linestring::make_empty(false, false);
+				ring.set_vertex_data(reinterpret_cast<const char*>(buffer), 5);
+
+				auto poly = sgl::polygon::make_empty();
+				poly.append_part(&ring);
+
+				return lstate.Serialize(result, poly);
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_MakeEnvelope", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("min_x", LogicalType::DOUBLE);
+				variant.AddParameter("min_y", LogicalType::DOUBLE);
+				variant.AddParameter("max_x", LogicalType::DOUBLE);
+				variant.AddParameter("max_y", LogicalType::DOUBLE);
+				variant.SetReturnType(GeoTypes::GEOMETRY());
 
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription("Create a rectangular polygon from min/max coordinates");
+				// todo: example
+			});
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
 	}
 };
 
 struct ST_MakeLine {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+	static void ExecuteList(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
+		auto &child_vec = ListVector::GetEntry(args.data[0]);
+		auto child_len = ListVector::GetListSize(args.data[0]);
+
+		UnifiedVectorFormat format;
+		child_vec.ToUnifiedFormat(child_len, format);
+
+		UnaryExecutor::Execute<list_entry_t, string_t>(args.data[0], result, args.size(),
+			[&](const list_entry_t &entry) {
+				const auto offset = entry.offset;
+				const auto length = entry.length;
+
+				if(length < 2) {
+					// Early out if we don't have enough geometries
+					throw InvalidInputException("ST_MakeLine requires at least 2 geometries");
+				}
+
+				uint32_t line_length = 0;
+				// First pass, filter types, count non-null entries
+
+				for(idx_t i = offset; i < offset + length; i++) {
+					const auto mapped_idx = format.sel->get_index(i);
+					if(format.validity.RowIsValid(mapped_idx)) {
+						continue;
+					}
+					auto &blob = UnifiedVectorFormat::GetData<string_t>(format)[mapped_idx];
+
+					// TODO: Peek without deserializing
+					const auto geom = lstate.Deserialize(blob);
+					if(geom.get_type() != sgl::geometry_type::POINT) {
+						throw InvalidInputException("ST_MakeLine only accepts POINT geometries");
+					}
+
+					// TODO: Support Z and M
+					if(geom.has_z() || geom.has_m()) {
+						throw InvalidInputException("ST_MakeLine from list does not accept POINT geometries with Z or M values");
+					}
+
+					line_length++;
+				}
+
+				if(line_length < 2) {
+					throw InvalidInputException("ST_MakeLine requires at least 2 non-null geometries");
+				}
+
+				const auto line_data = lstate.GetArena().AllocateAligned(line_length * 2 * sizeof(double));
+
+				// Second pass, copy over the vertex data
+				uint32_t vertex_idx = 0;
+				for(idx_t i = offset; i < offset + length; i++) {
+					D_ASSERT(vertex_idx < line_length);
+
+					const auto mapped_idx = format.sel->get_index(i);
+					if(format.validity.RowIsValid(mapped_idx)) {
+						continue;
+					}
+					auto &blob = UnifiedVectorFormat::GetData<string_t>(format)[mapped_idx];
+
+					const auto point = lstate.Deserialize(blob);
+					const auto point_data = point.get_vertex_data();
+
+					memcpy(line_data + vertex_idx * 2 * sizeof(double), point_data, 2 * sizeof(double));
+					vertex_idx++;
+				}
+
+				D_ASSERT(vertex_idx == line_length);
+
+				auto line = sgl::linestring::make_empty(false, false);
+				line.set_vertex_data(line_data, line_length);
+
+				return lstate.Serialize(result, line);
+		});
+	}
+
+	static void ExecuteBinary(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		BinaryExecutor::Execute<string_t, string_t, string_t>(
+			args.data[0], args.data[1], result, args.size(),
+			[&](const string_t &l_blob, const string_t &r_blob) {
+
+				const auto l_geom = lstate.Deserialize(l_blob);
+				const auto r_geom = lstate.Deserialize(r_blob);
+
+				if(l_geom.get_type() != sgl::geometry_type::POINT || r_geom.get_type() != sgl::geometry_type::POINT) {
+					throw InvalidInputException("ST_MakeLine only accepts POINT geometries");
+				}
+
+				if(l_geom.is_empty() || r_geom.is_empty()) {
+					throw InvalidInputException("ST_MakeLine does not accept empty POINT geometries");
+				}
+
+				const auto has_z = l_geom.has_z() || r_geom.has_z();
+				const auto has_m = l_geom.has_m() || r_geom.has_m();
+
+				auto linestring = sgl::linestring::make_empty(has_z, has_m);
+
+				// Create a buffer large enough to store two vertices
+				double buffer[8] = {0};
+
+				const auto v1 = l_geom.get_vertex_xyzm(0);
+				const auto v2 = r_geom.get_vertex_xyzm(0);
+
+				// TODO: this is a bit ugly, add proper append method to sgl instead
+				idx_t idx = 0;
+				buffer[idx++] = v1.x;
+				buffer[idx++] = v1.y;
+				if(has_z) {
+					buffer[idx++] = l_geom.has_z() ? v1.zm : 0;
+				}
+				if(has_m) {
+					buffer[idx++] = l_geom.has_m() ? l_geom.has_z() ? v1.m : v1.zm : 0;
+				}
+				buffer[idx++] = v2.x;
+				buffer[idx++] = v2.y;
+				if(has_z) {
+					buffer[idx++] = r_geom.has_z() ? v2.zm : 0;
+				}
+				if(has_m) {
+					buffer[idx++] = r_geom.has_m() ? r_geom.has_z() ? v2.m : v2.zm : 0;
+				}
+
+				linestring.set_vertex_data(reinterpret_cast<const char*>(buffer), 2);
+
+				return lstate.Serialize(result, linestring);
+			});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_MakeLine", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geoms", LogicalType::LIST(GeoTypes::GEOMETRY()));
+				variant.SetReturnType(GeoTypes::GEOMETRY());
 
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteList);
+
+				variant.SetDescription("Create a LINESTRING from a list of POINT geometries");
+				variant.SetExample("SELECT ST_MakeLine([ST_Point(0, 0), ST_Point(1, 1)]);");
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("start", GeoTypes::GEOMETRY());
+				variant.AddParameter("end", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteBinary);
+
+				variant.SetDescription("Create a LINESTRING from two POINT geometries");
+				variant.SetExample("SELECT ST_MakeLine(ST_Point(0, 0), ST_Point(1, 1));");
+			});
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
 	}
 };
 
@@ -851,7 +1175,7 @@ struct ST_MakePolygon {
 					throw std::runtime_error("ST_MakePolygon shell must be closed (first and last vertex must be equal)");
 				}
 
-				auto polygon = sgl::polygon::make_empty();
+				auto polygon = sgl::polygon::make_empty(line.has_z(), line.has_m());
 				polygon.append_part(&line);
 
 				return lstate.Serialize(result, polygon);
@@ -870,20 +1194,22 @@ struct ST_Multi {
 			[&](const string_t &blob) {
 
 				auto geom = lstate.Deserialize(blob);
+				const auto has_z = geom.has_z();
+				const auto has_m = geom.has_m();
 
 				switch(geom.get_type()) {
 					case sgl::geometry_type::POINT: {
-						auto mpoint = sgl::multi_point::make_empty();
+						auto mpoint = sgl::multi_point::make_empty(has_z, has_m);
 						mpoint.append_part(&geom);
 						return lstate.Serialize(result, mpoint);
 					}
 					case sgl::geometry_type::LINESTRING: {
-						auto mline = sgl::multi_line_string::make_empty();
+						auto mline = sgl::multi_linestring::make_empty(has_z, has_m);
 						mline.append_part(&geom);
 						return lstate.Serialize(result, mline);
 					}
 					case sgl::geometry_type::POLYGON: {
-						auto mpoly = sgl::multi_polygon::make_empty();
+						auto mpoly = sgl::multi_polygon::make_empty(has_z, has_m);
 						mpoly.append_part(&geom);
 						return lstate.Serialize(result, mpoly);
 					}
@@ -895,37 +1221,126 @@ struct ST_Multi {
 	}
 
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Multi", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
 
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription("Convert a geometry to a MULTI* geometry");
+				// TODO: Set example
+			});
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
 	}
 };
 
 struct ST_NGeometries {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
+		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(),
+			[&](const string_t &blob) {
+				const auto geom = lstate.Deserialize(blob);
+				if(geom.is_single_part()) {
+					return geom.is_empty() ? 0 : 1;
+				}
+				if(geom.is_multi_part()) {
+					return static_cast<int32_t>(geom.get_count());
+				}
+				return 0;
+			});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		// TODO: Maybe make a macro for the aliases
+		for(auto &alias : {"ST_NumGeometries", "ST_NGeometries"}) {
+			FunctionBuilder::RegisterScalar(db, alias, [](ScalarFunctionBuilder &func) {
+				func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+					variant.AddParameter("geom", GeoTypes::GEOMETRY());
+					variant.SetReturnType(LogicalType::INTEGER);
 
+					variant.SetInit(LocalState::Init);
+					variant.SetFunction(Execute);
+
+					variant.SetDescription("Returns the number of geometries in a geometry collection");
+					// todo: Set example
+				});
+				func.SetTag("ext", "spatial");
+				func.SetTag("category", "property");
+			});
+		}
 	}
 };
 
 struct ST_NInteriorRings {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
+		UnaryExecutor::ExecuteWithNulls<string_t, int32_t>(args.data[0], result, args.size(),
+			[&](const string_t &blob, ValidityMask &validity, idx_t idx) {
+				const auto geom = lstate.Deserialize(blob);
+
+				if(geom.get_type() != sgl::geometry_type::POLYGON) {
+					validity.SetInvalid(idx);
+					return 0;
+				}
+
+				const auto n_rings = static_cast<int32_t>(geom.get_count());
+				return n_rings == 0 ? 0 : n_rings - 1;
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		// todo: maybe make a macro for the aliases
+		for(auto &alias : {"ST_NumInteriorRings", "ST_NInteriorRings"}) {
+			FunctionBuilder::RegisterScalar(db, alias, [](ScalarFunctionBuilder &func) {
+				func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+					variant.AddParameter("geom", GeoTypes::GEOMETRY());
+					variant.SetReturnType(LogicalType::INTEGER);
 
+					variant.SetInit(LocalState::Init);
+					variant.SetFunction(Execute);
+
+					variant.SetDescription("Returns the number of interior rings in a polygon");
+					// TODO: Set example
+				});
+				func.SetTag("ext", "spatial");
+				func.SetTag("category", "property");
+			});
+		}
 	}
 };
 
 struct ST_NPoints {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
+		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(),
+			[&](const string_t &blob) {
+				const auto geom = lstate.Deserialize(blob);
+				return sgl::ops::vertex_count(&geom);
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_NPoints", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::INTEGER);
 
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription("Returns the number of vertices in a geometry");
+				// todo: Set example
+			});
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
 	}
 };
 
@@ -963,7 +1378,33 @@ struct ST_Point {
 
 struct ST_PointN {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
+		/*
+		BinaryExecutor::ExecuteWithNulls<geometry_t, int32_t, geometry_t>(
+			args.data[0], args.data[1], result, args.size(),
+			[&](const string_t &blob, int32_t index, ValidityMask &mask, idx_t row_idx) {
+
+				// TODO: peek without deserialing
+				if (input.GetType() != GeometryType::LINESTRING) {
+					mask.SetInvalid(row_idx);
+					return string_t {};
+				}
+
+				const auto line = lstate.Deserialize(blob);
+				const auto point_count = line.get_count();;
+
+				if (point_count == 0 || index == 0 || index < -static_cast<int64_t>(point_count) ||
+					index > static_cast<int64_t>(point_count)) {
+					mask.SetInvalid(row_idx);
+					return geometry_t {};
+				}
+
+				auto actual_index = index < 0 ? point_count + index : index - 1;
+				auto point = LineString::GetPointAsReference(line, actual_index);
+				return lstate.Serialize(result, point);
+			});
+			*/
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -1011,141 +1452,282 @@ struct ST_StartPoint {
 	}
 };
 
-struct ST_X {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
+enum class VertexOrdinate {
+	X,
+	Y,
+	Z,
+	M
+};
+
+template<class OP>
+struct PointAccessFunctionBase {
+	static size_t GetOrdinateOffset(const sgl::geometry& geom) {
+		switch(OP::ORDINATE) {
+		case VertexOrdinate::X:
+			return 0;
+		case VertexOrdinate::Y:
+			return 1;
+		case VertexOrdinate::Z:
+			return 2;
+		case VertexOrdinate::M:
+			return geom.has_z() ? 3 : 2;
+		default:
+			return 0;
+		}
+	}
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		UnaryExecutor::ExecuteWithNulls<string_t, double>(args.data[0], result, args.size(),
+			[&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
+				const auto geom = lstate.Deserialize(blob);
+
+				if(geom.get_type() != sgl::geometry_type::POINT) {
+					throw InvalidInputException("%s only supports POINT geometries", OP::NAME);
+				}
+
+				if(geom.is_empty()) {
+					mask.SetInvalid(idx);
+					return 0.0;
+				}
+
+				if(OP::ORDINATE == VertexOrdinate::Z && !geom.has_z()) {
+					mask.SetInvalid(idx);
+					return 0.0;
+				}
+
+				if(OP::ORDINATE == VertexOrdinate::M && !geom.has_m()) {
+					mask.SetInvalid(idx);
+					return 0.0;
+				}
+
+				const auto vertex_data = geom.get_vertex_data();
+				const auto offset = GetOrdinateOffset(geom);
+
+				double res = 0.0;
+				memcpy(&res, vertex_data + offset * sizeof(double), sizeof(double));
+				return res;
+			});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, OP::NAME, [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::DOUBLE);
 
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription(OP::DESCRIPTION);
+				variant.SetExample(OP::EXAMPLE);
+			});
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
 	}
 };
 
-struct ST_XMax {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
+struct VertexMinAggOp {
+	static double Init() {
+		return std::numeric_limits<double>::max();
 	}
-
-	static void Register(DatabaseInstance &db) {
-
-	}
-};
-
-struct ST_XMin {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-
-	}
-
-	static void Register(DatabaseInstance &db) {
-
+	static double Merge(const double a, const double b) {
+		return std::min(a, b);
 	}
 };
 
-struct ST_Y {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-
+struct VertexMaxAggOp {
+	static double Init() {
+		return std::numeric_limits<double>::lowest();
 	}
-
-	static void Register(DatabaseInstance &db) {
-
-	}
-};
-
-struct ST_YMax {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-
-	}
-
-	static void Register(DatabaseInstance &db) {
-
+	static double Merge(const double a, const double b) {
+		return std::max(a, b);
 	}
 };
 
-struct ST_YMin {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
+template<class OP, class AGG>
+struct VertexAggFunctionBase {
+	static size_t GetOrdinateOffset(const sgl::geometry& geom) {
+		switch(OP::ORDINATE) {
+			case VertexOrdinate::X:
+				return 0;
+			case VertexOrdinate::Y:
+				return 1;
+			case VertexOrdinate::Z:
+				return 2;
+			case VertexOrdinate::M:
+				return geom.has_z() ? 3 : 2;
+			default:
+				return 0;
+		}
+	}
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::ExecuteWithNulls<string_t, double>(args.data[0], result, args.size(),
+			[&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
+				const auto geom = lstate.Deserialize(blob);
+
+				if(geom.is_empty()) {
+					mask.SetInvalid(idx);
+					return 0.0;
+				}
+				if(OP::ORDINATE == VertexOrdinate::Z && !geom.has_z()) {
+					mask.SetInvalid(idx);
+					return 0.0;
+				}
+				if(OP::ORDINATE == VertexOrdinate::M && !geom.has_m()) {
+					mask.SetInvalid(idx);
+					return 0.0;
+				}
+
+				const auto offset = GetOrdinateOffset(geom);
+
+				double res = AGG::Init();
+
+				sgl::ops::visit_vertices(&geom, [&](const uint8_t* vertex) {
+
+					double val = 0.0;
+					memcpy(&val, vertex + offset * sizeof(double), sizeof(double));
+
+					res = AGG::Merge(res, val);
+				});
+
+				return res;
+			});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, OP::NAME, [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::DOUBLE);
 
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription(OP::DESCRIPTION);
+				variant.SetExample(OP::EXAMPLE);
+			});
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
 	}
 };
 
-struct ST_Z {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
-	}
-
-	static void Register(DatabaseInstance &db) {
-
-	}
+struct ST_X : PointAccessFunctionBase<ST_X> {
+	static constexpr auto NAME = "ST_X";
+	static constexpr auto DESCRIPTION = "Returns the X coordinate of a point geometry";
+	static constexpr auto EXAMPLE = "SELECT ST_X(ST_Point(1, 2))";
+	static constexpr auto ORDINATE = VertexOrdinate::X;
 };
 
-struct ST_ZMax {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-
-	}
-
-	static void Register(DatabaseInstance &db) {
-
-	}
+struct ST_XMax : VertexAggFunctionBase<ST_XMax, VertexMaxAggOp> {
+	static auto constexpr NAME = "ST_XMax";
+	static auto constexpr DESCRIPTION = "Returns the maximum X coordinate of a geometry";
+	static auto constexpr EXAMPLE = "SELECT ST_XMax(ST_Point(1, 2))";
+	static auto constexpr ORDINATE = VertexOrdinate::X;
 };
 
-struct ST_ZMin {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-
-	}
-
-	static void Register(DatabaseInstance &db) {
-
-	}
+struct ST_XMin : VertexAggFunctionBase<ST_XMin, VertexMinAggOp> {
+	static constexpr auto NAME = "ST_XMin";
+	static constexpr auto DESCRIPTION = "Returns the minimum X coordinate of a geometry";
+	static constexpr auto EXAMPLE = "SELECT ST_XMin(ST_Point(1, 2))";
+	static constexpr auto ORDINATE = VertexOrdinate::X;
 };
 
-struct ST_M {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-
-	}
-
-	static void Register(DatabaseInstance &db) {
-
-	}
+struct ST_Y : PointAccessFunctionBase<ST_Y> {
+	static constexpr auto NAME = "ST_Y";
+	static constexpr auto DESCRIPTION = "Returns the Y coordinate of a point geometry";
+	static constexpr auto EXAMPLE = "SELECT ST_Y(ST_Point(1, 2))";
+	static constexpr auto ORDINATE = VertexOrdinate::Y;
 };
 
-struct ST_MMax {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-
-	}
-
-	static void Register(DatabaseInstance &db) {
-
-	}
+struct ST_YMax : VertexAggFunctionBase<ST_YMax, VertexMaxAggOp> {
+	static constexpr auto NAME = "ST_YMax";
+	static constexpr auto DESCRIPTION = "Returns the maximum Y coordinate of a geometry";
+	static constexpr auto EXAMPLE = "SELECT ST_YMax(ST_Point(1, 2))";
+	static constexpr auto ORDINATE = VertexOrdinate::Y;
 };
 
-struct ST_MMin {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+struct ST_YMin : VertexAggFunctionBase<ST_YMin, VertexMinAggOp> {
+	static constexpr auto NAME = "ST_YMin";
+	static constexpr auto DESCRIPTION = "Returns the minimum Y coordinate of a geometry";
+	static constexpr auto EXAMPLE = "SELECT ST_YMin(ST_Point(1, 2))";
+	static constexpr auto ORDINATE = VertexOrdinate::Y;
+};
 
-	}
+struct ST_Z : PointAccessFunctionBase<ST_Z> {
+	static constexpr auto NAME = "ST_Z";
+	static constexpr auto DESCRIPTION = "Returns the Z coordinate of a point geometry";
+	static constexpr auto EXAMPLE = "SELECT ST_Z(ST_Point(1, 2, 3))";
+	static constexpr auto ORDINATE = VertexOrdinate::Z;
+};
 
-	static void Register(DatabaseInstance &db) {
 
-	}
+struct ST_ZMax : VertexAggFunctionBase<ST_ZMax, VertexMaxAggOp> {
+	static auto constexpr NAME = "ST_ZMax";
+	static auto constexpr DESCRIPTION = "Returns the maximum Z coordinate of a geometry";
+	static auto constexpr EXAMPLE = "SELECT ST_ZMax(ST_Point(1, 2, 3))";
+	static auto constexpr ORDINATE = VertexOrdinate::Z;
+};
+
+
+struct ST_ZMin : VertexAggFunctionBase<ST_ZMin, VertexMinAggOp> {
+	static constexpr auto NAME = "ST_ZMin";
+	static constexpr auto DESCRIPTION = "Returns the minimum Z coordinate of a geometry";
+	static constexpr auto EXAMPLE = "SELECT ST_ZMin(ST_Point(1, 2, 3))";
+	static constexpr auto ORDINATE = VertexOrdinate::Z;
+};
+
+struct ST_M : PointAccessFunctionBase<ST_M> {
+	static constexpr auto NAME = "ST_M";
+	static constexpr auto DESCRIPTION = "Returns the M coordinate of a point geometry";
+	static constexpr auto EXAMPLE = "SELECT ST_M(ST_Point(1, 2, 3, 4))";
+	static constexpr auto ORDINATE = VertexOrdinate::M;
+};
+
+struct ST_MMax : VertexAggFunctionBase<ST_MMax, VertexMaxAggOp> {
+	static constexpr auto NAME = "ST_MMax";
+	static constexpr auto DESCRIPTION = "Returns the maximum M coordinate of a geometry";
+	static constexpr auto EXAMPLE = "SELECT ST_MMax(ST_Point(1, 2, 3, 4))";
+	static constexpr auto ORDINATE = VertexOrdinate::M;
+};
+
+struct ST_MMin : VertexAggFunctionBase<ST_MMin, VertexMinAggOp> {
+	static constexpr auto NAME = "ST_MMin";
+	static constexpr auto DESCRIPTION = "Returns the minimum M coordinate of a geometry";
+	static constexpr auto EXAMPLE = "SELECT ST_MMin(ST_Point(1, 2, 3, 4))";
+	static constexpr auto ORDINATE = VertexOrdinate::M;
 };
 
 } // namespace
 
 void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Area::Register(db);
+
+	// 25 functions to go!
+
+	/*
 	ST_AsGeoJSON::Register(db);
 	ST_AsText::Register(db);
 	ST_AsWKB::Register(db);
 	ST_AsHEXWKB::Register(db);
 	ST_AsSVG::Register(db);
-	ST_Centroid::Register(db);
+	// ST_Centroid::Register(db); - not applicable now
 	ST_Collect::Register(db);
 	ST_CollectionExtract::Register(db);
-	ST_Contains::Register(db);
+	// ST_Contains::Register(db); - not applicable now
+	*/
 	ST_Dimension::Register(db);
-	ST_Distance::Register(db);
+	/*
+	// ST_Distance::Register(db); -- not applicable now
 	ST_Dump::Register(db);
 	ST_EndPoint::Register(db);
 	ST_Extent::Register(db);
@@ -1157,27 +1739,35 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_GeomFromText::Register(db);
 	ST_GeomFromWKB::Register(db);
 	ST_Has::Register(db);
+	*/
 	ST_Haversine::Register(db);
+	/*
 	ST_Hilbert::Register(db);
-	ST_Intersects::Register(db);
-	ST_IntersectsExtent::Register(db);
+	// ST_Intersects::Register(db); - not applicable now
+	// ST_IntersectsExtent::Register(db); - not applicable now
+	*/
 	ST_IsClosed::Register(db);
 	ST_IsEmpty::Register(db);
 	ST_Length::Register(db);
+
 	ST_MakeEnvelope::Register(db);
 	ST_MakeLine::Register(db);
-	ST_MakePolygon::Register(db);
+	//ST_MakePolygon::Register(db);
+
 	ST_Multi::Register(db);
 	ST_NGeometries::Register(db);
+
 	ST_NInteriorRings::Register(db);
 	ST_NPoints::Register(db);
-	ST_Perimeter::Register(db);
+
+	//ST_Perimeter::Register(db);
 	ST_Point::Register(db);
 	ST_PointN::Register(db);
-	ST_Points::Register(db);
-	ST_QuadKey::Register(db);
-	ST_RemoveRepeatedPoints::Register(db);
-	ST_StartPoint::Register(db);
+	//ST_Points::Register(db);
+	//ST_QuadKey::Register(db);
+	//ST_RemoveRepeatedPoints::Register(db);
+	//ST_StartPoint::Register(db);
+
 	ST_X::Register(db);
 	ST_XMax::Register(db);
 	ST_XMin::Register(db);
@@ -1190,6 +1780,7 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_M::Register(db);
 	ST_MMax::Register(db);
 	ST_MMin::Register(db);
+
 }
 
 }

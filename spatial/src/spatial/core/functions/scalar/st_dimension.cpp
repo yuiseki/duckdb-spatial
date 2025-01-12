@@ -47,8 +47,8 @@ static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}, {"category", "property
 void CoreScalarFunctions::RegisterStDimension(DatabaseInstance &db) {
 	ScalarFunctionSet set("ST_Dimension");
 
-	set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::INTEGER, DimensionFunction, nullptr, nullptr,
-	                               nullptr, GeometryFunctionLocalState::Init));
+	//set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::INTEGER, DimensionFunction, nullptr, nullptr,
+	//                               nullptr, GeometryFunctionLocalState::Init));
 
 	ExtensionUtil::RegisterFunction(db, set);
 	DocUtil::AddDocumentation(db, "ST_Dimension", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);

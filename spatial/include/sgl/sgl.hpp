@@ -90,7 +90,11 @@ private:
 	// clang-format on
 public:
 	geometry() = default;
-	explicit geometry(const geometry_type type) : type(type) {}
+	explicit geometry(const geometry_type type, const bool has_z = false, const bool has_m = false)
+		: type(type) {
+		set_z(has_z);
+		set_m(has_m);
+	}
 
 	geometry_type get_type() const;
 	void set_type(geometry_type type);
@@ -319,8 +323,8 @@ inline std::string geometry::type_to_string(const geometry_type type) {
 namespace sgl {
 
 namespace linestring {
-inline geometry make_empty() {
-	return geometry(geometry_type::LINESTRING);
+inline geometry make_empty(bool has_z = false, bool has_m = false) {
+	return geometry(geometry_type::LINESTRING, has_z, has_m);
 }
 
 inline bool is_closed(const geometry *geom) {
@@ -404,8 +408,8 @@ inline double length(const geometry *geom) {
 
 namespace polygon {
 
-inline geometry make_empty() {
-	return geometry(geometry_type::POLYGON);
+inline geometry make_empty(bool has_z = false, bool has_m = false) {
+	return geometry(geometry_type::POLYGON, has_z, has_m);
 }
 
 inline double area(const geometry *geom) {
@@ -431,23 +435,59 @@ inline double area(const geometry *geom) {
 
 namespace multi_point {
 
-inline geometry make_empty() {
-	return geometry(geometry_type::MULTI_POINT);
+inline geometry make_empty(bool has_z = false, bool has_m = false) {
+	return geometry(geometry_type::MULTI_POINT, has_z, has_m);
 }
 
 };
 
-namespace multi_line_string {
-
-inline geometry make_empty() {
-	return geometry(geometry_type::MULTI_LINESTRING);
+namespace multi_linestring {
+inline geometry make_empty(bool has_z = false, bool has_m = false) {
+	return geometry(geometry_type::MULTI_LINESTRING, has_z, has_m);
 }
 
-};
+inline bool is_closed(const geometry *geom) {
+	SGL_ASSERT(geom->get_type() == geometry_type::MULTI_LINESTRING);
+
+	const auto tail = geom->get_last_part();
+	if(!tail) {
+		return false;
+	}
+
+	auto part = tail;
+	do {
+		part = part->get_next();
+		if(!linestring::is_closed(part)) {
+			return false;
+		}
+	} while(part != tail);
+
+	return true;
+}
+
+inline double length(const geometry *geom) {
+	SGL_ASSERT(geom->get_type() == geometry_type::MULTI_LINESTRING);
+
+	const auto tail = geom->get_last_part();
+	if(!tail) {
+		return 0.0;
+	}
+
+	double length = 0.0;
+	auto part = tail;
+	do {
+		part = part->get_next();
+		length += linestring::length(part);
+	} while(part != tail);
+
+	return length;
+}
+
+}
 
 namespace multi_polygon {
-inline geometry make_empty() {
-	return geometry(geometry_type::MULTI_POLYGON);
+inline geometry make_empty(bool has_z = false, bool has_m = false) {
+	return geometry(geometry_type::MULTI_POLYGON, has_z, has_m);
 }
 
 inline double area(const geometry *geom) {
@@ -472,11 +512,11 @@ inline double area(const geometry *geom) {
 
 namespace multi_geometry {
 
-inline geometry make_empty() {
-	return geometry(geometry_type::MULTI_GEOMETRY);
+inline geometry make_empty(bool has_z = false, bool has_m = false) {
+	return geometry(geometry_type::MULTI_GEOMETRY, has_z, has_m);
 }
-
 inline double area(const geometry *geom);
+inline double length(const geometry *geom);
 
 };
 
@@ -511,6 +551,103 @@ inline double area(const geometry *geom) {
 	}
 }
 
+inline double length(const geometry *geom) {
+	switch(geom->get_type()) {
+		case geometry_type::LINESTRING: {
+			return linestring::length(geom);
+		}
+		case geometry_type::MULTI_LINESTRING: {
+			return multi_linestring::length(geom);
+		}
+		case geometry_type::MULTI_GEOMETRY: {
+			return multi_geometry::length(geom);
+		}
+		default:
+			return 0;
+	}
+}
+
+inline size_t vertex_count(const geometry *geom) {
+	if(geom->is_single_part()) {
+		return geom->get_count();
+	} else {
+		const auto tail = geom->get_last_part();
+		if(!tail) {
+			return 0;
+		}
+		auto part = tail;
+		size_t count = 0;
+		do {
+			part = part->get_next();
+			count += part->get_count();
+		} while(part != tail);
+		return count;
+	}
+}
+
+inline int32_t max_surface_dimension(const geometry *geom) {
+	switch(geom->get_type()) {
+		case geometry_type::POINT:
+		case geometry_type::MULTI_POINT:
+			return 0;
+		case geometry_type::LINESTRING:
+		case geometry_type::MULTI_LINESTRING:
+			return 1;
+		case geometry_type::POLYGON:
+		case geometry_type::MULTI_POLYGON:
+			return 2;
+		case geometry_type::MULTI_GEOMETRY: {
+			int32_t max_dim = 0;
+			const auto tail = geom->get_last_part();
+			if(!tail) {
+				return 0;
+			}
+			auto part = tail;
+			do {
+				part = part->get_next();
+				max_dim = std::max(max_dim, max_surface_dimension(part));
+			} while(part != tail);
+			return max_dim;
+		}
+		default:
+			return 0;
+	}
+}
+
+template<class F>
+inline void visit_vertices(const geometry *geom, F callback) {
+	switch(geom->get_type()) {
+		case geometry_type::POINT:
+		case geometry_type::LINESTRING: {
+			auto vertex_data = geom->get_vertex_data();
+			if(vertex_data == nullptr) {
+				return;
+			}
+			auto vertex_size = geom->get_vertex_size();
+			for(uint32_t i = 0; i < geom->get_count(); i++) {
+				callback(vertex_data + i * vertex_size);
+			}
+		} return;
+		case geometry_type::POLYGON:
+		case geometry_type::MULTI_POINT:
+		case geometry_type::MULTI_LINESTRING:
+		case geometry_type::MULTI_POLYGON:
+		case geometry_type::MULTI_GEOMETRY: {
+			const auto tail = geom->get_last_part();
+			if(!tail) {
+				return;
+			}
+			auto part = tail;
+			do {
+				part = part->get_next();
+				visit_vertices<F>(part, callback);
+			} while(part != tail);
+		} return;
+		default:
+			return;
+	}
+}
+
 } // namespace ops
 } // namespace sgl
 
@@ -535,5 +672,46 @@ inline double area(const geometry *geom) {
 	return area;
 }
 
+inline double length(const geometry *geom) {
+	SGL_ASSERT(geom->get_type() == geometry_type::MULTI_GEOMETRY);
+
+	const auto tail = geom->get_last_part();
+	if(!tail) {
+		return 0.0;
+	}
+	double length = 0.0;
+	auto part = tail;
+	do {
+		part = part->get_next();
+		length += ops::length(part);
+	} while(part != tail);
+	return length;
 }
+
+}
+
+namespace util {
+
+inline double haversine_distance(const double lat1_p, const double lon1_p,const  double lat2_p, const double lon2_p) {
+	// Radius of the earth in km
+	constexpr auto R = 6371000.0;
+
+	// Convert to radians
+	const auto lat1 = lat1_p * PI / 180.0;
+	const auto lon1 = lon1_p * PI / 180.0;
+	const auto lat2 = lat2_p * PI / 180.0;
+	const auto lon2 = lon2_p * PI / 180.0;
+
+	const auto dlat = lat2 - lat1;
+	const auto dlon = lon2 - lon1;
+
+	const auto a =
+	    std::pow(std::sin(dlat / 2.0), 2.0) + std::cos(lat1) * std::cos(lat2) * std::pow(std::sin(dlon / 2.0), 2.0);
+	const auto c = 2.0 * std::atan2(std::sqrt(a), std::sqrt(1.0 - a));
+
+	return R * c;
+}
+
+}
+
 }

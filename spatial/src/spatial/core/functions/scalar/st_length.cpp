@@ -87,8 +87,8 @@ void CoreScalarFunctions::RegisterStLength(DatabaseInstance &db) {
 
 	length_function_set.AddFunction(
 	    ScalarFunction({GeoTypes::LINESTRING_2D()}, LogicalType::DOUBLE, LineLengthFunction));
-	length_function_set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryLengthFunction,
-	                                               nullptr, nullptr, nullptr, GeometryFunctionLocalState::Init));
+	//length_function_set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryLengthFunction,
+	//                                               nullptr, nullptr, nullptr, GeometryFunctionLocalState::Init));
 
 	ExtensionUtil::RegisterFunction(db, length_function_set);
 	DocUtil::AddDocumentation(db, "ST_Length", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);

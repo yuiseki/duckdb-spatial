@@ -233,7 +233,7 @@ static void GeometryAccessFunction(DataChunk &args, ExpressionState &state, Vect
 	UnaryExecutor::ExecuteWithNulls<geometry_t, double>(
 	    input, result, count, [&](geometry_t blob, ValidityMask &mask, idx_t idx) {
 		    if (blob.GetType() != GeometryType::POINT) {
-			    throw InvalidInputException("ST_X/ST_Y/ST_Z/ST_M only supports POINT geometries");
+		    	throw InvalidInputException("ST_X/ST_Y/ST_Z/ST_M only supports POINT geometries");
 		    }
 		    auto res = processor.Execute(blob);
 		    if (processor.ResultIsEmpty()) {
@@ -259,7 +259,7 @@ void CoreScalarFunctions::RegisterStX(DatabaseInstance &db) {
 
 	ScalarFunctionSet st_x("ST_X");
 	st_x.AddFunction(ScalarFunction({GeoTypes::POINT_2D()}, LogicalType::DOUBLE, Point2DFunction<0>));
-	st_x.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryAccessFunction<0>));
+	//st_x.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryAccessFunction<0>));
 
 	ExtensionUtil::RegisterFunction(db, st_x);
 
@@ -276,7 +276,7 @@ void CoreScalarFunctions::RegisterStXMax(DatabaseInstance &db) {
 	st_xmax.AddFunction(
 	    ScalarFunction({GeoTypes::LINESTRING_2D()}, LogicalType::DOUBLE, LineString2DFunction<0, MaxOp>));
 	st_xmax.AddFunction(ScalarFunction({GeoTypes::POLYGON_2D()}, LogicalType::DOUBLE, Polygon2DFunction<0, MaxOp>));
-	st_xmax.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryFunction<0, MaxOp>));
+	//st_xmax.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryFunction<0, MaxOp>));
 
 	ExtensionUtil::RegisterFunction(db, st_xmax);
 
@@ -293,7 +293,7 @@ void CoreScalarFunctions::RegisterStXMin(DatabaseInstance &db) {
 	st_xmin.AddFunction(
 	    ScalarFunction({GeoTypes::LINESTRING_2D()}, LogicalType::DOUBLE, LineString2DFunction<0, MinOp>));
 	st_xmin.AddFunction(ScalarFunction({GeoTypes::POLYGON_2D()}, LogicalType::DOUBLE, Polygon2DFunction<0, MinOp>));
-	st_xmin.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryFunction<0, MinOp>));
+	//st_xmin.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryFunction<0, MinOp>));
 
 	ExtensionUtil::RegisterFunction(db, st_xmin);
 
@@ -305,7 +305,7 @@ void CoreScalarFunctions::RegisterStY(DatabaseInstance &db) {
 
 	ScalarFunctionSet st_y("ST_Y");
 	st_y.AddFunction(ScalarFunction({GeoTypes::POINT_2D()}, LogicalType::DOUBLE, Point2DFunction<1>));
-	st_y.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryAccessFunction<1>));
+	//st_y.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryAccessFunction<1>));
 
 	ExtensionUtil::RegisterFunction(db, st_y);
 
@@ -322,7 +322,7 @@ void CoreScalarFunctions::RegisterStYMax(DatabaseInstance &db) {
 	st_ymax.AddFunction(
 	    ScalarFunction({GeoTypes::LINESTRING_2D()}, LogicalType::DOUBLE, LineString2DFunction<1, MaxOp>));
 	st_ymax.AddFunction(ScalarFunction({GeoTypes::POLYGON_2D()}, LogicalType::DOUBLE, Polygon2DFunction<1, MaxOp>));
-	st_ymax.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryFunction<1, MaxOp>));
+	//st_ymax.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryFunction<1, MaxOp>));
 
 	ExtensionUtil::RegisterFunction(db, st_ymax);
 
@@ -339,7 +339,7 @@ void CoreScalarFunctions::RegisterStYMin(DatabaseInstance &db) {
 	st_ymin.AddFunction(
 	    ScalarFunction({GeoTypes::LINESTRING_2D()}, LogicalType::DOUBLE, LineString2DFunction<1, MinOp>));
 	st_ymin.AddFunction(ScalarFunction({GeoTypes::POLYGON_2D()}, LogicalType::DOUBLE, Polygon2DFunction<1, MinOp>));
-	st_ymin.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryFunction<1, MinOp>));
+	//st_ymin.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryFunction<1, MinOp>));
 
 	ExtensionUtil::RegisterFunction(db, st_ymin);
 
@@ -350,7 +350,7 @@ void CoreScalarFunctions::RegisterStYMin(DatabaseInstance &db) {
 void CoreScalarFunctions::RegisterStZ(DatabaseInstance &db) {
 
 	ScalarFunctionSet st_z("ST_Z");
-	st_z.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryAccessFunction<2>));
+	//st_z.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryAccessFunction<2>));
 
 	ExtensionUtil::RegisterFunction(db, st_z);
 
@@ -360,7 +360,7 @@ void CoreScalarFunctions::RegisterStZ(DatabaseInstance &db) {
 
 void CoreScalarFunctions::RegisterStZMax(DatabaseInstance &db) {
 	ScalarFunctionSet st_zmax("ST_ZMax");
-	st_zmax.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryFunction<2, MaxOp>));
+	//st_zmax.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryFunction<2, MaxOp>));
 
 	ExtensionUtil::RegisterFunction(db, st_zmax);
 
@@ -370,7 +370,7 @@ void CoreScalarFunctions::RegisterStZMax(DatabaseInstance &db) {
 
 void CoreScalarFunctions::RegisterStZMin(DatabaseInstance &db) {
 	ScalarFunctionSet st_zmin("ST_ZMin");
-	st_zmin.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryFunction<2, MinOp>));
+	//st_zmin.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryFunction<2, MinOp>));
 
 	ExtensionUtil::RegisterFunction(db, st_zmin);
 
@@ -380,7 +380,7 @@ void CoreScalarFunctions::RegisterStZMin(DatabaseInstance &db) {
 
 void CoreScalarFunctions::RegisterStM(DatabaseInstance &db) {
 	ScalarFunctionSet st_m("ST_M");
-	st_m.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryAccessFunction<3>));
+	//st_m.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryAccessFunction<3>));
 
 	ExtensionUtil::RegisterFunction(db, st_m);
 
@@ -390,7 +390,7 @@ void CoreScalarFunctions::RegisterStM(DatabaseInstance &db) {
 
 void CoreScalarFunctions::RegisterStMMax(DatabaseInstance &db) {
 	ScalarFunctionSet st_mmax("ST_MMax");
-	st_mmax.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryFunction<3, MaxOp>));
+	//st_mmax.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryFunction<3, MaxOp>));
 
 	ExtensionUtil::RegisterFunction(db, st_mmax);
 
@@ -400,7 +400,7 @@ void CoreScalarFunctions::RegisterStMMax(DatabaseInstance &db) {
 
 void CoreScalarFunctions::RegisterStMMin(DatabaseInstance &db) {
 	ScalarFunctionSet st_mmin("ST_MMin");
-	st_mmin.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryFunction<3, MinOp>));
+	//st_mmin.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::DOUBLE, GeometryFunction<3, MinOp>));
 
 	ExtensionUtil::RegisterFunction(db, st_mmin);
 

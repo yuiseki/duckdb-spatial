@@ -55,15 +55,14 @@ static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}, {"category", "property
 //------------------------------------------------------------------------------
 void CoreScalarFunctions::RegisterStNGeometries(DatabaseInstance &db) {
 
-	const char *aliases[] = {"ST_NGeometries", "ST_NumGeometries"};
-	for (auto alias : aliases) {
-		ScalarFunctionSet set(alias);
-		set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::INTEGER, GeometryNGeometriesFunction,
-		                               nullptr, nullptr, nullptr, GeometryFunctionLocalState::Init));
-
-		ExtensionUtil::RegisterFunction(db, set);
-		DocUtil::AddDocumentation(db, alias, DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
-	}
+	//const char *aliases[] = {"ST_NGeometries", "ST_NumGeometries"};
+	//for (auto alias : aliases) {
+	//	ScalarFunctionSet set(alias);
+	//	set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::INTEGER, GeometryNGeometriesFunction,
+	//	                               nullptr, nullptr, nullptr, GeometryFunctionLocalState::Init));
+	//	ExtensionUtil::RegisterFunction(db, set);
+	//	DocUtil::AddDocumentation(db, alias, DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
+	//}
 }
 
 } // namespace core
