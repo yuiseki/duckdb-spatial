@@ -1,5 +1,11 @@
 #pragma once
 
+#include <cstdint>
+#include <cstring>
+#include <string>
+#include <cmath>
+
+// Assert macro
 #ifndef SGL_ASSERT
 #ifdef NDEBUG
 #define SGL_ASSERT(x) ((void)0)
@@ -8,11 +14,6 @@
 #define SGL_ASSERT(x) assert(x)
 #endif
 #endif
-
-#include <cstdint>
-#include <cstring>
-#include <string>
-#include <cmath>
 
 namespace sgl {
 
