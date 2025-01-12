@@ -9,6 +9,8 @@ namespace core {
 struct CoreModule {
 public:
 	static void Register(DatabaseInstance &db);
+
+	static void RegisterSpatialFunctions(DatabaseInstance &db);
 };
 
 } // namespace core
