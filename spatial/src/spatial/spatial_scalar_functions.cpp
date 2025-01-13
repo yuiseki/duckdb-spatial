@@ -1,14 +1,11 @@
-
 #include "spatial/core/function_builder.hpp"
 #include "spatial/core/module.hpp"
-
 #include "spatial/core/types.hpp"
 #include "spatial/core/util/math.hpp"
+#include "duckdb/common/vector_operations/generic_executor.hpp"
 
 #define SGL_ASSERT(x) D_ASSERT(x)
 #include "sgl/sgl.hpp"
-
-#include "duckdb/common/vector_operations/generic_executor.hpp"
 
 namespace spatial {
 namespace core {
@@ -644,16 +641,6 @@ struct ST_Dump {
 	}
 };
 
-struct ST_EndPoint {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-
-	}
-
-	static void Register(DatabaseInstance &db) {
-
-	}
-};
-
 struct ST_Extent {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
@@ -751,13 +738,94 @@ struct ST_GeomFromWKB {
 	}
 };
 
-struct ST_Has {
+// TODO: WKB variant
+struct ST_HasZ {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
+		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(),
+			[&](const string_t &blob) {
+				// TODO: Peek without deserializing!
+				const auto geom = lstate.Deserialize(blob);
+				return geom.has_z();
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
 
+	}
+};
+
+// TODO: WKB variant
+struct ST_HasM {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(),
+			[&](const string_t &blob) {
+				// TODO: Peek without deserializing!
+				const auto geom = lstate.Deserialize(blob);
+				return geom.has_m();
+		});
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_HasM", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::BOOLEAN);
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription("Check if a geometry has M values");
+				// TODO: Set example
+			});
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
+	}
+};
+
+// TODO: WKB variant
+struct ST_ZMFlag {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(),
+			[&](const string_t &blob) {
+				const auto geom = lstate.Deserialize(blob);
+				const auto has_z = geom.has_z();
+				const auto has_m = geom.has_m();
+
+				if(has_z && has_m) {
+					return 3;
+				}
+				if(has_z) {
+					return 2;
+				}
+				if(has_m) {
+					return 1;
+				}
+				return 0;
+		});
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_ZMFlag", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::INTEGER);
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription("Returns the ZM flag of a geometry");
+				// todo: Set example
+			});
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
 	}
 };
 
@@ -810,12 +878,241 @@ struct ST_Haversine {
 };
 
 struct ST_Hilbert {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+	//------------------------------------------------------------------------------
+	// Hilbert Curve Encoding
+	// From (Public Domain): https://github.com/rawrunprotected/hilbert_curves
+	//------------------------------------------------------------------------------
+	static uint32_t Interleave(uint32_t x) {
+		x = (x | (x << 8)) & 0x00FF00FF;
+		x = (x | (x << 4)) & 0x0F0F0F0F;
+		x = (x | (x << 2)) & 0x33333333;
+		x = (x | (x << 1)) & 0x55555555;
+		return x;
+	}
 
+	static uint32_t HilbertEncode(uint32_t n, uint32_t x, uint32_t y) {
+		x = x << (16 - n);
+		y = y << (16 - n);
+
+		// Initial prefix scan round, prime with x and y
+		uint32_t a = x ^ y;
+		uint32_t b = 0xFFFF ^ a;
+		uint32_t c = 0xFFFF ^ (x | y);
+		uint32_t d = x & (y ^ 0xFFFF);
+		uint32_t A = a | (b >> 1);
+		uint32_t B = (a >> 1) ^ a;
+		uint32_t C = ((c >> 1) ^ (b & (d >> 1))) ^ c;
+		uint32_t D = ((a & (c >> 1)) ^ (d >> 1)) ^ d;
+
+		a = A;
+		b = B;
+		c = C;
+		d = D;
+		A = ((a & (a >> 2)) ^ (b & (b >> 2)));
+		B = ((a & (b >> 2)) ^ (b & ((a ^ b) >> 2)));
+		C ^= ((a & (c >> 2)) ^ (b & (d >> 2)));
+		D ^= ((b & (c >> 2)) ^ ((a ^ b) & (d >> 2)));
+
+		a = A;
+		b = B;
+		c = C;
+		d = D;
+		A = ((a & (a >> 4)) ^ (b & (b >> 4)));
+		B = ((a & (b >> 4)) ^ (b & ((a ^ b) >> 4)));
+		C ^= ((a & (c >> 4)) ^ (b & (d >> 4)));
+		D ^= ((b & (c >> 4)) ^ ((a ^ b) & (d >> 4)));
+
+		// Final round and projection
+		a = A;
+		b = B;
+		c = C;
+		d = D;
+		C ^= ((a & (c >> 8)) ^ (b & (d >> 8)));
+		D ^= ((b & (c >> 8)) ^ ((a ^ b) & (d >> 8)));
+
+		// Undo transformation prefix scan
+		a = C ^ (C >> 1);
+		b = D ^ (D >> 1);
+
+		// Recover index bits
+		uint32_t i0 = x ^ y;
+		uint32_t i1 = b | (0xFFFF ^ (i0 | a));
+
+		return ((Interleave(i1) << 1) | Interleave(i0)) >> (32 - 2 * n);
+	}
+
+	static uint32_t FloatToUint32(float f) {
+		if (std::isnan(f)) {
+			return 0xFFFFFFFF;
+		}
+		uint32_t res;
+		memcpy(&res, &f, sizeof(res));
+		if ((res & 0x80000000) != 0) {
+			res ^= 0xFFFFFFFF;
+		} else {
+			res |= 0x80000000;
+		}
+		return res;
+	}
+
+	template <class T>
+	static void ExecuteBox(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &input_vec = args.data[0];
+		auto &bounds_vec = args.data[1];
+		auto count = args.size();
+
+		constexpr auto max_hilbert = std::numeric_limits<uint16_t>::max();
+
+		using BOX_TYPE = StructTypeQuaternary<T, T, T, T>;
+		using UINT32_TYPE = PrimitiveType<uint32_t>;
+
+		GenericExecutor::ExecuteBinary<BOX_TYPE, BOX_TYPE, UINT32_TYPE>(
+			input_vec, bounds_vec, result, count, [&](BOX_TYPE &box, BOX_TYPE &bounds) {
+				const auto x = box.a_val + (box.c_val - box.a_val) / static_cast<T>(2);
+				const auto y = box.b_val + (box.d_val - box.b_val) / static_cast<T>(2);
+
+				const auto hilbert_width = max_hilbert / (bounds.c_val - bounds.a_val);
+				const auto hilbert_height = max_hilbert / (bounds.d_val - bounds.b_val);
+
+				// TODO: Check for overflow
+				const auto hilbert_x = static_cast<uint32_t>((x - bounds.a_val) * hilbert_width);
+				const auto hilbert_y = static_cast<uint32_t>((y - bounds.b_val) * hilbert_height);
+				const auto h = HilbertEncode(16, hilbert_x, hilbert_y);
+				return UINT32_TYPE {h};
+			});
+	}
+
+	static void ExecuteLonlat(DataChunk &args, ExpressionState &state, Vector &result) {
+		using DOUBLE_TYPE = PrimitiveType<double>;
+		using UINT32_TYPE = PrimitiveType<uint32_t>;
+		using BOX_TYPE = StructTypeQuaternary<double, double, double, double>;
+
+		auto constexpr max_hilbert = std::numeric_limits<uint16_t>::max();
+
+		GenericExecutor::ExecuteTernary<DOUBLE_TYPE, DOUBLE_TYPE, BOX_TYPE, UINT32_TYPE>(
+			args.data[0], args.data[1], args.data[3], result, args.size(),
+			[&](DOUBLE_TYPE x, DOUBLE_TYPE y, BOX_TYPE &box) {
+				const auto hilbert_width = max_hilbert / (box.c_val - box.a_val);
+				const auto hilbert_height = max_hilbert / (box.d_val - box.b_val);
+
+				// TODO: Check for overflow
+				const auto hilbert_x = static_cast<uint32_t>((x.val - box.a_val) * hilbert_width);
+				const auto hilbert_y = static_cast<uint32_t>((y.val - box.b_val) * hilbert_height);
+				const auto h = HilbertEncode(16, hilbert_x, hilbert_y);
+				return UINT32_TYPE {h};
+			});
+	}
+
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
+		UnaryExecutor::ExecuteWithNulls<geometry_t, uint32_t>(
+			args.data[0], result, args.size(),
+			[&](const geometry_t &geom, ValidityMask &mask, idx_t out_idx) -> uint32_t {
+
+				// TODO: This is shit, dont rely on cached bounds
+				Box2D<double> bounds;
+				if (!geom.TryGetCachedBounds(bounds)) {
+					mask.SetInvalid(out_idx);
+					return 0;
+				}
+
+				Box2D<float> bounds_f;
+				bounds_f.min.x = MathUtil::DoubleToFloatDown(bounds.min.x);
+				bounds_f.min.y = MathUtil::DoubleToFloatDown(bounds.min.y);
+				bounds_f.max.x = MathUtil::DoubleToFloatUp(bounds.max.x);
+				bounds_f.max.y = MathUtil::DoubleToFloatUp(bounds.max.y);
+
+				const auto dx = bounds_f.min.x + (bounds_f.max.x - bounds_f.min.x) / 2;
+				const auto dy = bounds_f.min.y + (bounds_f.max.y - bounds_f.min.y) / 2;
+
+				const auto hx = FloatToUint32(dx);
+				const auto hy = FloatToUint32(dy);
+
+				return HilbertEncode(16, hx, hy);
+			});
+	}
+
+	static void ExecuteGeometryWithBounds(DataChunk &args, ExpressionState &state, Vector &result) {
+
+		auto constexpr max_hilbert = std::numeric_limits<uint16_t>::max();
+
+		using BOX_TYPE = StructTypeQuaternary<double, double, double, double>;
+		using GEOM_TYPE = PrimitiveType<geometry_t>;
+		using UINT32_TYPE = PrimitiveType<uint32_t>;
+
+		GenericExecutor::ExecuteBinary<GEOM_TYPE, BOX_TYPE, UINT32_TYPE>(
+			args.data[0], args.data[1], result, args.size(),
+			[&](const GEOM_TYPE &geom_type, const BOX_TYPE &bounds) {
+				const auto geom = geom_type.val;
+
+				// TODO: This is shit, dont rely on cached bounds
+				Box2D<double> geom_bounds;
+				if (!geom.TryGetCachedBounds(geom_bounds)) {
+					throw InvalidInputException(
+						"ST_Hilbert(geom, bounds) requires that all geometries have a bounding box");
+				}
+
+				const auto dx = geom_bounds.min.x + (geom_bounds.max.x - geom_bounds.min.x) / 2;
+				const auto dy = geom_bounds.min.y + (geom_bounds.max.y - geom_bounds.min.y) / 2;
+
+				const auto hilbert_width = max_hilbert / (bounds.c_val - bounds.a_val);
+				const auto hilbert_height = max_hilbert / (bounds.d_val - bounds.b_val);
+				// TODO: Check for overflow
+				const auto hilbert_x = static_cast<uint32_t>((dx - bounds.a_val) * hilbert_width);
+				const auto hilbert_y = static_cast<uint32_t>((dy - bounds.b_val) * hilbert_height);
+
+				const auto h = HilbertEncode(16, hilbert_x, hilbert_y);
+				return UINT32_TYPE {h};
+			});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		// TODO: All of these needs examples and docs
 
+		FunctionBuilder::RegisterScalar(db, "ST_Hilbert", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("x", LogicalType::DOUBLE);
+				variant.AddParameter("y", LogicalType::DOUBLE);
+				variant.AddParameter("bounds", GeoTypes::BOX_2D());
+				variant.SetReturnType(LogicalType::UINTEGER);
+
+				variant.SetFunction(ExecuteLonlat);
+				// todo: Set description
+				// todo: Set example
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.AddParameter("bounds", GeoTypes::BOX_2D());
+				variant.SetReturnType(LogicalType::UINTEGER);
+
+				variant.SetFunction(ExecuteGeometryWithBounds);
+				variant.SetInit(LocalState::Init);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::UINTEGER);
+
+				variant.SetFunction(ExecuteGeometry);
+				variant.SetInit(LocalState::Init);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("box", GeoTypes::BOX_2D());
+				variant.AddParameter("bounds", GeoTypes::BOX_2D());
+				variant.SetReturnType(LogicalType::UINTEGER);
+
+				variant.SetFunction(ExecuteBox<double>);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("box", GeoTypes::BOX_2DF());
+				variant.AddParameter("bounds", GeoTypes::BOX_2DF());
+				variant.SetReturnType(LogicalType::UINTEGER);
+
+				variant.SetFunction(ExecuteBox<float>);
+			});
+		});
 	}
 };
 
@@ -1182,8 +1479,111 @@ struct ST_MakePolygon {
 		});
 	}
 
-	static void Register(DatabaseInstance &db) {
+	static void ExecuteFromRings(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
+		auto &child_vec = ListVector::GetEntry(args.data[0]);
+		auto child_len = ListVector::GetListSize(args.data[0]);
+
+		UnifiedVectorFormat child_format;
+		child_vec.ToUnifiedFormat(child_len, child_format);
+
+		BinaryExecutor::Execute<string_t, list_entry_t, string_t>(
+			args.data[0], args.data[1], result, args.size(),
+			[&](const string_t &blob, const list_entry_t &hole_list) {
+				// First, setup shell
+				auto shell = lstate.Deserialize(blob);
+				if(shell.get_type() != sgl::geometry_type::LINESTRING) {
+					throw InvalidInputException("ST_MakePolygon only accepts LINESTRING geometries");
+				}
+				// TODO: Support Z and M
+				if(shell.has_z() || shell.has_m()) {
+					throw InvalidInputException("ST_MakePolygon from list does not support Z or M values");
+				}
+				if(shell.get_count() < 4) {
+					throw InvalidInputException("ST_MakePolygon shell requires at least 4 vertices");
+				}
+				if(!sgl::linestring::is_closed(&shell)) {
+					throw InvalidInputException("ST_MakePolygon shell must be closed (first and last vertex must be equal)");
+				}
+
+				// Make a polygon!
+				auto polygon = sgl::polygon::make_empty(false, false);
+
+				// Append the shell
+				polygon.append_part(&shell);
+
+				// Now setup the rings
+				const auto holes_offset = hole_list.offset;
+				const auto holes_length = hole_list.length;
+
+				for(idx_t hole_idx = 0; hole_idx < holes_length; hole_idx++) {
+					const auto mapped_idx = child_format.sel->get_index(holes_offset + hole_idx);
+					if(child_format.validity.RowIsValid(mapped_idx)) {
+						continue;
+					}
+
+					const auto &hole_blob = UnifiedVectorFormat::GetData<string_t>(child_format)[mapped_idx];
+
+					// Allocate a new hole and deserialize into the memory
+					auto hole_mem = lstate.GetArena().AllocateAligned(sizeof(sgl::geometry));
+					const auto hole = new(hole_mem) sgl::geometry();
+
+					// TODO: Make this nicer... Add a deserialize in place method to the context
+					*hole = lstate.Deserialize(hole_blob);
+
+					if(hole->get_type() != sgl::geometry_type::LINESTRING) {
+						throw InvalidInputException("ST_MakePolygon hole #%lu is not a LINESTRING", hole_idx + 1);
+					}
+					if(hole->has_z() || hole->has_m()) {
+						throw InvalidInputException("ST_MakePolygon hole #%lu has Z or M values", hole_idx + 1);
+					}
+					if(hole->get_count() < 4) {
+						throw InvalidInputException("ST_MakePolygon hole requires at least 4 vertices");
+					}
+					if(!sgl::linestring::is_closed(hole)) {
+						throw InvalidInputException("ST_MakePolygon hole #%lu must be closed (first and last vertex must be equal)", hole_idx + 1);
+					}
+
+					// Add the hole to the polygon
+					polygon.append_part(hole);
+				}
+
+				// Now serialize the polygon
+				return lstate.Serialize(result, polygon);
+			});
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_MakePolygon", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("shell", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteFromShell);
+
+				// TODO: Set example & docs
+				variant.SetDescription("Create a POLYGON from a LINESTRING shell");
+				variant.SetExample("SELECT ST_MakePolygon(ST_LineString([ST_Point(0, 0), ST_Point(1, 0), ST_Point(1, 1), ST_Point(0, 0)]));");
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("shell", GeoTypes::GEOMETRY());
+				variant.AddParameter("holes", LogicalType::LIST(GeoTypes::GEOMETRY()));
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteFromRings);
+
+				// TODO: Set example & docs
+				variant.SetDescription("Create a POLYGON from a LINESTRING shell and a list of LINESTRING holes");
+				variant.SetExample("SELECT ST_MakePolygon(ST_LineString([ST_Point(0, 0), ST_Point(1, 0), ST_Point(1, 1), ST_Point(0, 0)]), [ST_LineString([ST_Point(0.25, 0.25), ST_Point(0.75, 0.25), ST_Point(0.75, 0.75), ST_Point(0.25, 0.25)])]);");
+			});
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
 	}
 };
 
@@ -1346,11 +1746,30 @@ struct ST_NPoints {
 
 struct ST_Perimeter {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
+		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(),
+			[&](const string_t &blob) {
+				const auto geom = lstate.Deserialize(blob);
+				return sgl::ops::perimeter(&geom);
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Perimeter", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::DOUBLE);
 
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription("Compute the perimeter of a geometry");
+				// TODO: Set example
+			});
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
 	}
 };
 
@@ -1414,21 +1833,151 @@ struct ST_PointN {
 
 struct ST_Points {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
+			[&](const string_t &blob) {
+				// Deserialize the geometry
+				const auto geom = lstate.Deserialize(blob);
+				const auto has_z = geom.has_z();
+				const auto has_m = geom.has_m();
+
+				// Create a new result multipoint
+				auto mpoint = sgl::multi_point::make_empty(has_z, has_m);
+
+				sgl::ops::visit_vertices(&geom, [&](const uint8_t* vertex_data) {
+					// Allocate a new point
+					auto point_mem = lstate.GetArena().AllocateAligned(sizeof(sgl::geometry));
+
+					// Create a new point
+					const auto point = new (point_mem) sgl::geometry(sgl::geometry_type::POINT, has_z, has_m);
+					point->set_vertex_data(vertex_data, 1);
+
+					// Append the point to the multipoint
+					mpoint.append_part(point);
+				});
+
+				// Serialize the multipoint
+				return lstate.Serialize(result, mpoint);
+			});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Points", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
 
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription("Returns a MULTIPOINT containing all the vertices of a geometry");
+				// TODO: Set example
+			});
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
 	}
 };
 
 struct ST_QuadKey {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+	static void GetQuadKey(double lon, double lat, int32_t level, char *buffer) {
 
+		lat = std::max(-85.05112878, std::min(85.05112878, lat));
+		lon = std::max(-180.0, std::min(180.0, lon));
+
+		const auto lat_rad = lat * PI / 180.0;
+		const auto x = static_cast<int32_t>((lon + 180.0) / 360.0 * (1 << level));
+		const auto y = static_cast<int32_t>((1.0 - std::log(std::tan(lat_rad) + 1.0 / std::cos(lat_rad)) / PI) / 2.0 * (1 << level));
+
+		for (int i = level; i > 0; --i) {
+			char digit = '0';
+			const int32_t mask = 1 << (i - 1);
+			if ((x & mask) != 0) {
+				digit += 1;
+			}
+			if ((y & mask) != 0) {
+				digit += 2;
+			}
+			buffer[level - i] = digit;
+		}
+	}
+
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		auto &point_in = args.data[0];
+		auto &level_in = args.data[1];
+
+		BinaryExecutor::Execute<string_t, int32_t, string_t>(point_in, level_in, result, args.size(),
+			[&](const string_t &blob, const int32_t level) {
+				if (level < 1 || level > 23) {
+					throw InvalidInputException("ST_QuadKey: Level must be between 1 and 23");
+			    }
+
+				const auto point = lstate.Deserialize(blob);
+				if(point.get_type() != sgl::geometry_type::POINT) {
+					throw InvalidInputException("ST_QuadKey: Only POINT geometries are supported");
+				}
+
+				if (point.is_empty()) {
+				   throw InvalidInputException("ST_QuadKey: Empty geometries are not supported");
+				}
+
+				const auto vertex = point.get_vertex_xy(0);
+
+				char buffer[64];
+				GetQuadKey(vertex.x, vertex.y, level, buffer);
+				return StringVector::AddString(result, buffer, level);
+		});
+	}
+
+	static void ExecuteLonLat(DataChunk &args, ExpressionState &state, Vector &result) {
+
+		auto &lon_in = args.data[0];
+		auto &lat_in = args.data[1];
+		auto &lev_in = args.data[2];
+
+		TernaryExecutor::Execute<double, double, int32_t, string_t>(lon_in, lat_in, lev_in, result, args.size(),
+			[&](const double lon, const double lat, const int32_t level) {
+				if (level < 1 || level > 23) {
+				   throw InvalidInputException("ST_QuadKey: Level must be between 1 and 23");
+			   }
+			   char buffer[64];
+			   GetQuadKey(lon, lat, level, buffer);
+			   return StringVector::AddString(result, buffer, level);
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_QuadKey", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("longitude", LogicalType::DOUBLE);
+			variant.AddParameter("latitude", LogicalType::DOUBLE);
+			variant.AddParameter("level", LogicalType::INTEGER);
+			variant.SetReturnType(LogicalType::VARCHAR);
+			variant.SetFunction(ExecuteLonLat);
 
+			// TODO: Set example
+			//variant.SetExample(DOC_EXAMPLE);
+			//variant.SetDescription(DOC_DESCRIPTION);
+		});
+
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("point", GeoTypes::GEOMETRY());
+			variant.AddParameter("level", LogicalType::INTEGER);
+			variant.SetReturnType(LogicalType::VARCHAR);
+			variant.SetFunction(ExecuteGeometry);
+			variant.SetInit(LocalState::Init);
+
+			// TODO: Set example
+			//variant.SetExample(DOC_EXAMPLE);
+			//variant.SetDescription(DOC_DESCRIPTION);
+		});
+
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "property");
+	});
 	}
 };
 
@@ -1443,8 +1992,81 @@ struct ST_RemoveRepeatedPoints {
 };
 
 struct ST_StartPoint {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(args.data[0], result, args.size(),
+			[&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
+
+				// TODO: Peek without deserializing!
+				const auto geom = lstate.Deserialize(blob);
+
+				if(geom.get_type() != sgl::geometry_type::LINESTRING) {
+					mask.SetInvalid(idx);
+					return string_t {};
+				}
+
+				if(geom.is_empty()) {
+					mask.SetInvalid(idx);
+					return string_t {};
+				}
+
+				const auto vertex_data = geom.get_vertex_data();
+				auto point = sgl::geometry(sgl::geometry_type::POINT, geom.has_z(), geom.has_m());
+				point.set_vertex_data(vertex_data, 1);
+
+				return lstate.Serialize(result, point);
+		});
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_StartPoint", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription("Returns the start point of a LINESTRING");
+				// todo: Set example
+			});
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
+	}
+};
+
+struct ST_EndPoint {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(args.data[0], result, args.size(),
+			[&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
+
+				// TODO: Peek without deserializing!
+				const auto geom = lstate.Deserialize(blob);
+
+				if(geom.get_type() != sgl::geometry_type::LINESTRING) {
+					mask.SetInvalid(idx);
+					return string_t {};
+				}
+
+				if(geom.is_empty()) {
+					mask.SetInvalid(idx);
+					return string_t {};
+				}
+
+				const auto vertex_count = geom.get_count();
+				const auto vertex_size = geom.get_vertex_size();
+				const auto vertex_data = geom.get_vertex_data();
+
+				const auto point_data = vertex_data + ((vertex_count - 1) * vertex_size);
+
+				auto point = sgl::geometry(sgl::geometry_type::POINT, geom.has_z(), geom.has_m());
+				point.set_vertex_data(point_data, 1);
+
+				return lstate.Serialize(result, point);
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -1712,7 +2334,7 @@ struct ST_MMin : VertexAggFunctionBase<ST_MMin, VertexMinAggOp> {
 void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Area::Register(db);
 
-	// 25 functions to go!
+	// 16 functions to go!
 
 	/*
 	ST_AsGeoJSON::Register(db);
@@ -1729,7 +2351,9 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	/*
 	// ST_Distance::Register(db); -- not applicable now
 	ST_Dump::Register(db);
+	*/
 	ST_EndPoint::Register(db);
+	/*
 	ST_Extent::Register(db);
 	ST_ExteriorRing::Register(db);
 	ST_FlipCoordinates::Register(db);
@@ -1738,36 +2362,33 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_GeomFromHEXWKB::Register(db);
 	ST_GeomFromText::Register(db);
 	ST_GeomFromWKB::Register(db);
-	ST_Has::Register(db);
 	*/
+	ST_HasZ::Register(db);
+	ST_HasM::Register(db);
+	ST_ZMFlag::Register(db);
 	ST_Haversine::Register(db);
-	/*
 	ST_Hilbert::Register(db);
+	/*
 	// ST_Intersects::Register(db); - not applicable now
 	// ST_IntersectsExtent::Register(db); - not applicable now
 	*/
 	ST_IsClosed::Register(db);
 	ST_IsEmpty::Register(db);
 	ST_Length::Register(db);
-
 	ST_MakeEnvelope::Register(db);
 	ST_MakeLine::Register(db);
-	//ST_MakePolygon::Register(db);
-
+	ST_MakePolygon::Register(db);
 	ST_Multi::Register(db);
 	ST_NGeometries::Register(db);
-
 	ST_NInteriorRings::Register(db);
 	ST_NPoints::Register(db);
-
-	//ST_Perimeter::Register(db);
+	ST_Perimeter::Register(db);
 	ST_Point::Register(db);
 	ST_PointN::Register(db);
-	//ST_Points::Register(db);
-	//ST_QuadKey::Register(db);
-	//ST_RemoveRepeatedPoints::Register(db);
-	//ST_StartPoint::Register(db);
-
+	ST_Points::Register(db);
+	ST_QuadKey::Register(db);
+	//ST_RemoveRepeatedPoints::Register(db); - not applicable right now
+	ST_StartPoint::Register(db);
 	ST_X::Register(db);
 	ST_XMax::Register(db);
 	ST_XMin::Register(db);
@@ -1780,7 +2401,6 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_M::Register(db);
 	ST_MMax::Register(db);
 	ST_MMin::Register(db);
-
 }
 
 }

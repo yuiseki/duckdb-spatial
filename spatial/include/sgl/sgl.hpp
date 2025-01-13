@@ -431,6 +431,24 @@ inline double area(const geometry *geom) {
 	return area;
 }
 
+inline double perimeter(const geometry *geom) {
+	SGL_ASSERT(geom->get_type() == geometry_type::POLYGON);
+
+	const auto tail = geom->get_last_part();
+	if(!tail) {
+		return 0.0;
+	}
+
+	double perimeter = 0.0;
+	auto part = tail;
+	do {
+		part = part->get_next();
+		perimeter += linestring::length(part);
+	} while(part != tail);
+
+	return perimeter;
+}
+
 } // namespace polygon
 
 namespace multi_point {
@@ -508,6 +526,24 @@ inline double area(const geometry *geom) {
 	return area;
 }
 
+inline double perimeter(const geometry *geom) {
+	SGL_ASSERT(geom->get_type() == geometry_type::MULTI_POLYGON);
+
+	const auto tail = geom->get_last_part();
+	if(!tail) {
+		return 0.0;
+	}
+
+	double perimeter = 0.0;
+	auto part = tail;
+	do {
+		part = part->get_next();
+		perimeter += polygon::perimeter(part);
+	} while(part != tail);
+
+	return perimeter;
+}
+
 }
 
 namespace multi_geometry {
@@ -517,6 +553,7 @@ inline geometry make_empty(bool has_z = false, bool has_m = false) {
 }
 inline double area(const geometry *geom);
 inline double length(const geometry *geom);
+inline double perimeter(const geometry *geom);
 
 };
 
@@ -545,6 +582,22 @@ inline double area(const geometry *geom) {
 		}
 		case geometry_type::MULTI_GEOMETRY: {
 			return multi_geometry::area(geom);
+		}
+		default:
+			return 0.0;
+	}
+}
+
+inline double perimeter(const geometry *geom) {
+	switch(geom->get_type()) {
+		case geometry_type::POLYGON: {
+			return polygon::perimeter(geom);
+		}
+		case geometry_type::MULTI_POLYGON: {
+			return multi_polygon::perimeter(geom);
+		}
+		case geometry_type::MULTI_GEOMETRY: {
+			return multi_geometry::perimeter(geom);
 		}
 		default:
 			return 0.0;
@@ -688,7 +741,23 @@ inline double length(const geometry *geom) {
 	return length;
 }
 
+inline double perimeter(const geometry *geom) {
+	SGL_ASSERT(geom->get_type() == geometry_type::MULTI_GEOMETRY);
+
+	const auto tail = geom->get_last_part();
+	if(!tail) {
+		return 0.0;
+	}
+	double perimeter = 0.0;
+	auto part = tail;
+	do {
+		part = part->get_next();
+		perimeter += ops::perimeter(part);
+	} while(part != tail);
+	return perimeter;
 }
+
+} // namespace multi_geometry
 
 namespace util {
 
