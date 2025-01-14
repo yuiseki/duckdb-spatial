@@ -560,6 +560,7 @@ inline double perimeter(const geometry *geom);
 namespace ops {
 
 double area(const geometry *geom);
+box_xy extent_xy(const geometry *geom);
 
 } // namespace ops
 
@@ -698,6 +699,91 @@ inline void visit_vertices(const geometry *geom, F callback) {
 		} return;
 		default:
 			return;
+	}
+}
+
+// Non-recursive
+inline bool try_get_extent_xy(const geometry *geom, box_xy *out) {
+
+	auto part = geom;
+	if(part == nullptr) {
+		return false;
+	}
+
+	box_xy result = box_xy::smallest();
+
+	const auto root = part->get_parent();
+	bool has_any_vertices = false;
+
+	while(true) {
+		switch (part->get_type()) {
+			case geometry_type::POINT:
+			case geometry_type::LINESTRING:
+			{
+				const auto vertex_count = part->get_count();
+
+				has_any_vertices |= vertex_count > 0;
+
+				for(uint32_t i = 0; i < vertex_count; i++) {
+					const auto vertex = part->get_vertex_xy(i);
+					result.min.x = std::min(result.min.x, vertex.x);
+					result.min.y = std::min(result.min.y, vertex.y);
+					result.max.x = std::max(result.max.x, vertex.x);
+					result.max.y = std::max(result.max.y, vertex.y);
+				}
+			}
+			break;
+			case geometry_type::POLYGON: {
+				if(!part->is_empty()) {
+					const auto shell = part->get_first_part();
+					const auto vertex_count = shell->get_count();
+					has_any_vertices |= vertex_count > 0;
+					for(uint32_t i = 0; i < vertex_count; i++) {
+						const auto vertex = shell->get_vertex_xy(i);
+						result.min.x = std::min(result.min.x, vertex.x);
+						result.min.y = std::min(result.min.y, vertex.y);
+						result.max.x = std::max(result.max.x, vertex.x);
+						result.max.y = std::max(result.max.y, vertex.y);
+					}
+				}
+			}
+			break;
+			case geometry_type::MULTI_POINT:
+			case geometry_type::MULTI_LINESTRING:
+			case geometry_type::MULTI_POLYGON:
+			case geometry_type::MULTI_GEOMETRY: {
+				if(!part->is_empty()) {
+					part = part->get_first_part();
+					// continue the outer loop here!
+					continue;
+				}
+			}
+			break;
+			default:
+				D_ASSERT(false);
+				return false;
+		}
+
+		// Now go up/sideways
+		while(true) {
+			const auto parent = part->get_parent();
+			if(parent == root) {
+				if(has_any_vertices) {
+					*out = result;
+					return true;
+				}
+				return false;
+			}
+
+			if(part != parent->get_last_part()) {
+				// Go sideways
+				part = part->get_next();
+				break;
+			}
+
+			// Go up
+			part = parent;
+		}
 	}
 }
 

@@ -643,11 +643,65 @@ struct ST_Dump {
 
 struct ST_Extent {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
+		const auto &bbox_vec = StructVector::GetEntries(result);
+		const auto min_x_data = FlatVector::GetData<double>(*bbox_vec[0]);
+		const auto min_y_data = FlatVector::GetData<double>(*bbox_vec[1]);
+		const auto max_x_data = FlatVector::GetData<double>(*bbox_vec[2]);
+		const auto max_y_data = FlatVector::GetData<double>(*bbox_vec[3]);
+
+		UnifiedVectorFormat input_vdata;
+		args.data[0].ToUnifiedFormat(args.size(), input_vdata);
+		const auto input_data = UnifiedVectorFormat::GetData<geometry_t>(input_vdata);
+
+		const auto count = args.size();
+
+		for(idx_t out_idx = 0; out_idx < count; out_idx++) {
+			const auto row_idx = input_vdata.sel->get_index(out_idx);
+			if(!input_vdata.validity.RowIsValid(row_idx)) {
+				// null in -> null out
+				FlatVector::SetNull(result, out_idx, true);
+				continue;
+			}
+
+			const auto &blob = input_data[row_idx];
+			const auto geom = lstate.Deserialize(blob);
+
+			auto bbox = sgl::box_xy::smallest();
+
+			if(!sgl::ops::try_get_extent_xy(&geom, &bbox)) {
+				// no vertices -> no extent -> return null
+				FlatVector::SetNull(result, out_idx, true);
+				continue;
+			}
+
+			min_x_data[out_idx] = bbox.min.x;
+			min_y_data[out_idx] = bbox.min.y;
+			max_x_data[out_idx] = bbox.max.x;
+			max_y_data[out_idx] = bbox.max.y;
+		}
+
+		if(args.AllConstant()) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
 	}
 
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Extent", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::BOX_2D());
 
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription("Compute the bounding box of a geometry");
+				// TODO: Set example
+			});
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
 	}
 };
 
@@ -2334,8 +2388,7 @@ struct ST_MMin : VertexAggFunctionBase<ST_MMin, VertexMinAggOp> {
 void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Area::Register(db);
 
-	// 16 functions to go!
-
+	// 15 functions to go!
 	/*
 	ST_AsGeoJSON::Register(db);
 	ST_AsText::Register(db);
@@ -2353,8 +2406,8 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Dump::Register(db);
 	*/
 	ST_EndPoint::Register(db);
-	/*
 	ST_Extent::Register(db);
+	/*
 	ST_ExteriorRing::Register(db);
 	ST_FlipCoordinates::Register(db);
 	ST_Force::Register(db);
@@ -2368,10 +2421,8 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_ZMFlag::Register(db);
 	ST_Haversine::Register(db);
 	ST_Hilbert::Register(db);
-	/*
 	// ST_Intersects::Register(db); - not applicable now
 	// ST_IntersectsExtent::Register(db); - not applicable now
-	*/
 	ST_IsClosed::Register(db);
 	ST_IsEmpty::Register(db);
 	ST_Length::Register(db);
