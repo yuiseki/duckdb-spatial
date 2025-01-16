@@ -3,6 +3,18 @@
     "openssl",
     "zlib",
     "geographiclib",
-    "geos"
-  ]
+    "geos",
+    "expat",
+    {
+      "name": "curl",
+      "platform": "!wasm32 & !ios & !android",
+      "features": ["openssl"],
+      "default-features": false
+    }
+  ],
+  "vcpkg-configuration": {
+    "overlay-ports": [
+      "./vcpkg_ports"
+    ]
+  }
 }
