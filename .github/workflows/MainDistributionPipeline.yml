@@ -28,7 +28,7 @@ jobs:
     with:
       duckdb_version: main
       extension_name: spatial
-      ci_tools_version: main
+      ci_tools_version: 4317e39099f4b71d614f00d044aaec651bec6fc9
       vcpkg_commit: 5e5d0e1cd7785623065e77eff011afdeec1a3574
       exclude_archs: linux_amd64_musl
 
@@ -39,7 +39,7 @@ jobs:
     secrets: inherit
     with:
       duckdb_version: main
-      ci_tools_version: main
+      ci_tools_version: 4317e39099f4b71d614f00d044aaec651bec6fc9
       extension_name: spatial
       deploy_latest: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' }}
       exclude_archs: linux_amd64_musl
