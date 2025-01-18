@@ -93,10 +93,9 @@ void GeoArrowRegisterScan(ClientContext &context, TableFunctionInput &data_p, Da
 	}
 
 	DBConfig &config = DatabaseInstance::GetDatabase(context).config;
-	try {
-		auto extension = config.GetArrowExtension(GeoTypes::GEOMETRY());
+	if (config.HasArrowExtension(GeoTypes::GEOMETRY())) {
 		output.SetValue(0, 0, false);
-	} catch (InternalException &e) {
+	} else {
 		RegisterArrowExtensions(config);
 		output.SetValue(0, 0, true);
 	}
