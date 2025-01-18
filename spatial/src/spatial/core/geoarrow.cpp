@@ -63,12 +63,51 @@ struct GeoArrowWKB {
 	}
 };
 
-void GeoArrow::Register(DatabaseInstance &db) {
-	// Arrow Extensions
-	db.config.RegisterArrowExtension(
+void RegisterArrowExtensions(DBConfig &config) {
+	config.RegisterArrowExtension(
 	    {"geoarrow.wkb", GeoArrowWKB::PopulateSchema, GeoArrowWKB::GetType,
 	     make_shared_ptr<ArrowTypeExtensionData>(GeoTypes::GEOMETRY(), LogicalType::BLOB, GeoArrowWKB::ArrowToDuck,
 	                                             GeoArrowWKB::DuckToArrow)});
+}
+
+class GeoArrowRegisterFunctionData : public TableFunctionData {
+public:
+	GeoArrowRegisterFunctionData() : finished(false) {
+	}
+	bool finished {false};
+};
+
+static inline duckdb::unique_ptr<FunctionData> GeoArrowRegisterBind(ClientContext &context,
+                                                                    TableFunctionBindInput &input,
+                                                                    vector<LogicalType> &return_types,
+                                                                    vector<string> &names) {
+	names.push_back("registered");
+	return_types.push_back(LogicalType::BOOLEAN);
+	return make_uniq<GeoArrowRegisterFunctionData>();
+}
+
+void GeoArrowRegisterScan(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
+	auto &data = data_p.bind_data->CastNoConst<GeoArrowRegisterFunctionData>();
+	if (data.finished) {
+		return;
+	}
+
+	DBConfig &config = DatabaseInstance::GetDatabase(context).config;
+	try {
+		auto extension = config.GetArrowExtension(GeoTypes::GEOMETRY());
+		output.SetValue(0, 0, false);
+	} catch (InternalException &e) {
+		RegisterArrowExtensions(config);
+		output.SetValue(0, 0, true);
+	}
+
+	output.SetCardinality(1);
+	data.finished = true;
+}
+
+void GeoArrow::Register(DatabaseInstance &db) {
+	TableFunction register_func("register_geoarrow_extensions", {}, GeoArrowRegisterScan, GeoArrowRegisterBind);
+	ExtensionUtil::RegisterFunction(db, register_func);
 }
 
 } // namespace core
