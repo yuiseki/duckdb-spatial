@@ -5,6 +5,7 @@
 #include "duckdb/common/arrow/schema_metadata.hpp"
 #include "duckdb/function/table/arrow/arrow_duck_schema.hpp"
 #include "geos/vend/json.hpp"
+#include "spatial/core/functions/scalar.hpp"
 #include "spatial/core/types.hpp"
 
 namespace spatial {
@@ -55,11 +56,13 @@ struct GeoArrowWKB {
 	}
 
 	static void ArrowToDuck(ClientContext &context, Vector &source, Vector &result, idx_t count) {
-		// Call geomfromwkb()?
+		CastParameters parameters;
+		WKBToGeometryCast(source, result, count, parameters);
 	}
 
 	static void DuckToArrow(ClientContext &context, Vector &source, Vector &result, idx_t count) {
-		// Call aswkb()?
+		CastParameters parameters;
+		GeometryToWKBCast(source, result, count, parameters);
 	}
 };
 

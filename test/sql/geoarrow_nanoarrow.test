@@ -1,5 +1,10 @@
 
 require spatial
+
+# There may be a better way to test this eventually, but today it's hard to
+# write these tests without a way to read and write Arrow streams or files.
+# This uses https://github.com/paleolimbot/duckdb-nanoarrow, which may be
+# superceeded by something else (or improved and released, depending!)
 require nanoarrow
 
 # Check that exporting Arrow data before registering extensions doesn't result
