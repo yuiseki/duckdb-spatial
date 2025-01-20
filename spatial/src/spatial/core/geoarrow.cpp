@@ -5,7 +5,8 @@
 #include "duckdb/common/arrow/schema_metadata.hpp"
 #include "duckdb/function/table/arrow/arrow_duck_schema.hpp"
 #include "geos/vend/json.hpp"
-#include "spatial/core/functions/scalar.hpp"
+#include "spatial/core/geometry/wkb_reader.hpp"
+#include "spatial/core/geometry/wkb_writer.hpp"
 #include "spatial/core/types.hpp"
 
 namespace spatial {
@@ -56,13 +57,20 @@ struct GeoArrowWKB {
 	}
 
 	static void ArrowToDuck(ClientContext &context, Vector &source, Vector &result, idx_t count) {
-		CastParameters parameters;
-		WKBToGeometryCast(source, result, count, parameters);
+		ArenaAllocator arena(BufferAllocator::Get(context));
+		WKBReader reader(arena);
+
+		UnaryExecutor::ExecuteWithNulls<string_t, geometry_t>(source, result, count,
+		                                                      [&](string_t input, ValidityMask &mask, idx_t idx) {
+			                                                      auto geom = reader.Deserialize(input);
+			                                                      return Geometry::Serialize(geom, result);
+		                                                      });
 	}
 
 	static void DuckToArrow(ClientContext &context, Vector &source, Vector &result, idx_t count) {
-		CastParameters parameters;
-		GeometryToWKBCast(source, result, count, parameters);
+		WKBWriter writer;
+		UnaryExecutor::Execute<geometry_t, string_t>(source, result, count,
+		                                             [&](geometry_t input) { return writer.Write(input, result); });
 	}
 };
 

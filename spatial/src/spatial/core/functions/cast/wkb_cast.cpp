@@ -16,7 +16,7 @@ namespace core {
 //------------------------------------------------------------------------------
 // WKB -> GEOMETRY
 //------------------------------------------------------------------------------
-bool WKBToGeometryCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+static bool WKBToGeometryCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 
 	auto &lstate = GeometryFunctionLocalState::ResetAndGet(parameters);
 	WKBReader reader(lstate.arena);
@@ -43,7 +43,7 @@ bool WKBToGeometryCast(Vector &source, Vector &result, idx_t count, CastParamete
 //------------------------------------------------------------------------------
 // GEOMETRY -> WKB
 //------------------------------------------------------------------------------
-bool GeometryToWKBCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+static bool GeometryToWKBCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 
 	UnaryExecutor::Execute<geometry_t, string_t>(source, result, count,
 	                                             [&](geometry_t input) { return WKBWriter::Write(input, result); });
