@@ -14,7 +14,7 @@ namespace spatial {
 namespace core {
 
 struct GeoArrowWKB {
-	static shared_ptr<ArrowType> GetType(const ArrowSchema &schema, const ArrowSchemaMetadata &schema_metadata) {
+	static unique_ptr<ArrowType> GetType(const ArrowSchema &schema, const ArrowSchemaMetadata &schema_metadata) {
 		// Validate extension metadata. This metadata also contains a CRS, which we drop
 		// because the GEOMETRY type does not implement a CRS at the type level.
 		string extension_metadata = schema_metadata.GetOption(ArrowSchemaMetadata::ARROW_METADATA_KEY);
@@ -40,14 +40,13 @@ struct GeoArrowWKB {
 
 		const auto format = string(schema.format);
 		if (format == "z") {
-			return make_shared_ptr<ArrowType>(GeoTypes::GEOMETRY(),
-			                                  make_uniq<ArrowStringInfo>(ArrowVariableSizeType::NORMAL));
+			return make_uniq<ArrowType>(GeoTypes::GEOMETRY(),
+			                            make_uniq<ArrowStringInfo>(ArrowVariableSizeType::NORMAL));
 		} else if (format == "Z") {
-			return make_shared_ptr<ArrowType>(GeoTypes::GEOMETRY(),
-			                                  make_uniq<ArrowStringInfo>(ArrowVariableSizeType::NORMAL));
+			return make_uniq<ArrowType>(GeoTypes::GEOMETRY(),
+			                            make_uniq<ArrowStringInfo>(ArrowVariableSizeType::SUPER_SIZE));
 		} else if (format == "vz") {
-			return make_shared_ptr<ArrowType>(GeoTypes::GEOMETRY(),
-			                                  make_uniq<ArrowStringInfo>(ArrowVariableSizeType::NORMAL));
+			return make_uniq<ArrowType>(GeoTypes::GEOMETRY(), make_uniq<ArrowStringInfo>(ArrowVariableSizeType::VIEW));
 		}
 		throw InvalidInputException("Arrow extension type \"%s\" not supported for geoarrow.wkb", format.c_str());
 	}
