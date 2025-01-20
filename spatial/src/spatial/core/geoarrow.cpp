@@ -4,10 +4,10 @@
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/schema_metadata.hpp"
 #include "duckdb/function/table/arrow/arrow_duck_schema.hpp"
-#include "geos/vend/json.hpp"
 #include "spatial/core/geometry/wkb_reader.hpp"
 #include "spatial/core/geometry/wkb_writer.hpp"
 #include "spatial/core/types.hpp"
+#include "yyjson.h"
 
 namespace spatial {
 
@@ -15,14 +15,26 @@ namespace core {
 
 struct GeoArrowWKB {
 	static shared_ptr<ArrowType> GetType(const ArrowSchema &schema, const ArrowSchemaMetadata &schema_metadata) {
+		// Validate extension metadata. This metadata also contains a CRS, which we drop
+		// because the GEOMETRY type does not implement a CRS at the type level.
 		string extension_metadata = schema_metadata.GetOption(ArrowSchemaMetadata::ARROW_METADATA_KEY);
 		if (!extension_metadata.empty()) {
-			nlohmann::json parsed(extension_metadata);
-			if (parsed.is_object() && parsed.contains("edges")) {
-				auto edges = parsed["edges"];
-				if (!edges.is_string() || edges != "planar") {
-					throw InternalException("Unsupported GeoArrow metadata: " + extension_metadata);
-				}
+			using namespace duckdb_yyjson_spatial;
+
+			unique_ptr<yyjson_doc, void (*)(yyjson_doc *)> doc(
+			    yyjson_read(extension_metadata.data(), extension_metadata.size(), YYJSON_READ_NOFLAG), yyjson_doc_free);
+			if (!doc) {
+				throw SerializationException("Invalid JSON in GeoArrow metadata");
+			}
+
+			yyjson_val *val = yyjson_doc_get_root(doc.get());
+			if (!yyjson_is_obj(val)) {
+				throw SerializationException("Invalid GeoArrow metadata: not a JSON object");
+			}
+
+			yyjson_val *edges = yyjson_obj_get(val, "edges");
+			if (edges && yyjson_is_str(edges) && std::strcmp(yyjson_get_str(edges), "planar") != 0) {
+				throw NotImplementedException("Can't import non-planar edges");
 			}
 		}
 
