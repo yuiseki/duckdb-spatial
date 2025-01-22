@@ -424,9 +424,28 @@ void Serde::Deserialize(sgl::geometry &result, ArenaAllocator &arena, const char
 //------------------------------------------------------------------------------
 
 namespace {
+
+	class GeometryAllocator final : public sgl::allocator {
+	public:
+		explicit GeometryAllocator(ArenaAllocator &arena_p) : arena(arena_p) { }
+
+		void *alloc(size_t size) override {
+			return arena.AllocateAligned(size);
+		}
+		void dealloc(void *ptr, size_t size) override {
+			arena.ReallocateAligned(data_ptr_cast(ptr), size, 0);
+		}
+		void *realloc(void *ptr, size_t old_size, size_t new_size) override {
+			return arena.ReallocateAligned(data_ptr_cast(ptr), old_size, new_size);
+		}
+	private:
+		ArenaAllocator &arena;
+	};
+
 	class LocalState final : public FunctionLocalState {
 	public:
-		explicit LocalState(ClientContext &context) : arena(BufferAllocator::Get(context)) { }
+		explicit LocalState(ClientContext &context) : arena(BufferAllocator::Get(context)), allocator(arena) { }
+
 		static unique_ptr<FunctionLocalState> Init(ExpressionState &state, const BoundFunctionExpression &expr, FunctionData *bind_data);
 		static LocalState &ResetAndGet(ExpressionState &state);
 
@@ -435,8 +454,10 @@ namespace {
 		string_t Serialize(Vector &vector, const sgl::geometry &geom);
 
 		ArenaAllocator &GetArena() { return arena; }
+		GeometryAllocator &GetAllocator() { return allocator; }
 	private:
 		ArenaAllocator arena;
+		GeometryAllocator allocator;
 	};
 
 	unique_ptr<FunctionLocalState> LocalState::Init(ExpressionState &state, const BoundFunctionExpression &expr, FunctionData *bind_data) {
@@ -564,11 +585,103 @@ struct ST_Centroid {
 
 struct ST_Collect {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
+		auto &child_vec = ListVector::GetEntry(args.data[0]);
+		auto child_count = ListVector::GetListSize(args.data[0]);
+
+		UnifiedVectorFormat input_vdata;
+		child_vec.ToUnifiedFormat(child_count, input_vdata);
+
+		UnaryExecutor::Execute<list_entry_t, string_t>(
+		args.data[0], result, args.size(),
+		[&](const list_entry_t &entry) {
+			const auto offset =	entry.offset;
+			const auto length = entry.length;
+
+			// First figure out if we have Z or M
+			bool has_z = false;
+			bool has_m = false;
+			bool all_points = true;
+			bool all_lines = true;
+			bool all_polygons = true;
+
+			// First pass, check if we have Z or M
+			for(idx_t out_idx = offset; out_idx < offset + length; out_idx++) {
+				const auto row_idx = input_vdata.sel->get_index(out_idx);
+				if(!input_vdata.validity.RowIsValid(row_idx)) {
+					continue;
+				}
+				auto &blob = UnifiedVectorFormat::GetData<string_t>(input_vdata)[row_idx];
+
+				// TODO: Peek dont deserialize
+				const auto geom = lstate.Deserialize(blob);
+				has_z = has_z || geom.has_z();
+				has_m = has_m || geom.has_m();
+			}
+
+			sgl::geometry collection(sgl::geometry_type::INVALID, has_z, has_m);
+
+			for(idx_t out_idx = offset; out_idx < offset + length; out_idx++) {
+				const auto row_idx = input_vdata.sel->get_index(out_idx);
+				if(input_vdata.validity.RowIsValid(row_idx)) {
+					continue;
+				}
+
+				auto &blob = UnifiedVectorFormat::GetData<string_t>(input_vdata)[row_idx];
+				// TODO: Deserialize to heap immediately
+				auto geom = lstate.Deserialize(blob);
+
+				// TODO: Peek dont deserialize
+				if(geom.is_empty()) {
+					continue;
+				}
+
+				all_points = all_points && geom.get_type() == sgl::geometry_type::POINT;
+				all_lines = all_lines && geom.get_type() == sgl::geometry_type::LINESTRING;
+				all_polygons = all_polygons && geom.get_type() == sgl::geometry_type::POLYGON;
+
+				// Force Z and M so that the dimensions match
+				sgl::ops::force_zm(lstate.GetAllocator(), &geom, has_z, has_m, 0, 0);
+
+				const auto mem = lstate.GetArena().Allocate(sizeof(sgl::geometry));
+				const auto part = new (mem) sgl::geometry(geom);
+
+				// Append to collection
+				collection.append_part(part);
+			}
+
+			// Figure out the type of the collection
+			if(all_points) {
+				collection.set_type(sgl::geometry_type::MULTI_POINT);
+			} else if(all_lines) {
+				collection.set_type(sgl::geometry_type::MULTI_LINESTRING);
+			} else if(all_polygons) {
+				collection.set_type(sgl::geometry_type::MULTI_POLYGON);
+			} else {
+				collection.set_type(sgl::geometry_type::MULTI_GEOMETRY);
+			}
+
+			// Serialize the collection
+			return lstate.Serialize(result, collection);
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Collect", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geoms", LogicalType::LIST(GeoTypes::GEOMETRY()));
+				variant.SetReturnType(GeoTypes::GEOMETRY());
 
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription("Collects geometries into a single geometry");
+				// TODO: Set example
+			});
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
 	}
 };
 
@@ -2396,10 +2509,10 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_AsHEXWKB::Register(db);
 	ST_AsSVG::Register(db);
 	// ST_Centroid::Register(db); - not applicable now
+	*/
 	ST_Collect::Register(db);
 	ST_CollectionExtract::Register(db);
 	// ST_Contains::Register(db); - not applicable now
-	*/
 	ST_Dimension::Register(db);
 	/*
 	// ST_Distance::Register(db); -- not applicable now

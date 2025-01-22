@@ -17,6 +17,13 @@
 
 namespace sgl {
 
+struct allocator {
+	virtual void *alloc(size_t size) = 0;
+	virtual void dealloc(void *ptr, size_t size) = 0;
+	virtual void *realloc(void *ptr, size_t old_size, size_t new_size) = 0;
+	virtual ~allocator() = default;
+};
+
 struct vertex_xy {
 	double x;
 	double y;
@@ -77,6 +84,13 @@ enum class geometry_type : uint8_t {
 	MULTI_GEOMETRY,
 };
 
+enum class vertex_type : uint8_t {
+	XY = 0,
+	XYZ = 1,
+	XYM = 2,
+	XYZM = 3,
+};
+
 class geometry {
 private:
 	// clang-format off
@@ -118,9 +132,16 @@ public:
 	const geometry *get_next() const;
 	const geometry *get_parent() const;
 
+	geometry *get_last_part();
+	geometry *get_first_part();
+	geometry *get_nth_part(uint32_t n);
+	geometry *get_next();
+	geometry *get_parent();
+
 	void append_part(geometry *part);
 
 	const uint8_t *get_vertex_data() const;
+	uint8_t* get_vertex_data();
 	void set_vertex_data(const uint8_t *data, uint32_t size);
 	void set_vertex_data(const char *data, uint32_t size);
 
@@ -233,6 +254,22 @@ inline const geometry *geometry::get_parent() const {
 	return prnt;
 }
 
+inline geometry *geometry::get_last_part() {
+	return const_cast<geometry *>(static_cast<const geometry *>(this)->get_last_part());
+}
+inline geometry *geometry::get_first_part() {
+	return const_cast<geometry *>(static_cast<const geometry *>(this)->get_first_part());
+}
+inline geometry *geometry::get_nth_part(uint32_t n) {
+	return const_cast<geometry *>(static_cast<const geometry *>(this)->get_nth_part(n));
+}
+inline geometry *geometry::get_next() {
+    return const_cast<geometry *>(static_cast<const geometry *>(this)->get_next());
+}
+inline geometry *geometry::get_parent() {
+    return const_cast<geometry *>(static_cast<const geometry *>(this)->get_parent());
+}
+
 inline void geometry::append_part(geometry *part) {
 	SGL_ASSERT(is_multi_part() || type == geometry_type::INVALID);
 	SGL_ASSERT(part != nullptr);
@@ -257,6 +294,11 @@ inline void geometry::append_part(geometry *part) {
 inline const uint8_t *geometry::get_vertex_data() const {
 	SGL_ASSERT(is_single_part() || type == geometry_type::INVALID);
 	return static_cast<const uint8_t *>(data);
+}
+
+inline uint8_t *geometry::get_vertex_data() {
+	SGL_ASSERT(is_single_part() || type == geometry_type::INVALID);
+    return static_cast<uint8_t *>(data);
 }
 
 inline void geometry::set_vertex_data(const uint8_t *data, uint32_t size) {
@@ -560,7 +602,13 @@ inline double perimeter(const geometry *geom);
 namespace ops {
 
 double area(const geometry *geom);
+double perimeter(const geometry *geom);
+double length(const geometry *geom);
+size_t vertex_count(const geometry *geom);
+int32_t max_surface_dimension(const geometry *geom);
+
 box_xy extent_xy(const geometry *geom);
+void force_zm(allocator &alloc, geometry *geom, bool has_z, bool has_m, double default_z, double default_m);
 
 } // namespace ops
 
@@ -760,7 +808,7 @@ inline bool try_get_extent_xy(const geometry *geom, box_xy *out) {
 			}
 			break;
 			default:
-				D_ASSERT(false);
+				SGL_ASSERT(false);
 				return false;
 		}
 
@@ -850,6 +898,7 @@ namespace util {
 inline double haversine_distance(const double lat1_p, const double lon1_p,const  double lat2_p, const double lon2_p) {
 	// Radius of the earth in km
 	constexpr auto R = 6371000.0;
+	constexpr auto PI = 3.14159265358979323846;
 
 	// Convert to radians
 	const auto lat1 = lat1_p * PI / 180.0;
