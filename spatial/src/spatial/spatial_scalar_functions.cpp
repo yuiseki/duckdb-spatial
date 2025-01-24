@@ -31,6 +31,25 @@ public:
 		return value;
 	}
 
+	template <class T>
+	T ReadBE() {
+		static_assert(std::is_trivially_copyable<T>::value, "Type must be trivially copyable");
+		CheckSize(sizeof(T));
+
+		uint8_t in[sizeof(T)];
+		uint8_t out[sizeof(T)];
+		memcpy(in, ptr, sizeof(T));
+		ptr += sizeof(T);
+
+		for (size_t i = 0; i < sizeof(T); i++) {
+			out[i] = in[sizeof(T) - i - 1];
+		}
+
+		T swapped = 0;
+		memcpy(&swapped, out, sizeof(T));
+		return swapped;
+	}
+
 	const char *Reserve(const size_t size) {
 		CheckSize(size);
 		const char *result = ptr;
@@ -497,20 +516,20 @@ string_t LocalState::Serialize(Vector &vector, const sgl::geometry &geom) {
 }
 } // namespace
 
-//----------------------------------------------------------------------------------------------------------------------
-// Functions
-//----------------------------------------------------------------------------------------------------------------------
-
 namespace {
 
-//----------------------------------------------------------------------------------------------------------------------
+//######################################################################################################################
+// Functions
+//######################################################################################################################
+
+//======================================================================================================================
 // ST_Area
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 
 struct ST_Area {
 
 	//------------------------------------------------------------------------------------------------------------------
-	// GEOMETRY Function
+	// GEOMETRY
 	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
@@ -625,33 +644,59 @@ struct ST_Area {
 	-- 1.0
 	)";
 
-	static constexpr DocTag TAGS[] = {{"ext", "spatial"}, {"category", "property"}};
-
 	//------------------------------------------------------------------------------------------------------------------
 	// Register
 	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 
 		FunctionBuilder::RegisterScalar(db, "ST_Area", [](ScalarFunctionBuilder &func) {
+			// GEOMETRY
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("geom", GeoTypes::GEOMETRY());
 				variant.SetReturnType(LogicalType::DOUBLE);
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
-				// TODO: Set example
 			});
 
+			// POLYGON_2D
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-				variant.AddParameter("geom", GeoTypes::POLYGON_2D());
+				variant.AddParameter("polygon", GeoTypes::POLYGON_2D());
 				variant.SetReturnType(LogicalType::DOUBLE);
+
+				variant.SetFunction(PolygonAreaFunction);
+			});
+
+			// LINESTRING_2D
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("linestring", GeoTypes::LINESTRING_2D());
+				variant.SetReturnType(LogicalType::DOUBLE);
+
+				variant.SetFunction(LineStringAreaFunction);
+			});
+
+			// POINT_2D
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("point", GeoTypes::POINT_2D());
+				variant.SetReturnType(LogicalType::DOUBLE);
+
+				variant.SetFunction(PointAreaFunction);
+			});
+
+			// BOX_2D
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("box", GeoTypes::BOX_2D());
+				variant.SetReturnType(LogicalType::DOUBLE);
+
+				variant.SetFunction(BoxAreaFunction);
 			});
 
 			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
 			// TODO: Set Example
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");
-
 		});
 	}
 };
@@ -722,11 +767,15 @@ struct ST_Centroid {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_Collect
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_Collect {
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Execution
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
@@ -809,6 +858,54 @@ struct ST_Collect {
 		    });
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+	Collects a list of geometries into a collection geometry.
+	- If all geometries are `POINT`'s, a `MULTIPOINT` is returned.
+	- If all geometries are `LINESTRING`'s, a `MULTILINESTRING` is returned.
+	- If all geometries are `POLYGON`'s, a `MULTIPOLYGON` is returned.
+	- Otherwise if the input collection contains a mix of geometry types, a `GEOMETRYCOLLECTION` is returned.
+
+	Empty and `NULL` geometries are ignored. If all geometries are empty or `NULL`, a `GEOMETRYCOLLECTION EMPTY` is returned.
+	)";
+
+	static constexpr auto EXAMPLE = R"(
+	-- With all POINT's, a MULTIPOINT is returned
+	SELECT ST_Collect([ST_Point(1, 2), ST_Point(3, 4)]);
+	----
+	MULTIPOINT (1 2, 3 4)
+
+	-- With mixed geometry types, a GEOMETRYCOLLECTION is returned
+	SELECT ST_Collect([ST_Point(1, 2), ST_GeomFromText('LINESTRING(3 4, 5 6)')]);
+	----
+	GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (3 4, 5 6))
+
+	-- Note that the empty geometry is ignored, so the result is a MULTIPOINT
+	SELECT ST_Collect([ST_Point(1, 2), NULL, ST_GeomFromText('GEOMETRYCOLLECTION EMPTY')]);
+	----
+	MULTIPOINT (1 2)
+
+	-- If all geometries are empty or NULL, a GEOMETRYCOLLECTION EMPTY is returned
+	SELECT ST_Collect([NULL, ST_GeomFromText('GEOMETRYCOLLECTION EMPTY')]);
+	----
+	GEOMETRYCOLLECTION EMPTY
+
+	-- Tip: You can use the `ST_Collect` function together with the `list()` aggregate function to collect multiple rows of geometries into a single geometry collection:
+
+	CREATE TABLE points (geom GEOMETRY);
+
+	INSERT INTO points VALUES (ST_Point(1, 2)), (ST_Point(3, 4));
+
+	SELECT ST_Collect(list(geom)) FROM points;
+	----
+	MULTIPOINT (1 2, 3 4)
+	)";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Collect", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -817,10 +914,11 @@ struct ST_Collect {
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
-
-				variant.SetDescription("Collects geometries into a single geometry");
-				// TODO: Set example
 			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
 		});
@@ -830,66 +928,65 @@ struct ST_Collect {
 //----------------------------------------------------------------------------------------------------------------------
 // ST_CollectionExtract
 //----------------------------------------------------------------------------------------------------------------------
+// TODO: Implement
 struct ST_CollectionExtract {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		BinaryExecutor::Execute<string_t, int32_t, string_t>(
-			args.data[0], args.data[2], result, args.size(),
-			[&](const string_t &blob, int32_t requested_type) {
+		    args.data[0], args.data[2], result, args.size(), [&](const string_t &blob, int32_t requested_type) {
+			    const auto geom = lstate.Deserialize(blob);
+			    const auto type = geom.get_type();
+			    const auto is_empty = geom.is_empty();
 
-				const auto geom = lstate.Deserialize(blob);
-				const auto type = geom.get_type();
-				const auto is_empty = geom.is_empty();
-
-				switch(requested_type) {
-				case 1:
-					switch(type) {
-						case sgl::geometry_type::MULTI_POINT:
-						case sgl::geometry_type::POINT:
-							return blob;
-						case sgl::geometry_type::MULTI_GEOMETRY: {
-							if(is_empty) {
-								return lstate.Serialize(result, sgl::multi_point::make_empty());
-							}
-						}
-						default:
-							return lstate.Serialize(result, sgl::point::make_empty());
-					}
-				break;
-				case 2:
-					switch(type) {
-						case sgl::geometry_type::MULTI_LINESTRING:
-						case sgl::geometry_type::LINESTRING:
-							return blob;
-						case sgl::geometry_type::MULTI_GEOMETRY: {
-							if(is_empty) {
-								return lstate.Serialize(result, sgl::multi_linestring::make_empty());
-							}
-						}
-						default:
-							return lstate.Serialize(result, sgl::linestring::make_empty());
-					}
-				break;
-				case 3:
-					switch(type) {
-						case sgl::geometry_type::MULTI_POLYGON:
-						case sgl::geometry_type::POLYGON:
-							return blob;
-						case sgl::geometry_type::MULTI_GEOMETRY: {
-							if(is_empty) {
-								return lstate.Serialize(result, sgl::multi_polygon::make_empty());
-							}
-						}
-						default:
-							return lstate.Serialize(result, sgl::polygon::make_empty());
-					}
-				break;
-				default:
-					throw InvalidInputException("Invalid requested type parameter for collection extract, must be 1 "
-							"(POINT), 2 (LINESTRING) or 3 (POLYGON)");
-				}
-			});
+			    switch (requested_type) {
+			    case 1:
+				    switch (type) {
+				    case sgl::geometry_type::MULTI_POINT:
+				    case sgl::geometry_type::POINT:
+					    return blob;
+				    case sgl::geometry_type::MULTI_GEOMETRY: {
+					    if (is_empty) {
+						    return lstate.Serialize(result, sgl::multi_point::make_empty());
+					    }
+				    }
+				    default:
+					    return lstate.Serialize(result, sgl::point::make_empty());
+				    }
+				    break;
+			    case 2:
+				    switch (type) {
+				    case sgl::geometry_type::MULTI_LINESTRING:
+				    case sgl::geometry_type::LINESTRING:
+					    return blob;
+				    case sgl::geometry_type::MULTI_GEOMETRY: {
+					    if (is_empty) {
+						    return lstate.Serialize(result, sgl::multi_linestring::make_empty());
+					    }
+				    }
+				    default:
+					    return lstate.Serialize(result, sgl::linestring::make_empty());
+				    }
+				    break;
+			    case 3:
+				    switch (type) {
+				    case sgl::geometry_type::MULTI_POLYGON:
+				    case sgl::geometry_type::POLYGON:
+					    return blob;
+				    case sgl::geometry_type::MULTI_GEOMETRY: {
+					    if (is_empty) {
+						    return lstate.Serialize(result, sgl::multi_polygon::make_empty());
+					    }
+				    }
+				    default:
+					    return lstate.Serialize(result, sgl::polygon::make_empty());
+				    }
+				    break;
+			    default:
+				    throw InvalidInputException("Invalid requested type parameter for collection extract, must be 1 "
+				                                "(POINT), 2 (LINESTRING) or 3 (POLYGON)");
+			    }
+		    });
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -907,10 +1004,15 @@ struct ST_Contains {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_Dimension
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_Dimension {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
@@ -920,6 +1022,20 @@ struct ST_Dimension {
 		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = "Returns the dimension of a geometry.";
+
+	static constexpr auto EXAMPLE = R"(
+	select st_dimension('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'::geometry);
+	----
+	2
+	)";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Dimension", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -928,19 +1044,21 @@ struct ST_Dimension {
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
-
-				variant.SetDescription("Returns the max surface dimension of a geometry");
-				// TODO: Set example
 			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");
 		});
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_Distance
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_Distance {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
@@ -949,9 +1067,10 @@ struct ST_Distance {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_Dump
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_Dump {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
@@ -960,10 +1079,16 @@ struct ST_Dump {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_Extent
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+// TODO: WKB Implementation
+
 struct ST_Extent {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
@@ -1009,6 +1134,19 @@ struct ST_Extent {
 		}
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Returns the minimal bounding box enclosing the input geometry
+	)";
+
+	// TODO: Example
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Extent", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -1017,44 +1155,136 @@ struct ST_Extent {
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
-
-				variant.SetDescription("Compute the bounding box of a geometry");
-				// TODO: Set example
 			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");
 		});
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_ExteriorRing
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_ExteriorRing {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
+		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
+		    args.data[0], result, args.size(), [&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
+			    // TODO: Peek dont deserialize
+			    const auto geom = lstate.Deserialize(blob);
 
-		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(args.data[0], result, args.size(),
-			[&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
-				// TODO: Peek dont deserialize
-				const auto geom = lstate.Deserialize(blob);
+			    if (geom.get_type() != sgl::geometry_type::POLYGON) {
+				    mask.SetInvalid(idx);
+				    return string_t {};
+			    }
 
-				if(geom.get_type() != sgl::geometry_type::POLYGON) {
-					mask.SetInvalid(idx);
-					return string_t { };
-				}
+			    if (geom.is_empty()) {
+				    const auto empty = sgl::polygon::make_empty(geom.has_z(), geom.has_m());
+				    return lstate.Serialize(result, empty);
+			    }
 
-				if(geom.is_empty()) {
-					const auto empty = sgl::polygon::make_empty(geom.has_z(), geom.has_m());
-					return lstate.Serialize(result, empty);
-				}
-
-				const auto shell = geom.get_first_part();
-				return lstate.Serialize(result, *shell);
-		});
+			    const auto shell = geom.get_first_part();
+			    return lstate.Serialize(result, *shell);
+		    });
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// POLYGON_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 1);
+		auto &poly_vec = args.data[0];
+		auto poly_entries = ListVector::GetData(poly_vec);
+		auto &ring_vec = ListVector::GetEntry(poly_vec);
+		auto ring_entries = ListVector::GetData(ring_vec);
+		auto &vertex_vec = ListVector::GetEntry(ring_vec);
+		auto &vertex_vec_children = StructVector::GetEntries(vertex_vec);
+		auto poly_x_data = FlatVector::GetData<double>(*vertex_vec_children[0]);
+		auto poly_y_data = FlatVector::GetData<double>(*vertex_vec_children[1]);
+
+		auto count = args.size();
+		UnifiedVectorFormat poly_format;
+		poly_vec.ToUnifiedFormat(count, poly_format);
+
+		// First figure out how many vertices we need
+		idx_t total_vertex_count = 0;
+		for (idx_t i = 0; i < count; i++) {
+			auto row_idx = poly_format.sel->get_index(i);
+			if (poly_format.validity.RowIsValid(row_idx)) {
+				auto poly = poly_entries[row_idx];
+				if (poly.length != 0) {
+					// We only care about the exterior ring (first entry)
+					auto &ring = ring_entries[poly.offset];
+					total_vertex_count += ring.length;
+				}
+			}
+		}
+
+		// Now we can allocate the result vector
+		auto &line_vec = result;
+		ListVector::Reserve(line_vec, total_vertex_count);
+		ListVector::SetListSize(line_vec, total_vertex_count);
+
+		auto line_entries = ListVector::GetData(line_vec);
+		auto &line_coord_vec = StructVector::GetEntries(ListVector::GetEntry(line_vec));
+		auto line_data_x = FlatVector::GetData<double>(*line_coord_vec[0]);
+		auto line_data_y = FlatVector::GetData<double>(*line_coord_vec[1]);
+
+		// Now we can fill the result vector
+		idx_t line_data_offset = 0;
+		for (idx_t i = 0; i < count; i++) {
+			auto row_idx = poly_format.sel->get_index(i);
+			if (poly_format.validity.RowIsValid(row_idx)) {
+				auto poly = poly_entries[row_idx];
+
+				if (poly.length == 0) {
+					line_entries[i].offset = 0;
+					line_entries[i].length = 0;
+					continue;
+				}
+
+				// We only care about the exterior ring (first entry)
+				auto &ring = ring_entries[poly.offset];
+
+				auto &line_entry = line_entries[i];
+				line_entry.offset = line_data_offset;
+				line_entry.length = ring.length;
+
+				for (idx_t coord_idx = 0; coord_idx < ring.length; coord_idx++) {
+					line_data_x[line_entry.offset + coord_idx] = poly_x_data[ring.offset + coord_idx];
+					line_data_y[line_entry.offset + coord_idx] = poly_y_data[ring.offset + coord_idx];
+				}
+
+				line_data_offset += ring.length;
+			} else {
+				FlatVector::SetNull(line_vec, i, true);
+			}
+		}
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = "Returns the exterior ring (shell) of a polygon geometry.";
+
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_ExteriorRing", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -1062,20 +1292,29 @@ struct ST_ExteriorRing {
 				variant.SetReturnType(GeoTypes::GEOMETRY());
 
 				variant.SetInit(LocalState::Init);
-				variant.SetFunction(Execute);
-
-				variant.SetDescription("Returns the exterior ring (shell) of a polygon geometry");
-				// TODO: Set example
+				variant.SetFunction(ExecuteGeometry);
 			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("polygon", GeoTypes::POLYGON_2D());
+				variant.SetReturnType(GeoTypes::LINESTRING_2D());
+
+				variant.SetFunction(ExecutePolygon);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");
 		});
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_FlipCoordinates
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
+// TODO: Implement
 struct ST_FlipCoordinates {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
@@ -1084,31 +1323,329 @@ struct ST_FlipCoordinates {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
-// ST_Force
-//----------------------------------------------------------------------------------------------------------------------
-struct ST_Force {
+//======================================================================================================================
+// ST_Force 2D/3DZ/3DM/4D
+//======================================================================================================================
+
+template <class IMPL>
+struct ST_ForceBase {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		auto &alloc = lstate.GetAllocator();
+
+		auto has_z = IMPL::HAS_Z;
+		auto has_m = IMPL::HAS_M;
+
+		auto &input = args.data[0];
+		const auto count = args.size();
+
+		// TODO: This can be optimized to avoid de/serialization if the vertex type already matches
+
+		if (has_z && has_m) {
+			auto &z_values = args.data[1];
+			auto &m_values = args.data[2];
+
+			TernaryExecutor::Execute<string_t, double, double, string_t>(
+			    input, z_values, m_values, result, count, [&](const string_t &blob, double z, double m) {
+				    auto geom = lstate.Deserialize(blob);
+				    sgl::ops::force_zm(alloc, &geom, true, true, z, m);
+				    return lstate.Serialize(result, geom);
+			    });
+
+			return;
+		}
+
+		if (has_z || has_m) {
+			auto &zm_values = args.data[1];
+
+			BinaryExecutor::Execute<string_t, double, string_t>(
+			    input, zm_values, result, count, [&](const string_t &blob, double zm) {
+				    const auto def_z = has_z ? zm : 0;
+				    const auto def_m = has_m ? zm : 0;
+
+				    auto geom = lstate.Deserialize(blob);
+				    sgl::ops::force_zm(alloc, &geom, has_z, has_m, def_z, def_m);
+				    return lstate.Serialize(result, geom);
+			    });
+
+			return;
+		}
+
+		UnaryExecutor::Execute<string_t, string_t>(input, result, count, [&](const string_t &blob) {
+			auto geom = lstate.Deserialize(blob);
+			sgl::ops::force_zm(alloc, &geom, false, false, 0, 0);
+			return lstate.Serialize(result, geom);
+		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar([](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(IMPL::DESCRIPTION);
+			func.SetExample(IMPL::EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+struct ST_Force2D : ST_ForceBase<ST_Force2D> {
+	static auto constexpr NAME = "ST_Force2D";
+	static auto constexpr HAS_Z = false;
+	static auto constexpr HAS_M = false;
+	static auto constexpr EXAMPLE = "";
+	static auto constexpr DESCRIPTION = R"(
+		Forces the vertices of a geometry to have X and Y components
+
+		This function will drop any Z and M values from the input geometry, if present. If the input geometry is already 2D, it will be returned as is.
+		)";
+};
+
+struct ST_Force3DZ : ST_ForceBase<ST_Force3DZ> {
+	static auto constexpr NAME = "ST_Force3DZ";
+	static auto constexpr HAS_Z = true;
+	static auto constexpr HAS_M = false;
+	static auto constexpr EXAMPLE = "";
+	static auto constexpr DESCRIPTION = R"(
+		Forces the vertices of a geometry to have X, Y and Z components
+
+		The following cases apply:
+		- If the input geometry has a M component but no Z component, the M component will be replaced with the new Z value.
+		- If the input geometry has a Z component but no M component, it will be returned as is.
+		- If the input geometry has both a Z component and a M component, the M component will be removed.
+		- Otherwise, if the input geometry has neither a Z or M component, the new Z value will be added to the vertices of the input geometry.
+		)";
+};
+
+struct ST_Force3DM : ST_ForceBase<ST_Force3DM> {
+	static auto constexpr NAME = "ST_Force3DM";
+	static auto constexpr HAS_Z = false;
+	static auto constexpr HAS_M = true;
+	static auto constexpr EXAMPLE = "";
+	static auto constexpr DESCRIPTION = R"(
+		Forces the vertices of a geometry to have X, Y and M components
+
+		The following cases apply:
+		- If the input geometry has a Z component but no M component, the Z component will be replaced with the new M value.
+		- If the input geometry has a M component but no Z component, it will be returned as is.
+		- If the input geometry has both a Z component and a M component, the Z component will be removed.
+		- Otherwise, if the input geometry has neither a Z or M component, the new M value will be added to the vertices of the input geometry.
+		)";
+};
+
+struct ST_Force4D : ST_ForceBase<ST_Force4D> {
+	static auto constexpr NAME = "ST_Force4D";
+	static auto constexpr HAS_Z = true;
+	static auto constexpr HAS_M = true;
+	static auto constexpr EXAMPLE = "";
+	static auto constexpr DESCRIPTION = R"(
+		Forces the vertices of a geometry to have X, Y, Z and M components
+
+		The following cases apply:
+		- If the input geometry has a Z component but no M component, the new M value will be added to the vertices of the input geometry.
+		- If the input geometry has a M component but no Z component, the new Z value will be added to the vertices of the input geometry.
+		- If the input geometry has both a Z component and a M component, the geometry will be returned as is.
+		- Otherwise, if the input geometry has neither a Z or M component, the new Z and M values will be added to the vertices of the input geometry.
+		)";
+};
+
+//======================================================================================================================
 // ST_GeometryType
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_GeometryType {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Binding
+	//------------------------------------------------------------------------------------------------------------------
+	// This function is a bit botched, but we cant change it without breaking backwards compatability
+	// therefore, we use these constants for the geometry type values, instead of the normal type enum
+
+	static constexpr uint8_t LEGACY_POINT_TYPE = 0;
+	static constexpr uint8_t LEGACY_LINESTRING_TYPE = 1;
+	static constexpr uint8_t LEGACY_POLYGON_TYPE = 2;
+	static constexpr uint8_t LEGACY_MULTIPOINT_TYPE = 3;
+	static constexpr uint8_t LEGACY_MULTILINESTRING_TYPE = 4;
+	static constexpr uint8_t LEGACY_MULTIPOLYGON_TYPE = 5;
+	static constexpr uint8_t LEGACY_GEOMETRYCOLLECTION_TYPE = 6;
+	static constexpr uint8_t LEGACY_UNKNOWN_TYPE = 7;
+
+	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
+	                                     vector<unique_ptr<Expression>> &arguments) {
+		// Create an enum type for all geometry types
+		// Ensure that these are in the same order as the GeometryType enum
+		const vector<string> enum_values = {"POINT", "LINESTRING", "POLYGON", "MULTIPOINT", "MULTILINESTRING",
+		                                    "MULTIPOLYGON", "GEOMETRYCOLLECTION",
+		                                    // or...
+		                                    "UNKNOWN"};
+
+		bound_function.return_type = GeoTypes::CreateEnumType("GEOMETRY_TYPE", enum_values);
+		return nullptr;
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::Execute<string_t, uint8_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
+			// TODO: Peek dont deserialize
+
+			const auto geom = lstate.Deserialize(blob);
+			switch (geom.get_type()) {
+			case sgl::geometry_type::POINT:
+				return LEGACY_POINT_TYPE;
+			case sgl::geometry_type::LINESTRING:
+				return LEGACY_LINESTRING_TYPE;
+			case sgl::geometry_type::POLYGON:
+				return LEGACY_POLYGON_TYPE;
+			case sgl::geometry_type::MULTI_POINT:
+				return LEGACY_MULTIPOINT_TYPE;
+			case sgl::geometry_type::MULTI_LINESTRING:
+				return LEGACY_MULTILINESTRING_TYPE;
+			case sgl::geometry_type::MULTI_POLYGON:
+				return LEGACY_MULTIPOLYGON_TYPE;
+			case sgl::geometry_type::MULTI_GEOMETRY:
+				return LEGACY_GEOMETRYCOLLECTION_TYPE;
+			default:
+				return LEGACY_UNKNOWN_TYPE;
+			}
+		});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// POINT_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecutePoint(DataChunk &args, ExpressionState &state, Vector &result) {
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		*ConstantVector::GetData<uint8_t>(result) = LEGACY_POINT_TYPE;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// LINESTRING_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteLineString(DataChunk &args, ExpressionState &state, Vector &result) {
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		*ConstantVector::GetData<uint8_t>(result) = LEGACY_LINESTRING_TYPE;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// POLYGON_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		*ConstantVector::GetData<uint8_t>(result) = LEGACY_POLYGON_TYPE;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// WKB
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteWKB(DataChunk &args, ExpressionState &state, Vector &result) {
+
+		UnaryExecutor::Execute<string_t, uint8_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
+			BinaryReader cursor(blob.GetData(), blob.GetSize());
+
+			const auto le = cursor.Read<uint8_t>();
+			const auto type = le ? cursor.Read<uint32_t>() : cursor.ReadBE<uint32_t>();
+			const auto normalized_type = (type & 0xffff) % 1000;
+
+			if (normalized_type == 0 || normalized_type > 7) {
+				return LEGACY_UNKNOWN_TYPE;
+			}
+
+			// Return the geometry type
+			// Subtract 1 since the WKB type is 1-indexed
+			return static_cast<uint8_t>(normalized_type - 1);
+		});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+	Returns a 'GEOMETRY_TYPE' enum identifying the input geometry type. Possible enum return types are: `POINT`, `LINESTRING`, `POLYGON`, `MULTIPOINT`, `MULTILINESTRING`, `MULTIPOLYGON`, and `GEOMETRYCOLLECTION`.
+	)";
+
+	static constexpr auto EXAMPLE = R"(
+	SELECT DISTINCT ST_GeometryType(ST_GeomFromText('POINT(1 1)'));
+	----
+	POINT
+	)";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_GeometryType", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalTypeId::ANY);
+
+				variant.SetBind(Bind);
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteGeometry);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("point", GeoTypes::POINT_2D());
+				variant.SetReturnType(LogicalTypeId::ANY);
+
+				variant.SetBind(Bind);
+				variant.SetFunction(ExecutePoint);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("linestring", GeoTypes::LINESTRING_2D());
+				variant.SetReturnType(LogicalTypeId::ANY);
+
+				variant.SetBind(Bind);
+				variant.SetFunction(ExecuteLineString);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("polygon", GeoTypes::POLYGON_2D());
+				variant.SetReturnType(LogicalTypeId::ANY);
+
+				variant.SetBind(Bind);
+				variant.SetFunction(ExecutePolygon);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("wkb", GeoTypes::WKB_BLOB());
+				variant.SetReturnType(LogicalTypeId::ANY);
+
+				variant.SetBind(Bind);
+				variant.SetFunction(ExecuteWKB);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_GeomFromHEXWKB
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_GeomFromHEXWKB {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
@@ -2427,7 +2964,6 @@ struct ST_QuadKey {
 				// TODO: Set example
 				// variant.SetExample(DOC_EXAMPLE);
 				// variant.SetDescription(DOC_DESCRIPTION);
-				variant.SetDescription(DOCS);
 			});
 
 			func.SetTag("ext", "spatial");
@@ -2780,7 +3316,7 @@ struct ST_MMin : VertexAggFunctionBase<ST_MMin, VertexMinAggOp> {
 void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Area::Register(db);
 
-	// 14 functions to go!
+	// 10 functions to go!
 	/*
 	ST_AsGeoJSON::Register(db);
 	ST_AsText::Register(db);
@@ -2802,8 +3338,14 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_ExteriorRing::Register(db);
 	/*
 	ST_FlipCoordinates::Register(db);
-	ST_Force::Register(db);
+	*/
+	ST_Force2D::Register(db);
+	ST_Force3DZ::Register(db);
+	ST_Force3DM::Register(db);
+	ST_Force4D::Register(db);
+
 	ST_GeometryType::Register(db);
+	/*
 	ST_GeomFromHEXWKB::Register(db);
 	ST_GeomFromText::Register(db);
 	ST_GeomFromWKB::Register(db);

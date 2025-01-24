@@ -76,6 +76,7 @@ public:
 	void AddVariant(CALLBACK &&callback);
 	void SetTag(const string &key, const string &value);
 	void SetDescription(const string &desc);
+	void SetExample(const string &ex);
 
 private:
 	explicit ScalarFunctionBuilder(const char *name) : set(name) {
@@ -87,10 +88,15 @@ private:
 
 	// If not set by a variant
 	string default_description;
+	string default_example;
 };
 
 inline void ScalarFunctionBuilder::SetDescription(const string &desc) {
 	default_description = desc;
+}
+
+inline void ScalarFunctionBuilder::SetExample(const string &ex) {
+	default_example = ex;
 }
 
 inline void ScalarFunctionBuilder::SetTag(const string &key, const string &value) {
@@ -114,6 +120,10 @@ void ScalarFunctionBuilder::AddVariant(CALLBACK &&callback) {
 	// Add the default description if not set by the variant
 	if (builder.description.description.empty()) {
 		builder.description.description = default_description;
+	}
+
+	if (builder.description.examples.empty()) {
+		builder.description.examples.emplace_back(default_example);
 	}
 
 	// Add the description
