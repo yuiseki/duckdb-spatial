@@ -226,7 +226,7 @@ static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}};
 void CoreScalarFunctions::RegisterStExtent(DatabaseInstance &db) {
 	ScalarFunctionSet set("ST_Extent");
 
-	set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, GeoTypes::BOX_2D(), ExtentFunction));
+	//set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, GeoTypes::BOX_2D(), ExtentFunction));
 	set.AddFunction(ScalarFunction({GeoTypes::WKB_BLOB()}, GeoTypes::BOX_2D(), WKBExtFunction));
 
 	ExtensionUtil::RegisterFunction(db, set);

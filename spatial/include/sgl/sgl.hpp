@@ -370,6 +370,12 @@ inline std::string geometry::type_to_string(const geometry_type type) {
 
 namespace sgl {
 
+namespace point {
+inline geometry make_empty(bool has_z = false, bool has_m = false) {
+	return geometry(geometry_type::POINT, has_z, has_m);
+}
+} // namespace point
+
 namespace linestring {
 inline geometry make_empty(bool has_z = false, bool has_m = false) {
 	return geometry(geometry_type::LINESTRING, has_z, has_m);

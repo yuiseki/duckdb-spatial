@@ -497,9 +497,9 @@ string_t LocalState::Serialize(Vector &vector, const sgl::geometry &geom) {
 }
 } // namespace
 
-//------------------------------------------------------------------------------
+//----------------------------------------------------------------------------------------------------------------------
 // Functions
-//------------------------------------------------------------------------------
+//----------------------------------------------------------------------------------------------------------------------
 
 namespace {
 
@@ -809,8 +809,6 @@ struct ST_Collect {
 		    });
 	}
 
-	static const char *docs;
-
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Collect", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -834,6 +832,64 @@ struct ST_Collect {
 //----------------------------------------------------------------------------------------------------------------------
 struct ST_CollectionExtract {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		BinaryExecutor::Execute<string_t, int32_t, string_t>(
+			args.data[0], args.data[2], result, args.size(),
+			[&](const string_t &blob, int32_t requested_type) {
+
+				const auto geom = lstate.Deserialize(blob);
+				const auto type = geom.get_type();
+				const auto is_empty = geom.is_empty();
+
+				switch(requested_type) {
+				case 1:
+					switch(type) {
+						case sgl::geometry_type::MULTI_POINT:
+						case sgl::geometry_type::POINT:
+							return blob;
+						case sgl::geometry_type::MULTI_GEOMETRY: {
+							if(is_empty) {
+								return lstate.Serialize(result, sgl::multi_point::make_empty());
+							}
+						}
+						default:
+							return lstate.Serialize(result, sgl::point::make_empty());
+					}
+				break;
+				case 2:
+					switch(type) {
+						case sgl::geometry_type::MULTI_LINESTRING:
+						case sgl::geometry_type::LINESTRING:
+							return blob;
+						case sgl::geometry_type::MULTI_GEOMETRY: {
+							if(is_empty) {
+								return lstate.Serialize(result, sgl::multi_linestring::make_empty());
+							}
+						}
+						default:
+							return lstate.Serialize(result, sgl::linestring::make_empty());
+					}
+				break;
+				case 3:
+					switch(type) {
+						case sgl::geometry_type::MULTI_POLYGON:
+						case sgl::geometry_type::POLYGON:
+							return blob;
+						case sgl::geometry_type::MULTI_GEOMETRY: {
+							if(is_empty) {
+								return lstate.Serialize(result, sgl::multi_polygon::make_empty());
+							}
+						}
+						default:
+							return lstate.Serialize(result, sgl::polygon::make_empty());
+					}
+				break;
+				default:
+					throw InvalidInputException("Invalid requested type parameter for collection extract, must be 1 "
+							"(POINT), 2 (LINESTRING) or 3 (POLYGON)");
+				}
+			});
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -978,24 +1034,42 @@ struct ST_ExteriorRing {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
-			const auto geom = lstate.Deserialize(blob);
 
-			if (geom.get_type() != sgl::geometry_type::POLYGON) {
-				return lstate.Serialize(result, sgl::polygon::make_empty());
-			}
+		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(args.data[0], result, args.size(),
+			[&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
+				// TODO: Peek dont deserialize
+				const auto geom = lstate.Deserialize(blob);
 
-			const auto shell = geom.get_first_part();
+				if(geom.get_type() != sgl::geometry_type::POLYGON) {
+					mask.SetInvalid(idx);
+					return string_t { };
+				}
 
-			if (!shell) {
-				return lstate.Serialize(result, sgl::polygon::make_empty());
-			}
+				if(geom.is_empty()) {
+					const auto empty = sgl::polygon::make_empty(geom.has_z(), geom.has_m());
+					return lstate.Serialize(result, empty);
+				}
 
-			return lstate.Serialize(result, *shell);
+				const auto shell = geom.get_first_part();
+				return lstate.Serialize(result, *shell);
 		});
 	}
 
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_ExteriorRing", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+
+				variant.SetDescription("Returns the exterior ring (shell) of a polygon geometry");
+				// TODO: Set example
+			});
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
 	}
 };
 
@@ -2706,7 +2780,7 @@ struct ST_MMin : VertexAggFunctionBase<ST_MMin, VertexMinAggOp> {
 void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Area::Register(db);
 
-	// 15 functions to go!
+	// 14 functions to go!
 	/*
 	ST_AsGeoJSON::Register(db);
 	ST_AsText::Register(db);
@@ -2725,8 +2799,8 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	*/
 	ST_EndPoint::Register(db);
 	ST_Extent::Register(db);
-	/*
 	ST_ExteriorRing::Register(db);
+	/*
 	ST_FlipCoordinates::Register(db);
 	ST_Force::Register(db);
 	ST_GeometryType::Register(db);
