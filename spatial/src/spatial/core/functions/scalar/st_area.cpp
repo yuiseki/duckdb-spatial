@@ -1,11 +1,11 @@
-#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/common/vector_operations/generic_executor.hpp"
+#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "spatial/common.hpp"
-#include "spatial/core/functions/scalar.hpp"
 #include "spatial/core/functions/common.hpp"
+#include "spatial/core/functions/scalar.hpp"
 #include "spatial/core/geometry/geometry.hpp"
-#include "spatial/core/types.hpp"
 #include "spatial/core/geometry/geometry_processor.hpp"
+#include "spatial/core/types.hpp"
 
 namespace spatial {
 

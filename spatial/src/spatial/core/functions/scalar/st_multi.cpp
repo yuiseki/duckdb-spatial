@@ -71,10 +71,10 @@ static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}, {"category", "construc
 // Register functions
 //------------------------------------------------------------------------------
 void CoreScalarFunctions::RegisterStMulti(DatabaseInstance &db) {
-	//ScalarFunction function("ST_Multi", {GeoTypes::GEOMETRY()}, GeoTypes::GEOMETRY(), GeometryMultiFunction);
-	//function.init_local_state = GeometryFunctionLocalState::Init;
-	//ExtensionUtil::RegisterFunction(db, function);
-	//DocUtil::AddDocumentation(db, "ST_Multi", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
+	// ScalarFunction function("ST_Multi", {GeoTypes::GEOMETRY()}, GeoTypes::GEOMETRY(), GeometryMultiFunction);
+	// function.init_local_state = GeometryFunctionLocalState::Init;
+	// ExtensionUtil::RegisterFunction(db, function);
+	// DocUtil::AddDocumentation(db, "ST_Multi", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
 }
 
 } // namespace core

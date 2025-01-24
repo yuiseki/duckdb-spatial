@@ -67,7 +67,7 @@ void CoreScalarFunctions::RegisterStNInteriorRings(DatabaseInstance &db) {
 		ScalarFunctionSet set(alias);
 		set.AddFunction(ScalarFunction({GeoTypes::POLYGON_2D()}, LogicalType::INTEGER, PolygonInteriorRingsFunction));
 
-		//set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::INTEGER, GeometryInteriorRingsFunction,
+		// set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::INTEGER, GeometryInteriorRingsFunction,
 		//                               nullptr, nullptr, nullptr, GeometryFunctionLocalState::Init));
 
 		ExtensionUtil::RegisterFunction(db, set);

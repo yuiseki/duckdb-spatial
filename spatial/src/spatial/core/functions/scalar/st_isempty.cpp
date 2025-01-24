@@ -86,7 +86,7 @@ void CoreScalarFunctions::RegisterStIsEmpty(DatabaseInstance &db) {
 	is_empty_function_set.AddFunction(
 	    ScalarFunction({GeoTypes::POLYGON_2D()}, LogicalType::BOOLEAN, PolygonIsEmptyFunction));
 
-	//is_empty_function_set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::BOOLEAN,
+	// is_empty_function_set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::BOOLEAN,
 	//                                                 GeometryIsEmptyFunction, nullptr, nullptr, nullptr,
 	//                                                 GeometryFunctionLocalState::Init));
 

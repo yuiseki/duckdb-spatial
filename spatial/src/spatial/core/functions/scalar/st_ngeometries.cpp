@@ -55,8 +55,8 @@ static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}, {"category", "property
 //------------------------------------------------------------------------------
 void CoreScalarFunctions::RegisterStNGeometries(DatabaseInstance &db) {
 
-	//const char *aliases[] = {"ST_NGeometries", "ST_NumGeometries"};
-	//for (auto alias : aliases) {
+	// const char *aliases[] = {"ST_NGeometries", "ST_NumGeometries"};
+	// for (auto alias : aliases) {
 	//	ScalarFunctionSet set(alias);
 	//	set.AddFunction(ScalarFunction({GeoTypes::GEOMETRY()}, LogicalType::INTEGER, GeometryNGeometriesFunction,
 	//	                               nullptr, nullptr, nullptr, GeometryFunctionLocalState::Init));

@@ -52,8 +52,8 @@ struct box_xy {
 		constexpr auto dmax = std::numeric_limits<double>::max();
 		constexpr auto dmin = std::numeric_limits<double>::lowest();
 		return {
-			{dmax, dmax},
-			{dmin, dmin},
+		    {dmax, dmax},
+		    {dmin, dmin},
 		};
 	}
 };
@@ -66,12 +66,11 @@ struct box_xyzm {
 		constexpr auto dmax = std::numeric_limits<double>::max();
 		constexpr auto dmin = std::numeric_limits<double>::lowest();
 		return {
-			{dmax, dmax, dmax, dmax},
-			{dmin, dmin, dmin, dmin},
+		    {dmax, dmax, dmax, dmax},
+		    {dmin, dmin, dmin, dmin},
 		};
 	}
 };
-
 
 enum class geometry_type : uint8_t {
 	INVALID = 0,
@@ -104,8 +103,7 @@ private:
 	// clang-format on
 public:
 	geometry() = default;
-	explicit geometry(const geometry_type type, const bool has_z = false, const bool has_m = false)
-		: type(type) {
+	explicit geometry(const geometry_type type, const bool has_z = false, const bool has_m = false) : type(type) {
 		set_z(has_z);
 		set_m(has_m);
 	}
@@ -141,7 +139,7 @@ public:
 	void append_part(geometry *part);
 
 	const uint8_t *get_vertex_data() const;
-	uint8_t* get_vertex_data();
+	uint8_t *get_vertex_data();
 	void set_vertex_data(const uint8_t *data, uint32_t size);
 	void set_vertex_data(const char *data, uint32_t size);
 
@@ -177,7 +175,7 @@ inline bool geometry::has_m() const {
 }
 
 inline bool geometry::set_z(const bool value) {
-	if(value) {
+	if (value) {
 		flag |= 0x01;
 	} else {
 		flag &= ~0x01;
@@ -186,7 +184,7 @@ inline bool geometry::set_z(const bool value) {
 }
 
 inline bool geometry::set_m(const bool value) {
-	if(value) {
+	if (value) {
 		flag |= 0x02;
 	} else {
 		flag &= ~0x02;
@@ -230,7 +228,7 @@ inline const geometry *geometry::get_first_part() const {
 }
 
 inline const geometry *geometry::get_nth_part(uint32_t n) const {
-	if(size == 0) {
+	if (size == 0) {
 		SGL_ASSERT(data == nullptr);
 		return nullptr;
 	}
@@ -238,7 +236,7 @@ inline const geometry *geometry::get_nth_part(uint32_t n) const {
 	auto part = get_first_part();
 	SGL_ASSERT(part != nullptr);
 
-	for(uint32_t i = 0; i < n; i++) {
+	for (uint32_t i = 0; i < n; i++) {
 		part = part->next;
 		SGL_ASSERT(part != nullptr);
 	}
@@ -264,10 +262,10 @@ inline geometry *geometry::get_nth_part(uint32_t n) {
 	return const_cast<geometry *>(static_cast<const geometry *>(this)->get_nth_part(n));
 }
 inline geometry *geometry::get_next() {
-    return const_cast<geometry *>(static_cast<const geometry *>(this)->get_next());
+	return const_cast<geometry *>(static_cast<const geometry *>(this)->get_next());
 }
 inline geometry *geometry::get_parent() {
-    return const_cast<geometry *>(static_cast<const geometry *>(this)->get_parent());
+	return const_cast<geometry *>(static_cast<const geometry *>(this)->get_parent());
 }
 
 inline void geometry::append_part(geometry *part) {
@@ -298,7 +296,7 @@ inline const uint8_t *geometry::get_vertex_data() const {
 
 inline uint8_t *geometry::get_vertex_data() {
 	SGL_ASSERT(is_single_part() || type == geometry_type::INVALID);
-    return static_cast<uint8_t *>(data);
+	return static_cast<uint8_t *>(data);
 }
 
 inline void geometry::set_vertex_data(const uint8_t *data, uint32_t size) {
@@ -344,15 +342,23 @@ inline vertex_xyzm geometry::get_vertex_xyzm(const uint32_t n) const {
 }
 
 inline std::string geometry::type_to_string(const geometry_type type) {
-	switch(type) {
-		case geometry_type::POINT: return "POINT";
-		case geometry_type::LINESTRING: return "LINESTRING";
-		case geometry_type::POLYGON: return "POLYGON";
-		case geometry_type::MULTI_POINT: return "MULTIPOINT";
-		case geometry_type::MULTI_LINESTRING: return "MULTILINESTRING";
-		case geometry_type::MULTI_POLYGON: return "MULTIPOLYGON";
-		case geometry_type::MULTI_GEOMETRY: return "GEOMETRYCOLLECTION";
-		default: return "INVALID";
+	switch (type) {
+	case geometry_type::POINT:
+		return "POINT";
+	case geometry_type::LINESTRING:
+		return "LINESTRING";
+	case geometry_type::POLYGON:
+		return "POLYGON";
+	case geometry_type::MULTI_POINT:
+		return "MULTIPOINT";
+	case geometry_type::MULTI_LINESTRING:
+		return "MULTILINESTRING";
+	case geometry_type::MULTI_POLYGON:
+		return "MULTIPOLYGON";
+	case geometry_type::MULTI_GEOMETRY:
+		return "GEOMETRYCOLLECTION";
+	default:
+		return "INVALID";
 	}
 }
 
@@ -372,7 +378,7 @@ inline geometry make_empty(bool has_z = false, bool has_m = false) {
 inline bool is_closed(const geometry *geom) {
 	SGL_ASSERT(geom->get_type() == geometry_type::LINESTRING);
 
-	if(geom->get_count() < 2) {
+	if (geom->get_count() < 2) {
 		return false;
 	}
 
@@ -387,7 +393,7 @@ inline double signed_area(const geometry *geom) {
 
 	const auto count = geom->get_count();
 
-	if(count < 3) {
+	if (count < 3) {
 		return 0.0;
 	}
 
@@ -406,7 +412,7 @@ inline double signed_area(const geometry *geom) {
 
 	memcpy(&x0, x_data, sizeof(double));
 
-	for(uint32_t i = 1; i < count - 1; i++) {
+	for (uint32_t i = 1; i < count - 1; i++) {
 		memcpy(&x1, x_data + (i + 0) * vertex_size, sizeof(double));
 		memcpy(&y1, y_data + (i + 1) * vertex_size, sizeof(double));
 		memcpy(&y2, y_data + (i - 1) * vertex_size, sizeof(double));
@@ -421,7 +427,7 @@ inline double length(const geometry *geom) {
 	SGL_ASSERT(geom->get_type() == geometry_type::LINESTRING);
 
 	const auto count = geom->get_count();
-	if(count < 2) {
+	if (count < 2) {
 		return 0.0;
 	}
 
@@ -435,7 +441,7 @@ inline double length(const geometry *geom) {
 
 	memcpy(&prev, vertex_data, sizeof(vertex_xy));
 
-	for(uint32_t i = 1; i < count; i++) {
+	for (uint32_t i = 1; i < count; i++) {
 		memcpy(&next, vertex_data + i * vertex_size, sizeof(vertex_xy));
 		const auto dx = next.x - prev.x;
 		const auto dy = next.y - prev.y;
@@ -459,13 +465,13 @@ inline double area(const geometry *geom) {
 	double area = 0.0;
 
 	auto part = geom->get_first_part();
-	if(!part) {
+	if (!part) {
 		return area;
 	}
 
 	area += std::abs(linestring::signed_area(part));
 
-	while(part != geom->get_last_part()) {
+	while (part != geom->get_last_part()) {
 		part = part->get_next();
 		area -= std::abs(linestring::signed_area(part));
 	}
@@ -477,7 +483,7 @@ inline double perimeter(const geometry *geom) {
 	SGL_ASSERT(geom->get_type() == geometry_type::POLYGON);
 
 	const auto tail = geom->get_last_part();
-	if(!tail) {
+	if (!tail) {
 		return 0.0;
 	}
 
@@ -486,7 +492,7 @@ inline double perimeter(const geometry *geom) {
 	do {
 		part = part->get_next();
 		perimeter += linestring::length(part);
-	} while(part != tail);
+	} while (part != tail);
 
 	return perimeter;
 }
@@ -499,7 +505,7 @@ inline geometry make_empty(bool has_z = false, bool has_m = false) {
 	return geometry(geometry_type::MULTI_POINT, has_z, has_m);
 }
 
-};
+}; // namespace multi_point
 
 namespace multi_linestring {
 inline geometry make_empty(bool has_z = false, bool has_m = false) {
@@ -510,17 +516,17 @@ inline bool is_closed(const geometry *geom) {
 	SGL_ASSERT(geom->get_type() == geometry_type::MULTI_LINESTRING);
 
 	const auto tail = geom->get_last_part();
-	if(!tail) {
+	if (!tail) {
 		return false;
 	}
 
 	auto part = tail;
 	do {
 		part = part->get_next();
-		if(!linestring::is_closed(part)) {
+		if (!linestring::is_closed(part)) {
 			return false;
 		}
-	} while(part != tail);
+	} while (part != tail);
 
 	return true;
 }
@@ -529,7 +535,7 @@ inline double length(const geometry *geom) {
 	SGL_ASSERT(geom->get_type() == geometry_type::MULTI_LINESTRING);
 
 	const auto tail = geom->get_last_part();
-	if(!tail) {
+	if (!tail) {
 		return 0.0;
 	}
 
@@ -538,12 +544,12 @@ inline double length(const geometry *geom) {
 	do {
 		part = part->get_next();
 		length += linestring::length(part);
-	} while(part != tail);
+	} while (part != tail);
 
 	return length;
 }
 
-}
+} // namespace multi_linestring
 
 namespace multi_polygon {
 inline geometry make_empty(bool has_z = false, bool has_m = false) {
@@ -554,7 +560,7 @@ inline double area(const geometry *geom) {
 	SGL_ASSERT(geom->get_type() == geometry_type::MULTI_POLYGON);
 
 	const auto tail = geom->get_last_part();
-	if(!tail) {
+	if (!tail) {
 		return 0.0;
 	}
 
@@ -563,7 +569,7 @@ inline double area(const geometry *geom) {
 	do {
 		part = part->get_next();
 		area += polygon::area(part);
-	} while(part != tail);
+	} while (part != tail);
 
 	return area;
 }
@@ -572,7 +578,7 @@ inline double perimeter(const geometry *geom) {
 	SGL_ASSERT(geom->get_type() == geometry_type::MULTI_POLYGON);
 
 	const auto tail = geom->get_last_part();
-	if(!tail) {
+	if (!tail) {
 		return 0.0;
 	}
 
@@ -581,12 +587,12 @@ inline double perimeter(const geometry *geom) {
 	do {
 		part = part->get_next();
 		perimeter += polygon::perimeter(part);
-	} while(part != tail);
+	} while (part != tail);
 
 	return perimeter;
 }
 
-}
+} // namespace multi_polygon
 
 namespace multi_geometry {
 
@@ -597,7 +603,7 @@ inline double area(const geometry *geom);
 inline double length(const geometry *geom);
 inline double perimeter(const geometry *geom);
 
-};
+}; // namespace multi_geometry
 
 namespace ops {
 
@@ -622,59 +628,59 @@ namespace sgl {
 namespace ops {
 
 inline double area(const geometry *geom) {
-	switch(geom->get_type()) {
-		case geometry_type::POLYGON: {
-			return polygon::area(geom);
-		}
-		case geometry_type::MULTI_POLYGON: {
-			return multi_polygon::area(geom);
-		}
-		case geometry_type::MULTI_GEOMETRY: {
-			return multi_geometry::area(geom);
-		}
-		default:
-			return 0.0;
+	switch (geom->get_type()) {
+	case geometry_type::POLYGON: {
+		return polygon::area(geom);
+	}
+	case geometry_type::MULTI_POLYGON: {
+		return multi_polygon::area(geom);
+	}
+	case geometry_type::MULTI_GEOMETRY: {
+		return multi_geometry::area(geom);
+	}
+	default:
+		return 0.0;
 	}
 }
 
 inline double perimeter(const geometry *geom) {
-	switch(geom->get_type()) {
-		case geometry_type::POLYGON: {
-			return polygon::perimeter(geom);
-		}
-		case geometry_type::MULTI_POLYGON: {
-			return multi_polygon::perimeter(geom);
-		}
-		case geometry_type::MULTI_GEOMETRY: {
-			return multi_geometry::perimeter(geom);
-		}
-		default:
-			return 0.0;
+	switch (geom->get_type()) {
+	case geometry_type::POLYGON: {
+		return polygon::perimeter(geom);
+	}
+	case geometry_type::MULTI_POLYGON: {
+		return multi_polygon::perimeter(geom);
+	}
+	case geometry_type::MULTI_GEOMETRY: {
+		return multi_geometry::perimeter(geom);
+	}
+	default:
+		return 0.0;
 	}
 }
 
 inline double length(const geometry *geom) {
-	switch(geom->get_type()) {
-		case geometry_type::LINESTRING: {
-			return linestring::length(geom);
-		}
-		case geometry_type::MULTI_LINESTRING: {
-			return multi_linestring::length(geom);
-		}
-		case geometry_type::MULTI_GEOMETRY: {
-			return multi_geometry::length(geom);
-		}
-		default:
-			return 0;
+	switch (geom->get_type()) {
+	case geometry_type::LINESTRING: {
+		return linestring::length(geom);
+	}
+	case geometry_type::MULTI_LINESTRING: {
+		return multi_linestring::length(geom);
+	}
+	case geometry_type::MULTI_GEOMETRY: {
+		return multi_geometry::length(geom);
+	}
+	default:
+		return 0;
 	}
 }
 
 inline size_t vertex_count(const geometry *geom) {
-	if(geom->is_single_part()) {
+	if (geom->is_single_part()) {
 		return geom->get_count();
 	} else {
 		const auto tail = geom->get_last_part();
-		if(!tail) {
+		if (!tail) {
 			return 0;
 		}
 		auto part = tail;
@@ -682,71 +688,73 @@ inline size_t vertex_count(const geometry *geom) {
 		do {
 			part = part->get_next();
 			count += part->get_count();
-		} while(part != tail);
+		} while (part != tail);
 		return count;
 	}
 }
 
 inline int32_t max_surface_dimension(const geometry *geom) {
-	switch(geom->get_type()) {
-		case geometry_type::POINT:
-		case geometry_type::MULTI_POINT:
+	switch (geom->get_type()) {
+	case geometry_type::POINT:
+	case geometry_type::MULTI_POINT:
+		return 0;
+	case geometry_type::LINESTRING:
+	case geometry_type::MULTI_LINESTRING:
+		return 1;
+	case geometry_type::POLYGON:
+	case geometry_type::MULTI_POLYGON:
+		return 2;
+	case geometry_type::MULTI_GEOMETRY: {
+		int32_t max_dim = 0;
+		const auto tail = geom->get_last_part();
+		if (!tail) {
 			return 0;
-		case geometry_type::LINESTRING:
-		case geometry_type::MULTI_LINESTRING:
-			return 1;
-		case geometry_type::POLYGON:
-		case geometry_type::MULTI_POLYGON:
-			return 2;
-		case geometry_type::MULTI_GEOMETRY: {
-			int32_t max_dim = 0;
-			const auto tail = geom->get_last_part();
-			if(!tail) {
-				return 0;
-			}
-			auto part = tail;
-			do {
-				part = part->get_next();
-				max_dim = std::max(max_dim, max_surface_dimension(part));
-			} while(part != tail);
-			return max_dim;
 		}
-		default:
-			return 0;
+		auto part = tail;
+		do {
+			part = part->get_next();
+			max_dim = std::max(max_dim, max_surface_dimension(part));
+		} while (part != tail);
+		return max_dim;
+	}
+	default:
+		return 0;
 	}
 }
 
-template<class F>
+template <class F>
 inline void visit_vertices(const geometry *geom, F callback) {
-	switch(geom->get_type()) {
-		case geometry_type::POINT:
-		case geometry_type::LINESTRING: {
-			auto vertex_data = geom->get_vertex_data();
-			if(vertex_data == nullptr) {
-				return;
-			}
-			auto vertex_size = geom->get_vertex_size();
-			for(uint32_t i = 0; i < geom->get_count(); i++) {
-				callback(vertex_data + i * vertex_size);
-			}
-		} return;
-		case geometry_type::POLYGON:
-		case geometry_type::MULTI_POINT:
-		case geometry_type::MULTI_LINESTRING:
-		case geometry_type::MULTI_POLYGON:
-		case geometry_type::MULTI_GEOMETRY: {
-			const auto tail = geom->get_last_part();
-			if(!tail) {
-				return;
-			}
-			auto part = tail;
-			do {
-				part = part->get_next();
-				visit_vertices<F>(part, callback);
-			} while(part != tail);
-		} return;
-		default:
+	switch (geom->get_type()) {
+	case geometry_type::POINT:
+	case geometry_type::LINESTRING: {
+		auto vertex_data = geom->get_vertex_data();
+		if (vertex_data == nullptr) {
 			return;
+		}
+		auto vertex_size = geom->get_vertex_size();
+		for (uint32_t i = 0; i < geom->get_count(); i++) {
+			callback(vertex_data + i * vertex_size);
+		}
+	}
+		return;
+	case geometry_type::POLYGON:
+	case geometry_type::MULTI_POINT:
+	case geometry_type::MULTI_LINESTRING:
+	case geometry_type::MULTI_POLYGON:
+	case geometry_type::MULTI_GEOMETRY: {
+		const auto tail = geom->get_last_part();
+		if (!tail) {
+			return;
+		}
+		auto part = tail;
+		do {
+			part = part->get_next();
+			visit_vertices<F>(part, callback);
+		} while (part != tail);
+	}
+		return;
+	default:
+		return;
 	}
 }
 
@@ -754,7 +762,7 @@ inline void visit_vertices(const geometry *geom, F callback) {
 inline bool try_get_extent_xy(const geometry *geom, box_xy *out) {
 
 	auto part = geom;
-	if(part == nullptr) {
+	if (part == nullptr) {
 		return false;
 	}
 
@@ -763,67 +771,63 @@ inline bool try_get_extent_xy(const geometry *geom, box_xy *out) {
 	const auto root = part->get_parent();
 	bool has_any_vertices = false;
 
-	while(true) {
+	while (true) {
 		switch (part->get_type()) {
-			case geometry_type::POINT:
-			case geometry_type::LINESTRING:
-			{
-				const auto vertex_count = part->get_count();
+		case geometry_type::POINT:
+		case geometry_type::LINESTRING: {
+			const auto vertex_count = part->get_count();
 
+			has_any_vertices |= vertex_count > 0;
+
+			for (uint32_t i = 0; i < vertex_count; i++) {
+				const auto vertex = part->get_vertex_xy(i);
+				result.min.x = std::min(result.min.x, vertex.x);
+				result.min.y = std::min(result.min.y, vertex.y);
+				result.max.x = std::max(result.max.x, vertex.x);
+				result.max.y = std::max(result.max.y, vertex.y);
+			}
+		} break;
+		case geometry_type::POLYGON: {
+			if (!part->is_empty()) {
+				const auto shell = part->get_first_part();
+				const auto vertex_count = shell->get_count();
 				has_any_vertices |= vertex_count > 0;
-
-				for(uint32_t i = 0; i < vertex_count; i++) {
-					const auto vertex = part->get_vertex_xy(i);
+				for (uint32_t i = 0; i < vertex_count; i++) {
+					const auto vertex = shell->get_vertex_xy(i);
 					result.min.x = std::min(result.min.x, vertex.x);
 					result.min.y = std::min(result.min.y, vertex.y);
 					result.max.x = std::max(result.max.x, vertex.x);
 					result.max.y = std::max(result.max.y, vertex.y);
 				}
 			}
-			break;
-			case geometry_type::POLYGON: {
-				if(!part->is_empty()) {
-					const auto shell = part->get_first_part();
-					const auto vertex_count = shell->get_count();
-					has_any_vertices |= vertex_count > 0;
-					for(uint32_t i = 0; i < vertex_count; i++) {
-						const auto vertex = shell->get_vertex_xy(i);
-						result.min.x = std::min(result.min.x, vertex.x);
-						result.min.y = std::min(result.min.y, vertex.y);
-						result.max.x = std::max(result.max.x, vertex.x);
-						result.max.y = std::max(result.max.y, vertex.y);
-					}
-				}
+		} break;
+		case geometry_type::MULTI_POINT:
+		case geometry_type::MULTI_LINESTRING:
+		case geometry_type::MULTI_POLYGON:
+		case geometry_type::MULTI_GEOMETRY: {
+			if (!part->is_empty()) {
+				part = part->get_first_part();
+				// continue the outer loop here!
+				continue;
 			}
-			break;
-			case geometry_type::MULTI_POINT:
-			case geometry_type::MULTI_LINESTRING:
-			case geometry_type::MULTI_POLYGON:
-			case geometry_type::MULTI_GEOMETRY: {
-				if(!part->is_empty()) {
-					part = part->get_first_part();
-					// continue the outer loop here!
-					continue;
-				}
-			}
-			break;
-			default:
-				SGL_ASSERT(false);
-				return false;
+		} break;
+		default:
+			SGL_ASSERT(false);
+			return false;
 		}
 
 		// Now go up/sideways
-		while(true) {
+		while (true) {
 			const auto parent = part->get_parent();
-			if(parent == root) {
-				if(has_any_vertices) {
+			if (parent == root) {
+				if (has_any_vertices) {
 					*out = result;
 					return true;
 				}
 				return false;
 			}
 
-			if(part != parent->get_last_part()) {
+			if (part != parent->get_last_part()) {
 				// Go sideways
 				part = part->get_next();
 				break;
@@ -845,7 +849,7 @@ inline double area(const geometry *geom) {
 	SGL_ASSERT(geom->get_type() == geometry_type::MULTI_GEOMETRY);
 
 	const auto tail = geom->get_last_part();
-	if(!tail) {
+	if (!tail) {
 		return 0.0;
 	}
 
@@ -854,7 +858,7 @@ inline double area(const geometry *geom) {
 	do {
 		part = part->get_next();
 		area += ops::area(part);
-	} while(part != tail);
+	} while (part != tail);
 
 	return area;
 }
@@ -863,7 +867,7 @@ inline double length(const geometry *geom) {
 	SGL_ASSERT(geom->get_type() == geometry_type::MULTI_GEOMETRY);
 
 	const auto tail = geom->get_last_part();
-	if(!tail) {
+	if (!tail) {
 		return 0.0;
 	}
 	double length = 0.0;
@@ -871,7 +875,7 @@ inline double length(const geometry *geom) {
 	do {
 		part = part->get_next();
 		length += ops::length(part);
-	} while(part != tail);
+	} while (part != tail);
 	return length;
 }
 
@@ -879,7 +883,7 @@ inline double perimeter(const geometry *geom) {
 	SGL_ASSERT(geom->get_type() == geometry_type::MULTI_GEOMETRY);
 
 	const auto tail = geom->get_last_part();
-	if(!tail) {
+	if (!tail) {
 		return 0.0;
 	}
 	double perimeter = 0.0;
@@ -887,7 +891,7 @@ inline double perimeter(const geometry *geom) {
 	do {
 		part = part->get_next();
 		perimeter += ops::perimeter(part);
-	} while(part != tail);
+	} while (part != tail);
 	return perimeter;
 }
 
@@ -895,7 +899,7 @@ inline double perimeter(const geometry *geom) {
 
 namespace util {
 
-inline double haversine_distance(const double lat1_p, const double lon1_p,const  double lat2_p, const double lon2_p) {
+inline double haversine_distance(const double lat1_p, const double lon1_p, const double lat2_p, const double lon2_p) {
 	// Radius of the earth in km
 	constexpr auto R = 6371000.0;
 	constexpr auto PI = 3.14159265358979323846;
@@ -916,6 +920,6 @@ inline double haversine_distance(const double lat1_p, const double lon1_p,const 
 	return R * c;
 }
 
-}
+} // namespace util
 
-}
+} // namespace sgl
