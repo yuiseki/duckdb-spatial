@@ -2490,11 +2490,16 @@ struct ST_IsEmpty {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_Length
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_Length {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &blob) {
@@ -2503,6 +2508,52 @@ struct ST_Length {
 		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// LINESTRING_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteLinestring(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 1);
+
+		auto &line_vec = args.data[0];
+		auto count = args.size();
+
+		auto &coord_vec = ListVector::GetEntry(line_vec);
+		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
+		auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
+		auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+
+		UnaryExecutor::Execute<list_entry_t, double>(line_vec, result, count, [&](const list_entry_t &line) {
+			auto offset = line.offset;
+			auto length = line.length;
+			double sum = 0;
+			// Loop over the segments
+			for (idx_t j = offset; j < offset + length - 1; j++) {
+				auto x1 = x_data[j];
+				auto y1 = y_data[j];
+				auto x2 = x_data[j + 1];
+				auto y2 = y_data[j + 1];
+				sum += std::sqrt(std::pow(x1 - x2, 2) + std::pow(y1 - y2, 2));
+			}
+			return sum;
+		});
+
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Returns the length of the input line geometry
+	)";
+
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Length", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -2510,11 +2561,18 @@ struct ST_Length {
 				variant.SetReturnType(LogicalType::DOUBLE);
 
 				variant.SetInit(LocalState::Init);
-				variant.SetFunction(Execute);
-
-				variant.SetDescription("Compute the length of a geometry");
-				// TODO: Set example
+				variant.SetFunction(ExecuteGeometry);
 			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("linestring", GeoTypes::LINESTRING_2D());
+				variant.SetReturnType(LogicalType::DOUBLE);
+
+				variant.SetFunction(ExecuteLinestring);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
 
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");
