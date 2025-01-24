@@ -1676,12 +1676,16 @@ struct ST_GeomFromWKB {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_HasZ
-//----------------------------------------------------------------------------------------------------------------------
-// TODO: WKB variant
+//======================================================================================================================
+
 struct ST_HasZ {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [&](const string_t &blob) {
@@ -1691,16 +1695,88 @@ struct ST_HasZ {
 		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// WKB
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteWKB(DataChunk &args, ExpressionState &state, Vector &result) {
+		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(),  [](const string_t &wkb) {
+			BinaryReader cursor(wkb.GetData(), wkb.GetSize());
+
+			const auto le = cursor.Read<uint8_t>();
+			const auto type = le ? cursor.Read<uint32_t>() : cursor.ReadBE<uint32_t>();
+
+			// Check for ISO WKB and EWKB Z flag;
+			const auto flags = (type & 0xffff) / 1000;
+			return flags == 1 || flags == 3 || ((type & 0x80000000) != 0);
+		});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = "Check if the input geometry has Z values.";
+
+	static constexpr auto EXAMPLE = R"(
+	-- HasZ for a 2D geometry
+	SELECT ST_HasZ(ST_GeomFromText('POINT(1 1)'));
+	----
+	false
+
+	-- HasZ for a 3DZ geometry
+	SELECT ST_HasZ(ST_GeomFromText('POINT Z(1 1 1)'));
+	----
+	true
+
+	-- HasZ for a 3DM geometry
+	SELECT ST_HasZ(ST_GeomFromText('POINT M(1 1 1)'));
+	----
+	false
+
+	-- HasZ for a 4D geometry
+	SELECT ST_HasZ(ST_GeomFromText('POINT ZM(1 1 1 1)'));
+	----
+	true
+	)";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_HasZ", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::BOOLEAN);
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteGeometry);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("wkb", GeoTypes::WKB_BLOB());
+				variant.SetReturnType(LogicalType::BOOLEAN);
+
+				variant.SetFunction(ExecuteWKB);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_HasM
-//----------------------------------------------------------------------------------------------------------------------
-// TODO: WKB variant
+//======================================================================================================================
+
 struct ST_HasM {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [&](const string_t &blob) {
@@ -1710,6 +1786,52 @@ struct ST_HasM {
 		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// WKB_BLOB
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteWKB(DataChunk &args, ExpressionState &state, Vector &result) {
+		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(),  [](const string_t &wkb) {
+			BinaryReader cursor(wkb.GetData(), wkb.GetSize());
+
+			const auto le = cursor.Read<uint8_t>();
+			const auto type = le ? cursor.Read<uint32_t>() : cursor.ReadBE<uint32_t>();
+
+			// Check for ISO WKB and EWKB M flag;
+			const auto flags = (type & 0xffff) / 1000;
+			return flags == 2 || flags == 3 || ((type & 0x40000000) != 0);
+		});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = "Check if the input geometry has M values.";
+
+	static constexpr auto EXAMPLE = R"(
+	-- HasM for a 2D geometry
+	SELECT ST_HasM(ST_GeomFromText('POINT(1 1)'));
+	----
+	false
+
+	-- HasM for a 3DZ geometry
+	SELECT ST_HasM(ST_GeomFromText('POINT Z(1 1 1)'));
+	----
+	false
+
+	-- HasM for a 3DM geometry
+	SELECT ST_HasM(ST_GeomFromText('POINT M(1 1 1)'));
+	----
+	true
+
+	-- HasM for a 4D geometry
+	SELECT ST_HasM(ST_GeomFromText('POINT ZM(1 1 1 1)'));
+	----
+	true
+	)";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_HasM", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -1717,23 +1839,35 @@ struct ST_HasM {
 				variant.SetReturnType(LogicalType::BOOLEAN);
 
 				variant.SetInit(LocalState::Init);
-				variant.SetFunction(Execute);
-
-				variant.SetDescription("Check if a geometry has M values");
-				// TODO: Set example
+				variant.SetFunction(ExecuteGeometry);
 			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("wkb", GeoTypes::WKB_BLOB());
+				variant.SetReturnType(LogicalType::BOOLEAN);
+
+				variant.SetFunction(ExecuteWKB);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");
 		});
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_ZMFlag
-//----------------------------------------------------------------------------------------------------------------------
-// TODO: WKB variant
+//======================================================================================================================
+
 struct ST_ZMFlag {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
@@ -1754,6 +1888,70 @@ struct ST_ZMFlag {
 		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// WKB
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteWKB(DataChunk &args, ExpressionState &state, Vector &result) {
+		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(),  [](const string_t &wkb) {
+			BinaryReader cursor(wkb.GetData(), wkb.GetSize());
+
+			const auto le = cursor.Read<uint8_t>();
+			const auto type = le ? cursor.Read<uint32_t>() : cursor.ReadBE<uint32_t>();
+
+			// Check for ISO WKB and EWKB Z and M flags
+			const uint32_t iso_wkb_props = (type & 0xffff) / 1000;
+			const auto has_z = (iso_wkb_props == 1) || (iso_wkb_props == 3) || ((type & 0x80000000) != 0);
+			const auto has_m = (iso_wkb_props == 2) || (iso_wkb_props == 3) || ((type & 0x40000000) != 0);
+
+			if (has_z && has_m) {
+				return 3;
+			}
+			if (has_z) {
+				return 2;
+			}
+			if (has_m) {
+				return 1;
+			}
+			return 0;
+		});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+	Returns a flag indicating the presence of Z and M values in the input geometry.
+	0 = No Z or M values
+	1 = M values only
+	2 = Z values only
+	3 = Z and M values
+	)";
+
+	static constexpr auto EXAMPLE = R"(
+	-- ZMFlag for a 2D geometry
+	SELECT ST_ZMFlag(ST_GeomFromText('POINT(1 1)'));
+	----
+	0
+
+	-- ZMFlag for a 3DZ geometry
+	SELECT ST_ZMFlag(ST_GeomFromText('POINT Z(1 1 1)'));
+	----
+	2
+
+	-- ZMFlag for a 3DM geometry
+	SELECT ST_ZMFlag(ST_GeomFromText('POINT M(1 1 1)'));
+	----
+	1
+
+	-- ZMFlag for a 4D geometry
+	SELECT ST_ZMFlag(ST_GeomFromText('POINT ZM(1 1 1 1)'));
+	----
+	3
+	)";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_ZMFlag", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -1761,22 +1959,35 @@ struct ST_ZMFlag {
 				variant.SetReturnType(LogicalType::INTEGER);
 
 				variant.SetInit(LocalState::Init);
-				variant.SetFunction(Execute);
-
-				variant.SetDescription("Returns the ZM flag of a geometry");
-				// todo: Set example
+				variant.SetFunction(ExecuteGeometry);
 			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("wkb", GeoTypes::WKB_BLOB());
+				variant.SetReturnType(LogicalType::INTEGER);
+
+				variant.SetFunction(ExecuteWKB);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");
 		});
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
-// ST_Haversine
-//----------------------------------------------------------------------------------------------------------------------
-struct ST_Haversine {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+//======================================================================================================================
+// ST_Distance_Sphere
+//======================================================================================================================
+
+struct ST_Distance_Sphere {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		BinaryExecutor::Execute<string_t, string_t, double>(
@@ -1799,6 +2010,41 @@ struct ST_Haversine {
 		    });
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// POINT_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecutePoint(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 2);
+		auto &left = args.data[0];
+		auto &right = args.data[1];
+		auto count = args.size();
+
+		using POINT_TYPE = StructTypeBinary<double, double>;
+		using DISTANCE_TYPE = PrimitiveType<double>;
+
+		GenericExecutor::ExecuteBinary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE>(
+			left, right, result, count, [&](POINT_TYPE left, POINT_TYPE right) {
+				return sgl::util::haversine_distance(left.a_val, left.b_val, right.a_val, right.b_val);
+			});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Returns the haversine (great circle) distance between two geometries.
+
+	    - Only supports POINT geometries.
+	    - Returns the distance in meters.
+	    - The input is expected to be in WGS84 (EPSG:4326) coordinates, using a [latitude, longitude] axis order.
+	)";
+
+	// TODO: Example
+	static constexpr auto EXAMPLE = R"";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Distance_Sphere", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -1807,30 +2053,35 @@ struct ST_Haversine {
 				variant.SetReturnType(LogicalType::DOUBLE);
 
 				variant.SetInit(LocalState::Init);
-				variant.SetFunction(Execute);
-
-				variant.SetDescription(R"(
-				    Returns the haversine distance between two geometries.
-
-				    - Only supports POINT geometries.
-				    - Returns the distance in meters.
-				    - The input is expected to be in WGS84 (EPSG:4326) coordinates, using a [latitude, longitude] axis order.
-				)");
+				variant.SetFunction(ExecuteGeometry);
 			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("point1", GeoTypes::POINT_2D());
+				variant.AddParameter("point2", GeoTypes::POINT_2D());
+				variant.SetReturnType(LogicalType::DOUBLE);
+
+				variant.SetFunction(ExecutePoint);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");
 		});
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_Hilbert
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 struct ST_Hilbert {
-	//------------------------------------------------------------------------------
+
+	//------------------------------------------------------------------------------------------------------------------
 	// Hilbert Curve Encoding
 	// From (Public Domain): https://github.com/rawrunprotected/hilbert_curves
-	//------------------------------------------------------------------------------
+	//------------------------------------------------------------------------------------------------------------------
 	static uint32_t Interleave(uint32_t x) {
 		x = (x | (x << 8)) & 0x00FF00FF;
 		x = (x | (x << 4)) & 0x0F0F0F0F;
@@ -1904,6 +2155,9 @@ struct ST_Hilbert {
 		return res;
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// BOX_2D / BOX_2F
+	//------------------------------------------------------------------------------------------------------------------
 	template <class T>
 	static void ExecuteBox(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &input_vec = args.data[0];
@@ -1931,6 +2185,9 @@ struct ST_Hilbert {
 		    });
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// LON/LAT
+	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteLonlat(DataChunk &args, ExpressionState &state, Vector &result) {
 		using DOUBLE_TYPE = PrimitiveType<double>;
 		using UINT32_TYPE = PrimitiveType<uint32_t>;
@@ -1952,6 +2209,9 @@ struct ST_Hilbert {
 		    });
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		UnaryExecutor::ExecuteWithNulls<geometry_t, uint32_t>(
 		    args.data[0], result, args.size(),
@@ -1978,6 +2238,7 @@ struct ST_Hilbert {
 			    return HilbertEncode(16, hx, hy);
 		    });
 	}
+
 
 	static void ExecuteGeometryWithBounds(DataChunk &args, ExpressionState &state, Vector &result) {
 
@@ -2012,6 +2273,22 @@ struct ST_Hilbert {
 		    });
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Encodes the X and Y values as the hilbert curve index for a curve covering the given bounding box.
+		If a geometry is provided, the center of the approximate bounding box is used as the point to encode.
+		If no bounding box is provided, the hilbert curve index is mapped to the full range of a single-presicion float.
+		For the BOX_2D and BOX_2DF variants, the center of the box is used as the point to encode.
+	)";
+
+	// TODO: example
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		// TODO: All of these needs examples and docs
 
@@ -2023,8 +2300,6 @@ struct ST_Hilbert {
 				variant.SetReturnType(LogicalType::UINTEGER);
 
 				variant.SetFunction(ExecuteLonlat);
-				// todo: Set description
-				// todo: Set example
 			});
 
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -2059,13 +2334,20 @@ struct ST_Hilbert {
 
 				variant.SetFunction(ExecuteBox<float>);
 			});
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
 		});
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_Intersects
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+// TODO: Implement
 struct ST_Intersects {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
@@ -2074,9 +2356,10 @@ struct ST_Intersects {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_IntersectsExtent
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+// TODO: Implement
 struct ST_IntersectsExtent {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
@@ -2085,9 +2368,9 @@ struct ST_IntersectsExtent {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_IsClosed
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 struct ST_IsClosed {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
@@ -2124,11 +2407,16 @@ struct ST_IsClosed {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_IsEmpty
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_IsEmpty {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [&](const string_t &blob) {
@@ -2138,6 +2426,37 @@ struct ST_IsEmpty {
 		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// LINESTRING_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteLinestring(DataChunk &args, ExpressionState &state, Vector &result) {
+		UnaryExecutor::Execute<list_entry_t, bool>(args.data[0], result, args.size(),
+											   [&](const list_entry_t &line) {
+			return line.length == 0;
+		});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// POLYGON_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
+		UnaryExecutor::Execute<list_entry_t, bool>(args.data[0], result, args.size(),
+											   [&](const list_entry_t &poly) {
+			return poly.length == 0;
+		});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Returns true if the geometry is "empty".
+	)";
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_IsEmpty", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -2145,11 +2464,25 @@ struct ST_IsEmpty {
 				variant.SetReturnType(LogicalType::BOOLEAN);
 
 				variant.SetInit(LocalState::Init);
-				variant.SetFunction(Execute);
-
-				variant.SetDescription("Check if a geometry is empty");
-				// todo: Set example
+				variant.SetFunction(ExecuteGeometry);
 			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("linestring", GeoTypes::LINESTRING_2D());
+				variant.SetReturnType(LogicalType::BOOLEAN);
+
+				variant.SetFunction(ExecuteLinestring);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("polygon", GeoTypes::POLYGON_2D());
+				variant.SetReturnType(LogicalType::BOOLEAN);
+
+				variant.SetFunction(ExecutePolygon);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
 
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");
@@ -3353,7 +3686,7 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_HasZ::Register(db);
 	ST_HasM::Register(db);
 	ST_ZMFlag::Register(db);
-	ST_Haversine::Register(db);
+	ST_Distance_Sphere::Register(db);
 	ST_Hilbert::Register(db);
 	// ST_Intersects::Register(db); - not applicable now
 	// ST_IntersectsExtent::Register(db); - not applicable now
