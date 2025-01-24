@@ -1699,7 +1699,7 @@ struct ST_HasZ {
 	// WKB
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteWKB(DataChunk &args, ExpressionState &state, Vector &result) {
-		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(),  [](const string_t &wkb) {
+		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [](const string_t &wkb) {
 			BinaryReader cursor(wkb.GetData(), wkb.GetSize());
 
 			const auto le = cursor.Read<uint8_t>();
@@ -1790,7 +1790,7 @@ struct ST_HasM {
 	// WKB_BLOB
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteWKB(DataChunk &args, ExpressionState &state, Vector &result) {
-		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(),  [](const string_t &wkb) {
+		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [](const string_t &wkb) {
 			BinaryReader cursor(wkb.GetData(), wkb.GetSize());
 
 			const auto le = cursor.Read<uint8_t>();
@@ -1892,7 +1892,7 @@ struct ST_ZMFlag {
 	// WKB
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteWKB(DataChunk &args, ExpressionState &state, Vector &result) {
-		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(),  [](const string_t &wkb) {
+		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(), [](const string_t &wkb) {
 			BinaryReader cursor(wkb.GetData(), wkb.GetSize());
 
 			const auto le = cursor.Read<uint8_t>();
@@ -2023,9 +2023,9 @@ struct ST_Distance_Sphere {
 		using DISTANCE_TYPE = PrimitiveType<double>;
 
 		GenericExecutor::ExecuteBinary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE>(
-			left, right, result, count, [&](POINT_TYPE left, POINT_TYPE right) {
-				return sgl::util::haversine_distance(left.a_val, left.b_val, right.a_val, right.b_val);
-			});
+		    left, right, result, count, [&](POINT_TYPE left, POINT_TYPE right) {
+			    return sgl::util::haversine_distance(left.a_val, left.b_val, right.a_val, right.b_val);
+		    });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -2239,7 +2239,6 @@ struct ST_Hilbert {
 		    });
 	}
 
-
 	static void ExecuteGeometryWithBounds(DataChunk &args, ExpressionState &state, Vector &result) {
 
 		auto constexpr max_hilbert = std::numeric_limits<uint16_t>::max();
@@ -2431,9 +2430,7 @@ struct ST_IsEmpty {
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteLinestring(DataChunk &args, ExpressionState &state, Vector &result) {
 		UnaryExecutor::Execute<list_entry_t, bool>(args.data[0], result, args.size(),
-											   [&](const list_entry_t &line) {
-			return line.length == 0;
-		});
+		                                           [&](const list_entry_t &line) { return line.length == 0; });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -2441,9 +2438,7 @@ struct ST_IsEmpty {
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
 		UnaryExecutor::Execute<list_entry_t, bool>(args.data[0], result, args.size(),
-											   [&](const list_entry_t &poly) {
-			return poly.length == 0;
-		});
+		                                           [&](const list_entry_t &poly) { return poly.length == 0; });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -2948,6 +2943,7 @@ struct ST_MakePolygon {
 //----------------------------------------------------------------------------------------------------------------------
 // ST_Multi
 //----------------------------------------------------------------------------------------------------------------------
+// TODO: Implement
 struct ST_Multi {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
@@ -3000,6 +2996,7 @@ struct ST_Multi {
 //----------------------------------------------------------------------------------------------------------------------
 // ST_NGeometries / ST_NumGeometries
 //----------------------------------------------------------------------------------------------------------------------
+// TODO: Implement
 struct ST_NGeometries {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
@@ -3040,6 +3037,7 @@ struct ST_NGeometries {
 //----------------------------------------------------------------------------------------------------------------------
 // ST_NInteriorRings / ST_NumInteriorRings
 //----------------------------------------------------------------------------------------------------------------------
+// TODO: Implement
 struct ST_NInteriorRings {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
@@ -3082,6 +3080,7 @@ struct ST_NInteriorRings {
 //----------------------------------------------------------------------------------------------------------------------
 // ST_NPoints
 //----------------------------------------------------------------------------------------------------------------------
+// TODO: Implement
 struct ST_NPoints {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
@@ -3113,6 +3112,7 @@ struct ST_NPoints {
 //----------------------------------------------------------------------------------------------------------------------
 // ST_Perimeter
 //----------------------------------------------------------------------------------------------------------------------
+// TODO: Implement
 struct ST_Perimeter {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
@@ -3141,10 +3141,15 @@ struct ST_Perimeter {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_Point
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_Point {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
@@ -3160,7 +3165,38 @@ struct ST_Point {
 		    });
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Creates a point geometry from X and Y coordinates.
+	)";
+
+	// TODO: example
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Point", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("x", LogicalType::DOUBLE);
+				variant.AddParameter("y", LogicalType::DOUBLE);
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+
+				variant.SetDescription("Creates a GEOMETRY point");
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
 	}
 };
 
