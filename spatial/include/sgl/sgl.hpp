@@ -632,7 +632,6 @@ void force_zm(allocator &alloc, geometry *geom, bool has_z, bool has_m, double d
 
 namespace sgl {
 namespace ops {
-
 inline double area(const geometry *geom) {
 	switch (geom->get_type()) {
 	case geometry_type::POLYGON: {
@@ -845,7 +844,207 @@ inline bool try_get_extent_xy(const geometry *geom, box_xy *out) {
 	}
 }
 
+struct visit_callbacks {
+	// Return false to stop the traversal
+	bool (*on_point)(void* state, const geometry *geom) = nullptr;
+	bool (*on_linestring)(void* state, const geometry *geom) = nullptr;
+	bool (*on_ring)(void* state, const geometry *geom) = nullptr;
+	bool (*on_polygon)(void* state, const geometry *geom) = nullptr;
+	bool (*on_polygon_end)(void* state, const geometry *geom) = nullptr;
+	bool (*on_multi_point)(void* state, const geometry *geom) = nullptr;
+	bool (*on_multi_linestring)(void* state, const geometry *geom) = nullptr;
+	bool (*on_multi_polygon)(void* state, const geometry *geom) = nullptr;
+	bool (*on_multi_geometry)(void* state, const geometry *geom) = nullptr;
+	bool (*on_multi_point_end)(void* state, const geometry *geom) = nullptr;
+	bool (*on_multi_linestring_end)(void* state, const geometry *geom) = nullptr;
+	bool (*on_multi_polygon_end)(void* state, const geometry *geom) = nullptr;
+	bool (*on_multi_geometry_end)(void* state, const geometry *geom) = nullptr;
+};
+
+inline void visit(const geometry *geom, const geometry *root, const visit_callbacks *visitor, void *state) {
+
+#define HANDLE_POINT(GEOM) if(visitor->on_point && !visitor->on_point(state, GEOM)) { return; }
+#define HANDLE_LINE(GEOM) if(visitor->on_linestring && !visitor->on_linestring(state, GEOM)) { return; }
+#define HANDLE_RING(GEOM) if(visitor->on_ring && !visitor->on_ring(state, GEOM)) { return; }
+
+#define HANDLE_POLY_BEG(GEOM) if(visitor->on_polygon && !visitor->on_polygon(state, GEOM)) { return; }
+#define HANDLE_POLY_END(GEOM) if(visitor->on_polygon_end && !visitor->on_polygon_end(state, GEOM)) { return; }
+#define HANDLE_MULTI_POINT_BEG(GEOM) if(visitor->on_multi_point && !visitor->on_multi_point(state, GEOM)) { return; }
+#define HANDLE_MULTI_POINT_END(GEOM) if(visitor->on_multi_point_end && !visitor->on_multi_point_end(state, GEOM)) { return; }
+#define HANDLE_MULTI_LINE_BEG(GEOM) if(visitor->on_multi_linestring && !visitor->on_multi_linestring(state, GEOM)) { return; }
+#define HANDLE_MULTI_LINE_END(GEOM) if(visitor->on_multi_linestring_end && !visitor->on_multi_linestring_end(state, GEOM)) { return; }
+#define HANDLE_MULTI_POLY_BEG(GEOM) if(visitor->on_multi_polygon && !visitor->on_multi_polygon(state, GEOM)) { return; }
+#define HANDLE_MULTI_POLY_END(GEOM) if(visitor->on_multi_polygon_end && !visitor->on_multi_polygon_end(state, GEOM)) { return; }
+#define HANDLE_MULTI_GEOM_BEG(GEOM) if(visitor->on_multi_geometry && !visitor->on_multi_geometry(state, GEOM)) { return; }
+#define HANDLE_MULTI_GEOM_END(GEOM) if(visitor->on_multi_geometry_end && !visitor->on_multi_geometry_end(state, GEOM)) { return; }
+
+	auto part = geom;
+	if(part == nullptr) {
+		return;
+	}
+
+	while(true) {
+		switch(part->get_type()) {
+		case geometry_type::POINT: {
+			HANDLE_POINT(part);
+		} break;
+		case geometry_type::LINESTRING: {
+			HANDLE_LINE(part);
+		} break;
+		case geometry_type::POLYGON: {
+			HANDLE_POLY_BEG(part);
+
+			const auto tail = part->get_last_part();
+			if(tail != nullptr) {
+				auto head = tail;
+				do {
+					SGL_ASSERT(head != nullptr);
+					SGL_ASSERT(head->get_type() == geometry_type::LINESTRING);
+
+					head = head->get_next();
+
+					HANDLE_RING(head);
+
+				} while(head != tail);
+			}
+
+			HANDLE_POLY_END(part);
+		} break;
+		case geometry_type::MULTI_POINT: {
+			HANDLE_MULTI_POINT_BEG(part);
+
+			const auto tail = part->get_last_part();
+			if(tail != nullptr) {
+				auto head = tail;
+				do {
+					SGL_ASSERT(head != nullptr);
+					SGL_ASSERT(head->get_type() == geometry_type::POINT);
+
+					head = head->get_next();
+
+					HANDLE_POINT(head);
+
+				} while(head != tail);
+
+			}
+			HANDLE_MULTI_POINT_END(part);
+
+		} break;
+		case geometry_type::MULTI_LINESTRING: {
+			HANDLE_MULTI_LINE_BEG(part);
+
+			const auto tail = part->get_last_part();
+			if(tail != nullptr) {
+				auto head = tail;
+				do {
+					SGL_ASSERT(head != nullptr);
+					SGL_ASSERT(head->get_type() == geometry_type::LINESTRING);
+
+					head = head->get_next();
+
+					HANDLE_LINE(head);
+
+				} while(head != tail);
+			}
+
+			HANDLE_MULTI_LINE_END(part);
+		} break;
+		case geometry_type::MULTI_POLYGON: {
+			HANDLE_MULTI_POLY_BEG(part);
+
+			const auto tail = part->get_last_part();
+			if(tail != nullptr) {
+				auto head = tail;
+				do {
+					SGL_ASSERT(head != nullptr);
+					SGL_ASSERT(head->get_type() == geometry_type::POLYGON);
+
+					head = head->get_next();
+
+					HANDLE_POLY_BEG(head);
+
+					const auto ring_tail = head->get_last_part();
+					if(ring_tail != nullptr) {
+						auto ring_head = ring_tail;
+						do {
+							SGL_ASSERT(ring_head != nullptr);
+							SGL_ASSERT(ring_head->get_type() == geometry_type::LINESTRING);
+
+							ring_head = ring_head->get_next();
+
+							HANDLE_RING(ring_head);
+
+						} while(ring_head != ring_tail);
+					}
+
+					HANDLE_POLY_END(head);
+
+				} while(head != part->get_last_part());
+			}
+
+			HANDLE_MULTI_POLY_END(part);
+		} break;
+		case geometry_type::MULTI_GEOMETRY: {
+			HANDLE_MULTI_GEOM_BEG(part);
+			if(!part->is_empty()) {
+				// Recurse down
+				part = part->get_first_part();
+				continue;
+			}
+			// Otherwise, end the multi geometry
+			HANDLE_MULTI_GEOM_END(part);
+		} break;
+		default: {
+			SGL_ASSERT(false);
+			return;
+		}
+		}
+
+		// Now go up/sideways
+		while(true) {
+			const auto parent = part->get_parent();
+
+			if(parent == root) {
+				return;
+			}
+
+			if(part != parent->get_last_part()) {
+				// We should only get here if we are in a multi geometry
+				SGL_ASSERT(parent->get_type() == geometry_type::MULTI_GEOMETRY);
+
+				// Go sideways
+				part = part->get_next();
+				break;
+			}
+
+			// Go up
+			part = parent;
+
+			SGL_ASSERT(part->get_type() == geometry_type::MULTI_GEOMETRY);
+
+			// We just visited the last child of a multi geometry. We should end it.
+			HANDLE_MULTI_GEOM_END(part);
+		}
+	}
+
+#undef HANDLE_POINT
+#undef HANDLE_LINE
+#undef HANDLE_RING
+#undef HANDLE_POLY_BEG
+#undef HANDLE_POLY_END
+#undef HANDLE_MULTI_POINT_BEG
+#undef HANDLE_MULTI_POINT_END
+#undef HANDLE_MULTI_LINE_BEG
+#undef HANDLE_MULTI_LINE_END
+#undef HANDLE_MULTI_POLY_BEG
+#undef HANDLE_MULTI_POLY_END
+#undef HANDLE_MULTI_GEOM_BEG
+#undef HANDLE_MULTI_GEOM_END
+
+}
+
 } // namespace ops
+
 } // namespace sgl
 
 namespace sgl {

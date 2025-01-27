@@ -704,6 +704,7 @@ struct ST_Area {
 //----------------------------------------------------------------------------------------------------------------------
 // ST_AsGeoJSON
 //----------------------------------------------------------------------------------------------------------------------
+// TODO: implement
 struct ST_AsGeoJSON {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
@@ -715,6 +716,7 @@ struct ST_AsGeoJSON {
 //----------------------------------------------------------------------------------------------------------------------
 // ST_AsText
 //----------------------------------------------------------------------------------------------------------------------
+// TODO: implement
 struct ST_AsText {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
@@ -726,6 +728,7 @@ struct ST_AsText {
 //----------------------------------------------------------------------------------------------------------------------
 // ST_AsWKB
 //----------------------------------------------------------------------------------------------------------------------
+// TODO: implement
 struct ST_AsWKB {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
@@ -737,6 +740,7 @@ struct ST_AsWKB {
 //----------------------------------------------------------------------------------------------------------------------
 // ST_AsHEXWKB
 //----------------------------------------------------------------------------------------------------------------------
+// TODO: implement
 struct ST_AsHEXWKB {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
@@ -745,20 +749,170 @@ struct ST_AsHEXWKB {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_AsSVG
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_AsSVG {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Helper
+	//------------------------------------------------------------------------------------------------------------------
+	// TODO: Move this to sgl once we have proper double formatting
+	//
+	static void ToSVG(const sgl::geometry *geom, vector<char> &buffer) {
+
+		auto part = geom;
+		if (part == nullptr) {
+			return;
+		}
+
+		//box_xy result = box_xy::smallest();
+
+		const auto root = part->get_parent();
+		bool has_any_vertices = false;
+
+		while (true) {
+			switch (part->get_type()) {
+			case sgl::geometry_type::POINT:
+			case sgl::geometry_type::LINESTRING: {
+				const auto vertex_count = part->get_count();
+				for (uint32_t i = 0; i < vertex_count; i++) {
+					const auto vertex = part->get_vertex_xy(i);
+				}
+			} break;
+			case sgl::geometry_type::POLYGON: {
+				if (!part->is_empty()) {
+					const auto shell = part->get_first_part();
+					const auto vertex_count = shell->get_count();
+					has_any_vertices |= vertex_count > 0;
+					for (uint32_t i = 0; i < vertex_count; i++) {
+						const auto vertex = shell->get_vertex_xy(i);
+					}
+				}
+			} break;
+			case sgl::geometry_type::MULTI_POINT:
+			case sgl::geometry_type::MULTI_LINESTRING:
+			case sgl::geometry_type::MULTI_POLYGON:
+			case sgl::geometry_type::MULTI_GEOMETRY: {
+				if (!part->is_empty()) {
+					part = part->get_first_part();
+					// continue the outer loop here!
+					continue;
+				}
+			} break;
+			default:
+				SGL_ASSERT(false);
+				return;
+			}
+
+			// Now go up/sideways
+			while (true) {
+				const auto parent = part->get_parent();
+				if (parent == root) {
+					return;
+				}
+
+				if (part != parent->get_last_part()) {
+					// Go sideways
+					part = part->get_next();
+					break;
+				}
+
+				// Go up
+				part = parent;
+			}
+		}
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+
+	struct State {
+		vector<char> buffer;
+		int32_t max_digits;
+		bool rel;
+	};
+
+	static void WriteDelimeter(State &state, const sgl::geometry *geom) {
+
+	}
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+
+		State visit_state = {};
+
+		TernaryExecutor::Execute<string_t, bool, int32_t, string_t>(
+			args.data[0], args.data[1], args.data[2], result, args.size(),
+			[&](const string_t &blob, bool rel, int32_t max_digits) {
+
+				// Clear buffer
+				visit_state.buffer.clear();
+				visit_state.max_digits = max_digits;
+				visit_state.rel = rel;
+
+				// Setup the callbacks
+				sgl::ops::visit_callbacks callbacks;
+
+				callbacks.on_point = [](void* state_ptr, const sgl::geometry *part) {
+					auto &state = *static_cast<State *>(state_ptr);
+
+					return true;
+				};
+
+				callbacks.on_linestring = [](void* state_ptr, const sgl::geometry *part) {
+					const auto &state = *static_cast<State *>(state_ptr);
+
+					return true;
+				};
+
+				callbacks.on_polygon = [](void* buffer_ptr, const sgl::geometry *part) {
+					const auto &state = *static_cast<State *>(buffer_ptr);
+
+
+					return true;
+				};
+
+				callbacks.on_ring = callbacks.on_linestring;
+
+				sgl::geometry geom;
+				sgl::ops::visit(&geom, nullptr, &callbacks, &visit_state);
+			});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = "";
+
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_AsSVG", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.AddParameter("relative", LogicalType::BOOLEAN);
+				variant.AddParameter("precision", LogicalType::INTEGER);
+
+				variant.SetReturnType(LogicalType::VARCHAR);
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+		});
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_Centroid
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
+// TODO: implement
 struct ST_Centroid {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
@@ -1072,10 +1226,160 @@ struct ST_Distance {
 //======================================================================================================================
 
 struct ST_Dump {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		auto &arena = lstate.GetArena();
+		auto count = args.size();
+
+		auto &geom_vec = args.data[0];
+		UnifiedVectorFormat geom_format;
+		geom_vec.ToUnifiedFormat(count, geom_format);
+
+		idx_t total_geom_count = 0;
+		idx_t total_path_count = 0;
+
+		for (idx_t out_row_idx = 0; out_row_idx < count; out_row_idx++) {
+			auto in_row_idx = geom_format.sel->get_index(out_row_idx);
+
+			if (!geom_format.validity.RowIsValid(in_row_idx)) {
+				FlatVector::SetNull(result, out_row_idx, true);
+				continue;
+			}
+
+			auto &blob = UnifiedVectorFormat::GetData<string_t>(geom_format)[in_row_idx];
+			auto geom = lstate.Deserialize(blob);
+
+			vector<std::tuple<sgl::geometry*, vector<int32_t>>> stack;
+			vector<std::tuple<sgl::geometry*, vector<int32_t>>> items;
+
+			stack.emplace_back(geom, vector<int32_t>());
+
+			while (!stack.empty()) {
+				auto current = stack.back();
+				auto current_geom = std::get<0>(current);
+				auto current_path = std::get<1>(current);
+
+				stack.pop_back();
+				if (current_geom->is_collection()) {
+					// Push all children
+
+					auto head = current_geom->get_first_part();
+					if(!head) {
+						continue;
+					}
+
+					stack.emplace_back(head, current_path);
+
+					while(head != current_geom->get_last_part()) {
+						head = head->get_next();
+						stack.emplace_back(head, current_path);
+					}
+
+				} else {
+					items.push_back(current);
+				}
+			}
+
+			// Finally reverse the results
+			std::reverse(items.begin(), items.end());
+
+			// Push to the result vector
+			auto result_entries = ListVector::GetData(result);
+
+			auto geom_offset = total_geom_count;
+			auto geom_length = items.size();
+
+			result_entries[out_row_idx].length = geom_length;
+			result_entries[out_row_idx].offset = geom_offset;
+
+			total_geom_count += geom_length;
+
+			ListVector::Reserve(result, total_geom_count);
+			ListVector::SetListSize(result, total_geom_count);
+
+			auto &result_list = ListVector::GetEntry(result);
+			auto &result_list_children = StructVector::GetEntries(result_list);
+			auto &result_geom_vec = result_list_children[0];
+			auto &result_path_vec = result_list_children[1];
+
+			// The child geometries must share the same properties as the parent geometry
+			auto geom_data = FlatVector::GetData<string_t>(*result_geom_vec);
+			for (idx_t i = 0; i < geom_length; i++) {
+				// Write the geometry
+				auto item_blob = std::get<0>(items[i]);
+				geom_data[geom_offset + i] = lstate.Serialize(*result_geom_vec, *item_blob);
+
+				// Now write the paths
+				auto &path = std::get<1>(items[i]);
+				auto path_offset = total_path_count;
+				auto path_length = path.size();
+
+				total_path_count += path_length;
+
+				ListVector::Reserve(*result_path_vec, total_path_count);
+				ListVector::SetListSize(*result_path_vec, total_path_count);
+
+				auto path_entries = ListVector::GetData(*result_path_vec);
+
+				path_entries[geom_offset + i].offset = path_offset;
+				path_entries[geom_offset + i].length = path_length;
+
+				auto &path_data_vec = ListVector::GetEntry(*result_path_vec);
+				auto path_data = FlatVector::GetData<int32_t>(path_data_vec);
+
+				for (idx_t j = 0; j < path_length; j++) {
+					path_data[path_offset + j] = path[j];
+				}
+			}
+		}
+
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+	Dumps a geometry into a list of sub-geometries and their "path" in the original geometry.
+	)";
+
+	static constexpr auto EXAMPLE = R"(
+	select st_dump('MULTIPOINT(1 2,3 4)'::geometry);
+	----
+	[{'geom': 'POINT(1 2)', 'path': [0]}, {'geom': 'POINT(3 4)', 'path': [1]}]
+	)";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+
+		FunctionBuilder::RegisterScalar(db, "ST_Dump", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+
+				variant.SetReturnType(LogicalType::LIST(
+				LogicalType::STRUCT({
+					{"geom", GeoTypes::GEOMETRY()},
+					{"path", LogicalType::LIST(
+						LogicalType::INTEGER)}})));
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
 	}
 };
 
@@ -3399,24 +3703,315 @@ struct ST_QuadKey {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_RemoveRepeatedPoints
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_RemoveRepeatedPoints {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// LINESTRING_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteLineString(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto input = args.data[0];
+		auto count = args.size();
+		UnifiedVectorFormat format;
+		input.ToUnifiedFormat(count, format);
+
+		auto in_line_entries = ListVector::GetData(input);
+		auto &in_line_vertex_vec = StructVector::GetEntries(ListVector::GetEntry(input));
+		auto in_x_data = FlatVector::GetData<double>(*in_line_vertex_vec[0]);
+		auto in_y_data = FlatVector::GetData<double>(*in_line_vertex_vec[1]);
+
+		auto out_line_entries = ListVector::GetData(result);
+		auto &out_line_vertex_vec = StructVector::GetEntries(ListVector::GetEntry(result));
+
+		idx_t out_offset = 0;
+		for (idx_t out_row_idx = 0; out_row_idx < count; out_row_idx++) {
+
+			auto in_row_idx = format.sel->get_index(out_row_idx);
+			if (!format.validity.RowIsValid(in_row_idx)) {
+				FlatVector::SetNull(result, out_row_idx, true);
+				continue;
+			}
+			auto in = in_line_entries[in_row_idx];
+			auto in_offset = in.offset;
+			auto in_length = in.length;
+
+			// Special case: if the line has less than 3 points, we can't remove any points
+			if (in_length < 3) {
+
+				ListVector::Reserve(result, out_offset + in_length);
+				auto out_x_data = FlatVector::GetData<double>(*out_line_vertex_vec[0]);
+				auto out_y_data = FlatVector::GetData<double>(*out_line_vertex_vec[1]);
+
+				// If the line has less than 3 points, we can't remove any points
+				// so we just copy the line
+				out_line_entries[out_row_idx] = list_entry_t {out_offset, in_length};
+				for (idx_t coord_idx = 0; coord_idx < in_length; coord_idx++) {
+					out_x_data[out_offset + coord_idx] = in_x_data[in_offset + coord_idx];
+					out_y_data[out_offset + coord_idx] = in_y_data[in_offset + coord_idx];
+				}
+				out_offset += in_length;
+				continue;
+			}
+
+			// First pass, calculate how many points we need to keep
+			// We always keep the first and last point, so we start at 2
+			uint32_t points_to_keep = 0;
+
+			auto last_x = in_x_data[in_offset];
+			auto last_y = in_y_data[in_offset];
+			points_to_keep++;
+
+			for (idx_t i = 1; i < in_length; i++) {
+				auto curr_x = in_x_data[in_offset + i];
+				auto curr_y = in_y_data[in_offset + i];
+
+				if (curr_x != last_x || curr_y != last_y) {
+					points_to_keep++;
+					last_x = curr_x;
+					last_y = curr_y;
+				}
+			}
+
+			// Special case: there is only 1 unique point in the line, so just keep
+			// the start and end points
+			if (points_to_keep == 1) {
+				out_line_entries[out_row_idx] = list_entry_t {out_offset, 2};
+				ListVector::Reserve(result, out_offset + 2);
+				auto out_x_data = FlatVector::GetData<double>(*out_line_vertex_vec[0]);
+				auto out_y_data = FlatVector::GetData<double>(*out_line_vertex_vec[1]);
+				out_x_data[out_offset] = in_x_data[in_offset];
+				out_y_data[out_offset] = in_y_data[in_offset];
+				out_x_data[out_offset + 1] = in_x_data[in_offset + in_length - 1];
+				out_y_data[out_offset + 1] = in_y_data[in_offset + in_length - 1];
+				out_offset += 2;
+				continue;
+			}
+
+			// Set the list entry
+			out_line_entries[out_row_idx] = list_entry_t {out_offset, points_to_keep};
+
+			// Second pass, copy the points we need to keep
+			ListVector::Reserve(result, out_offset + points_to_keep);
+			auto out_x_data = FlatVector::GetData<double>(*out_line_vertex_vec[0]);
+			auto out_y_data = FlatVector::GetData<double>(*out_line_vertex_vec[1]);
+
+			// Copy the first point
+			out_x_data[out_offset] = in_x_data[in_offset];
+			out_y_data[out_offset] = in_y_data[in_offset];
+			out_offset++;
+
+			// Copy the middle points (skip the last one, we'll copy it at the end)
+			last_x = in_x_data[in_offset];
+			last_y = in_y_data[in_offset];
+
+			for (idx_t i = 1; i < in_length; i++) {
+				auto curr_x = in_x_data[in_offset + i];
+				auto curr_y = in_y_data[in_offset + i];
+
+				if (curr_x != last_x || curr_y != last_y) {
+					out_x_data[out_offset] = curr_x;
+					out_y_data[out_offset] = curr_y;
+					last_x = curr_x;
+					last_y = curr_y;
+					out_offset++;
+				}
+			}
+		}
+		ListVector::SetListSize(result, out_offset);
+
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// LINESTRING_2D (With Tolerance)
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteLineStringWithTolerance(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto input = args.data[0];
+		auto tolerance = args.data[1];
+		auto count = args.size();
+		UnifiedVectorFormat format;
+		input.ToUnifiedFormat(count, format);
+
+		UnifiedVectorFormat tolerance_format;
+		tolerance.ToUnifiedFormat(count, tolerance_format);
+
+		auto in_line_entries = ListVector::GetData(input);
+		auto &in_line_vertex_vec = StructVector::GetEntries(ListVector::GetEntry(input));
+		auto in_x_data = FlatVector::GetData<double>(*in_line_vertex_vec[0]);
+		auto in_y_data = FlatVector::GetData<double>(*in_line_vertex_vec[1]);
+
+		auto out_line_entries = ListVector::GetData(result);
+		auto &out_line_vertex_vec = StructVector::GetEntries(ListVector::GetEntry(result));
+
+		idx_t out_offset = 0;
+
+		for (idx_t out_row_idx = 0; out_row_idx < count; out_row_idx++) {
+			auto in_row_idx = format.sel->get_index(out_row_idx);
+			auto in_tol_idx = tolerance_format.sel->get_index(out_row_idx);
+			if (!format.validity.RowIsValid(in_row_idx) || !tolerance_format.validity.RowIsValid(in_tol_idx)) {
+				FlatVector::SetNull(result, out_row_idx, true);
+				continue;
+			}
+
+			auto in = in_line_entries[in_row_idx];
+			auto in_offset = in.offset;
+			auto in_length = in.length;
+
+			auto tolerance = Load<double>(tolerance_format.data + in_tol_idx);
+			auto tolerance_squared = tolerance * tolerance;
+
+			if (in_length < 3) {
+
+				ListVector::Reserve(result, out_offset + in_length);
+				auto out_x_data = FlatVector::GetData<double>(*out_line_vertex_vec[0]);
+				auto out_y_data = FlatVector::GetData<double>(*out_line_vertex_vec[1]);
+
+				// If the line has less than 3 points, we can't remove any points
+				// so we just copy the line
+				out_line_entries[out_row_idx] = list_entry_t {out_offset, in_length};
+				for (idx_t coord_idx = 0; coord_idx < in_length; coord_idx++) {
+					out_x_data[out_offset + coord_idx] = in_x_data[in_offset + coord_idx];
+					out_y_data[out_offset + coord_idx] = in_y_data[in_offset + coord_idx];
+				}
+				out_offset += in_length;
+				continue;
+			}
+
+			// First pass, calculate how many points we need to keep
+			uint32_t points_to_keep = 0;
+
+			auto last_x = in_x_data[in_offset];
+			auto last_y = in_y_data[in_offset];
+			points_to_keep++;
+
+			for (idx_t i = 1; i < in_length; i++) {
+				auto curr_x = in_x_data[in_offset + i];
+				auto curr_y = in_y_data[in_offset + i];
+
+				auto dist_squared = (curr_x - last_x) * (curr_x - last_x) + (curr_y - last_y) * (curr_y - last_y);
+
+				if (dist_squared > tolerance_squared) {
+					last_x = curr_x;
+					last_y = curr_y;
+					points_to_keep++;
+				}
+			}
+
+			// Special case: there is only 1 unique point in the line, so just keep
+			// the start and end points
+			if (points_to_keep == 1) {
+				out_line_entries[out_row_idx] = list_entry_t {out_offset, 2};
+				ListVector::Reserve(result, out_offset + 2);
+				auto out_x_data = FlatVector::GetData<double>(*out_line_vertex_vec[0]);
+				auto out_y_data = FlatVector::GetData<double>(*out_line_vertex_vec[1]);
+				out_x_data[out_offset] = in_x_data[in_offset];
+				out_y_data[out_offset] = in_y_data[in_offset];
+				out_x_data[out_offset + 1] = in_x_data[in_offset + in_length - 1];
+				out_y_data[out_offset + 1] = in_y_data[in_offset + in_length - 1];
+				out_offset += 2;
+				continue;
+			}
+
+			// Set the list entry
+			out_line_entries[out_row_idx] = list_entry_t {out_offset, points_to_keep};
+
+			// Second pass, copy the points we need to keep
+			ListVector::Reserve(result, out_offset + points_to_keep);
+			auto out_x_data = FlatVector::GetData<double>(*out_line_vertex_vec[0]);
+			auto out_y_data = FlatVector::GetData<double>(*out_line_vertex_vec[1]);
+
+			// Copy the first point
+			out_x_data[out_offset] = in_x_data[in_offset];
+			out_y_data[out_offset] = in_y_data[in_offset];
+			out_offset++;
+
+			// With tolerance its different, we always keep the first and last point
+			// regardless of distance to the previous point
+			// Copy the middle points
+			last_x = in_x_data[in_offset];
+			last_y = in_y_data[in_offset];
+
+			for (idx_t i = 1; i < in_length - 1; i++) {
+
+				auto curr_x = in_x_data[in_offset + i];
+				auto curr_y = in_y_data[in_offset + i];
+
+				auto dist_squared = (curr_x - last_x) * (curr_x - last_x) + (curr_y - last_y) * (curr_y - last_y);
+				if (dist_squared > tolerance_squared) {
+					out_x_data[out_offset] = curr_x;
+					out_y_data[out_offset] = curr_y;
+					last_x = curr_x;
+					last_y = curr_y;
+					out_offset++;
+				}
+			}
+
+			// Copy the last point
+			out_x_data[points_to_keep - 1] = in_x_data[in_offset + in_length - 1];
+			out_y_data[points_to_keep - 1] = in_y_data[in_offset + in_length - 1];
+			out_offset++;
+		}
+		ListVector::SetListSize(result, out_offset);
+
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Remove repeated points from a LINESTRING.
+	)";
+
+	// TODO: example
+	static constexpr auto EXAMPLE = R"";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_RemoveRepeatedPoints", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("line", GeoTypes::LINESTRING_2D());
+				variant.SetReturnType(GeoTypes::LINESTRING_2D());
+
+				variant.SetFunction(ExecuteLineString);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("line", GeoTypes::LINESTRING_2D());
+				variant.AddParameter("tolerance", LogicalType::DOUBLE);
+				variant.SetReturnType(GeoTypes::LINESTRING_2D());
+
+				variant.SetFunction(ExecuteLineStringWithTolerance);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_StartPoint
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_StartPoint {
 
-	// Geometry Function -----------------------------------------------------------------------------------------------
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
 		    args.data[0], result, args.size(), [&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
@@ -3441,7 +4036,64 @@ struct ST_StartPoint {
 		    });
 	}
 
-	// Register --------------------------------------------------------------------------------------------------------
+	//------------------------------------------------------------------------------------------------------------------
+	// LINESTRING_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteLineString(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto geom_vec = args.data[0];
+		auto count = args.size();
+
+		UnifiedVectorFormat geom_format;
+		geom_vec.ToUnifiedFormat(count, geom_format);
+
+		auto line_vertex_entries = ListVector::GetData(geom_vec);
+		auto &line_vertex_vec = ListVector::GetEntry(geom_vec);
+		auto &line_vertex_vec_children = StructVector::GetEntries(line_vertex_vec);
+		auto line_x_data = FlatVector::GetData<double>(*line_vertex_vec_children[0]);
+		auto line_y_data = FlatVector::GetData<double>(*line_vertex_vec_children[1]);
+
+		auto &point_vertex_children = StructVector::GetEntries(result);
+		auto point_x_data = FlatVector::GetData<double>(*point_vertex_children[0]);
+		auto point_y_data = FlatVector::GetData<double>(*point_vertex_children[1]);
+
+		for (idx_t out_row_idx = 0; out_row_idx < count; out_row_idx++) {
+			auto in_row_idx = geom_format.sel->get_index(out_row_idx);
+
+			if (!geom_format.validity.RowIsValid(in_row_idx)) {
+				FlatVector::SetNull(result, out_row_idx, true);
+				continue;
+			}
+
+			auto line = line_vertex_entries[in_row_idx];
+			auto line_offset = line.offset;
+			auto line_length = line.length;
+
+			if (line_length == 0) {
+				FlatVector::SetNull(result, out_row_idx, true);
+				continue;
+			}
+
+			point_x_data[out_row_idx] = line_x_data[line_offset];
+			point_y_data[out_row_idx] = line_y_data[line_offset];
+		}
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Returns the start point of a LINESTRING.
+	)";
+
+	// todo: add example
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_StartPoint", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -3449,19 +4101,35 @@ struct ST_StartPoint {
 				variant.SetReturnType(GeoTypes::GEOMETRY());
 
 				variant.SetInit(LocalState::Init);
-				variant.SetFunction(Execute);
-
-				variant.SetDescription("Returns the start point of a LINESTRING");
-				// todo: Set example
+				variant.SetFunction(ExecuteGeometry);
 			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("line", GeoTypes::LINESTRING_2D());
+				variant.SetReturnType(GeoTypes::POINT_2D());
+
+				variant.SetFunction(ExecuteLineString);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");
 		});
 	}
 };
 
+//======================================================================================================================
+// ST_EndPoint
+//======================================================================================================================
+
 struct ST_EndPoint {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
 		    args.data[0], result, args.size(), [&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
@@ -3491,7 +4159,87 @@ struct ST_EndPoint {
 		    });
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// LINESTRING_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteLineString(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto geom_vec = args.data[0];
+		auto count = args.size();
+
+		UnifiedVectorFormat geom_format;
+		geom_vec.ToUnifiedFormat(count, geom_format);
+
+		auto line_vertex_entries = ListVector::GetData(geom_vec);
+		auto &line_vertex_vec = ListVector::GetEntry(geom_vec);
+		auto &line_vertex_vec_children = StructVector::GetEntries(line_vertex_vec);
+		auto line_x_data = FlatVector::GetData<double>(*line_vertex_vec_children[0]);
+		auto line_y_data = FlatVector::GetData<double>(*line_vertex_vec_children[1]);
+
+		auto &point_vertex_children = StructVector::GetEntries(result);
+		auto point_x_data = FlatVector::GetData<double>(*point_vertex_children[0]);
+		auto point_y_data = FlatVector::GetData<double>(*point_vertex_children[1]);
+
+		for (idx_t out_row_idx = 0; out_row_idx < count; out_row_idx++) {
+			auto in_row_idx = geom_format.sel->get_index(out_row_idx);
+
+			if (!geom_format.validity.RowIsValid(in_row_idx)) {
+				FlatVector::SetNull(result, out_row_idx, true);
+				continue;
+			}
+
+			auto line = line_vertex_entries[in_row_idx];
+			auto line_offset = line.offset;
+			auto line_length = line.length;
+
+			if (line_length == 0) {
+				FlatVector::SetNull(result, out_row_idx, true);
+				continue;
+			}
+
+			point_x_data[out_row_idx] = line_x_data[line_offset + line_length - 1];
+			point_y_data[out_row_idx] = line_y_data[line_offset + line_length - 1];
+		}
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Returns the end point of a LINESTRING.
+	)";
+
+	// TODO: add example
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_EndPoint", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteGeometry);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("line", GeoTypes::LINESTRING_2D());
+				variant.SetReturnType(GeoTypes::POINT_2D());
+
+				variant.SetFunction(ExecuteLineString);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
 	}
 };
 
@@ -3743,14 +4491,16 @@ struct ST_MMin : VertexAggFunctionBase<ST_MMin, VertexMinAggOp> {
 void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Area::Register(db);
 
-	// 10 functions to go!
+	// 9 functions to go!
 	/*
 	ST_AsGeoJSON::Register(db);
 	ST_AsText::Register(db);
 	ST_AsWKB::Register(db);
 	ST_AsHEXWKB::Register(db);
+	*/
 	ST_AsSVG::Register(db);
-	// ST_Centroid::Register(db); - not applicable now
+	/*
+	ST_Centroid::Register(db); - not applicable now
 	*/
 	ST_Collect::Register(db);
 	ST_CollectionExtract::Register(db);
@@ -3758,8 +4508,8 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Dimension::Register(db);
 	/*
 	// ST_Distance::Register(db); -- not applicable now
-	ST_Dump::Register(db);
 	*/
+	ST_Dump::Register(db);
 	ST_EndPoint::Register(db);
 	ST_Extent::Register(db);
 	ST_ExteriorRing::Register(db);
@@ -3770,7 +4520,6 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Force3DZ::Register(db);
 	ST_Force3DM::Register(db);
 	ST_Force4D::Register(db);
-
 	ST_GeometryType::Register(db);
 	/*
 	ST_GeomFromHEXWKB::Register(db);
@@ -3799,7 +4548,7 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_PointN::Register(db);
 	ST_Points::Register(db);
 	ST_QuadKey::Register(db);
-	// ST_RemoveRepeatedPoints::Register(db); - not applicable right now
+	ST_RemoveRepeatedPoints::Register(db);
 	ST_StartPoint::Register(db);
 	ST_X::Register(db);
 	ST_XMax::Register(db);
