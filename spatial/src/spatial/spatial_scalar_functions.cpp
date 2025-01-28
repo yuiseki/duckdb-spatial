@@ -4048,24 +4048,113 @@ struct ST_Hilbert {
 //======================================================================================================================
 // ST_Intersects
 //======================================================================================================================
-// TODO: Implement
+
 struct ST_Intersects {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// BOX_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteBox(DataChunk &args, ExpressionState &state, Vector &result) {
+		using BOX_TYPE = StructTypeQuaternary<double, double, double, double>;
+		using BOOL_TYPE = PrimitiveType<bool>;
+
+		GenericExecutor::ExecuteBinary<BOX_TYPE, BOX_TYPE, BOOL_TYPE>(
+			args.data[0], args.data[1], result, args.size(), [&](BOX_TYPE &left, BOX_TYPE &right) {
+				return !(left.a_val > right.c_val || left.c_val < right.a_val || left.b_val > right.d_val ||
+						 left.d_val < right.b_val);
+			});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	// TODO: Add docs
+	static constexpr auto DESCRIPTION = "";
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Intersects", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("box1", GeoTypes::BOX_2D());
+				variant.AddParameter("box2", GeoTypes::BOX_2D());
+				variant.SetReturnType(LogicalType::BOOLEAN);
+
+				variant.SetFunction(ExecuteBox);
+			});
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "relation");
+		});
 	}
 };
 
 //======================================================================================================================
 // ST_IntersectsExtent
 //======================================================================================================================
-// TODO: Implement
+
 struct ST_IntersectsExtent {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		BinaryExecutor::Execute<string_t, string_t, bool>(args.data[0], args.data[1], result, args.size(),
+			[&](const string_t &lhs_blob, const string_t &rhs_blob) {
+				// TODO: In the future we should store if the geom is empty/vertex count in the blob
+
+				const auto lhs_geom = lstate.Deserialize(lhs_blob);
+
+				sgl::box_xy lhs_ext = {};
+				if(!sgl::ops::try_get_extent_xy(&lhs_geom, &lhs_ext)) {
+					return false;
+				}
+
+				const auto rhs_geom = lstate.Deserialize(rhs_blob);
+
+				sgl::box_xy rhs_ext = {};
+				if(!sgl::ops::try_get_extent_xy(&rhs_geom, &rhs_ext)) {
+					return false;
+				}
+
+				return lhs_ext.intersects(rhs_ext);
+			});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+	    Returns true if the extent of two geometries intersects
+	)";
+
+	// TODO: Add examples
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Intersects_Extent", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom1", GeoTypes::GEOMETRY());
+				variant.AddParameter("geom2", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::BOOLEAN);
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "relation");
+		});
 	}
 };
 
@@ -5942,7 +6031,7 @@ struct ST_MMin : VertexAggFunctionBase<ST_MMin, VertexMinAggOp> {
 void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Area::Register(db);
 
-	// 7 functions to go!
+	// 3 functions to go!
 	ST_AsGeoJSON::Register(db);
 	ST_AsText::Register(db);
 	ST_AsWKB::Register(db);
@@ -5974,8 +6063,8 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_ZMFlag::Register(db);
 	ST_Distance_Sphere::Register(db);
 	ST_Hilbert::Register(db);
-	// ST_Intersects::Register(db); - not applicable now
-	// ST_IntersectsExtent::Register(db); - not applicable now
+	ST_Intersects::Register(db);
+	ST_IntersectsExtent::Register(db);
 	ST_IsClosed::Register(db);
 	ST_IsEmpty::Register(db);
 	ST_Length::Register(db);
