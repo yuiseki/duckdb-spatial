@@ -7,6 +7,8 @@
 #define SGL_ASSERT(x) D_ASSERT(x)
 #include "sgl/sgl.hpp"
 
+#include "yyjson.h"
+
 namespace spatial {
 namespace core {
 
@@ -701,15 +703,269 @@ struct ST_Area {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_AsGeoJSON
-//----------------------------------------------------------------------------------------------------------------------
-// TODO: implement
+//======================================================================================================================
+
+using namespace duckdb_yyjson_spatial;
+
+class JSONAllocator {
+	// Stolen from the JSON extension :)
+public:
+	explicit JSONAllocator(ArenaAllocator &allocator)
+		: allocator(allocator), yyjson_allocator({Allocate, Reallocate, Free, &allocator}) {
+	}
+	yyjson_alc *GetYYJSONAllocator() {
+		return &yyjson_allocator;
+	}
+	void Reset() {
+		allocator.Reset();
+	}
+private:
+	static void *Allocate(void *ctx, size_t size) {
+		const auto alloc = static_cast<ArenaAllocator *>(ctx);
+		return alloc->AllocateAligned(size);
+	}
+	static void *Reallocate(void *ctx, void *ptr, size_t old_size, size_t size) {
+		const auto alloc = static_cast<ArenaAllocator *>(ctx);
+		return alloc->ReallocateAligned(data_ptr_cast(ptr), old_size, size);
+	}
+	static void Free(void *ctx, void *ptr) {
+		// NOP because ArenaAllocator can't free
+	}
+	ArenaAllocator &allocator;
+	yyjson_alc yyjson_allocator;
+};
+
 struct ST_AsGeoJSON {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// JSON Formatting Functions
+	//------------------------------------------------------------------------------------------------------------------
+	// TODO: Move these into SGL at some point, make non-recursive
+	static void FormatCoords(const sgl::geometry *geom, yyjson_mut_doc *doc, yyjson_mut_val *obj) {
+		const auto vertex_type = static_cast<sgl::vertex_type>(geom->has_z() + geom->has_m() * 2);
+		const auto vertex_count = geom->get_count();
+
+		// GeoJSON does not support M values, so we ignore them
+		switch (vertex_type) {
+		case sgl::vertex_type::XY:
+		case sgl::vertex_type::XYM: {
+			for(uint32_t i = 0; i < vertex_count; i++) {
+				const auto coord = yyjson_mut_arr(doc);
+				const auto vert = geom->get_vertex_xy(i);
+				yyjson_mut_arr_add_real(doc, coord, vert.x);
+				yyjson_mut_arr_add_real(doc, coord, vert.y);
+				yyjson_mut_arr_append(obj, coord);
+			}
+		} break;
+		case sgl::vertex_type::XYZ:
+		case sgl::vertex_type::XYZM: {
+			for(uint32_t i = 0; i < vertex_count; i++) {
+				const auto coord = yyjson_mut_arr(doc);
+				const auto vert = geom->get_vertex_xyzm(i);
+
+				yyjson_mut_arr_add_real(doc, coord, vert.x);
+				yyjson_mut_arr_add_real(doc, coord, vert.y);
+				yyjson_mut_arr_add_real(doc, coord, vert.zm);
+				yyjson_mut_arr_append(obj, coord);
+
+			}
+		} break;
+		default:
+			D_ASSERT(false);
+			break;
+		}
 	}
 
+	static void FormatRecursive(const sgl::geometry *geom, yyjson_mut_doc *doc, yyjson_mut_val *obj) {
+		switch(geom->get_type()) {
+			case sgl::geometry_type::POINT: {
+				yyjson_mut_obj_add_str(doc, obj, "type", "Point");
+				const auto coords = yyjson_mut_arr(doc);
+				yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
+				FormatCoords(geom, doc, coords);
+			} break;
+			case sgl::geometry_type::LINESTRING: {
+				yyjson_mut_obj_add_str(doc, obj, "type", "LineString");
+				const auto coords = yyjson_mut_arr(doc);
+				yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
+				FormatCoords(geom, doc, coords);
+			} break;
+			case sgl::geometry_type::POLYGON: {
+				yyjson_mut_obj_add_str(doc, obj, "type", "Polygon");
+				const auto coords = yyjson_mut_arr(doc);
+				yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
+
+				const auto tail = geom->get_last_part();
+				auto head = tail;
+				if(head) {
+					do {
+						head = head->get_next();
+						const auto ring = yyjson_mut_arr(doc);
+						FormatCoords(head, doc, ring);
+						yyjson_mut_arr_append(coords, ring);
+					} while(head != tail);
+				}
+			} break;
+			case sgl::geometry_type::MULTI_POINT: {
+				yyjson_mut_obj_add_str(doc, obj, "type", "MultiPolygon");
+
+				const auto coords = yyjson_mut_arr(doc);
+				yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
+
+				const auto tail = geom->get_last_part();
+				auto head = tail;
+
+				if(head) {
+					do {
+						head = head->get_next();
+						FormatCoords(head, doc, coords);
+					} while(head != tail);
+				}
+			} break;
+			case sgl::geometry_type::MULTI_LINESTRING: {
+				yyjson_mut_obj_add_str(doc, obj, "type", "MultiLineString");
+
+				const auto coords = yyjson_mut_arr(doc);
+				yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
+
+				const auto tail = geom->get_last_part();
+				auto head = tail;
+
+				if(head) {
+					do {
+						head = head->get_next();
+						const auto line = yyjson_mut_arr(doc);
+						FormatCoords(head, doc, line);
+						yyjson_mut_arr_append(coords, line);
+					} while(head != tail);
+				}
+			} break;
+			case sgl::geometry_type::MULTI_POLYGON: {
+				yyjson_mut_obj_add_str(doc, obj, "type", "MultiPolygon");
+
+				const auto coords = yyjson_mut_arr(doc);
+				yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
+
+				const auto tail = geom->get_last_part();
+				auto head = tail;
+
+				if(head) {
+					do {
+						head = head->get_next();
+						const auto poly = yyjson_mut_arr(doc);
+
+						const auto ring_tail = head->get_last_part();
+						auto ring_head = ring_tail;
+						if(ring_head) {
+							do {
+								ring_head = ring_head->get_next();
+								const auto ring = yyjson_mut_arr(doc);
+								FormatCoords(ring_head, doc, ring);
+								yyjson_mut_arr_append(poly, ring);
+							} while(ring_head != ring_tail);
+						}
+						yyjson_mut_arr_append(coords, poly);
+					} while(head != tail);
+				}
+			} break;
+			case sgl::geometry_type::MULTI_GEOMETRY: {
+				yyjson_mut_obj_add_str(doc, obj, "type", "GeometryCollection");
+
+				const auto geoms = yyjson_mut_arr(doc);
+				yyjson_mut_obj_add_val(doc, obj, "geometries", geoms);
+
+				const auto tail = geom->get_last_part();
+				auto head = tail;
+
+				if(head) {
+					do {
+						head = head->get_next();
+						const auto sub_geom = yyjson_mut_obj(doc);
+						FormatRecursive(head, doc, sub_geom);
+						yyjson_mut_arr_append(geoms, sub_geom);
+					} while(head != tail);
+				}
+			} break;
+			default:
+				D_ASSERT(false);
+				break;
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		JSONAllocator allocator(lstate.GetArena());
+
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](string_t &blob) {
+			const auto geom = lstate.Deserialize(blob);
+
+			const auto doc = yyjson_mut_doc_new(allocator.GetYYJSONAllocator());
+			const auto obj = yyjson_mut_obj(doc);
+			yyjson_mut_doc_set_root(doc, obj);
+
+			FormatRecursive(&geom, doc, obj);
+
+			size_t json_size = 0;
+			char *json_data = yyjson_mut_write_opts(doc, 0, allocator.GetYYJSONAllocator(), &json_size, nullptr);
+			// Because the arena allocator only resets after each pipeline invocation, we can safely just point into the
+			// arena here without needing to copy the data to the string heap with StringVector::AddString
+			return { json_data, json_size };
+		});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+	    Returns the geometry as a GeoJSON fragment
+
+	    This does not return a complete GeoJSON document, only the geometry fragment.
+		To construct a complete GeoJSON document or feature, look into using the DuckDB JSON extension in conjunction with this function.
+		This function supports geometries with Z values, but not M values. M values are ignored.
+	)";
+
+	static constexpr auto EXAMPLE = R"(
+		select ST_AsGeoJSON('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'::geometry);
+		----
+		{"type":"Polygon","coordinates":[[[0.0,0.0],[0.0,1.0],[1.0,1.0],[1.0,0.0],[0.0,0.0]]]}
+
+		-- Convert a geometry into a full GeoJSON feature (requires the JSON extension to be loaded)
+		SELECT CAST({
+			type: 'Feature',
+			geometry: ST_AsGeoJSON(ST_Point(1,2)),
+			properties: {
+				name: 'my_point'
+			}
+		} AS JSON);
+		----
+		{"type":"Feature","geometry":{"type":"Point","coordinates":[1.0,2.0]},"properties":{"name":"my_point"}}
+	)";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_AsGeoJSON", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::JSON());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "conversion");
+		});
 	}
 };
 
@@ -756,72 +1012,155 @@ struct ST_AsHEXWKB {
 struct ST_AsSVG {
 
 	//------------------------------------------------------------------------------------------------------------------
-	// Helper
+	// SVG Formatting Functions
 	//------------------------------------------------------------------------------------------------------------------
-	// TODO: Move this to sgl once we have proper double formatting
-	//
-	static void ToSVG(const sgl::geometry *geom, vector<char> &buffer) {
+	// TODO: Move this to sgl once we have proper double formatting. And make non-recursive please.
 
-		auto part = geom;
-		if (part == nullptr) {
+	static void FormatPoint(const sgl::geometry *geom, vector<char> &buffer, int32_t max_digits, bool rel) {
+		D_ASSERT(geom->get_type() == sgl::geometry_type::POINT);
+		if(geom->is_empty()) {
+			return;
+		}
+		const auto vert = geom->get_vertex_xy(0);
+		if(rel) {
+			constexpr auto x = "x=\"";
+			constexpr auto y = "y=\"";
+			buffer.insert(buffer.end(), x, x + 3);
+			MathUtil::format_coord(vert.x, buffer, max_digits);
+			buffer.push_back('"');
+			buffer.push_back(' ');
+			buffer.insert(buffer.end(), y, y + 3);
+			MathUtil::format_coord(-vert.y, buffer, max_digits);
+			buffer.push_back('"');
+		} else {
+			constexpr auto cx = "cx=\"";
+			constexpr auto cy = "cy=\"";
+			buffer.insert(buffer.end(), cx, cx + 4);
+			MathUtil::format_coord(vert.x, buffer, max_digits);
+			buffer.push_back('"');
+			buffer.push_back(' ');
+			buffer.insert(buffer.end(), cy, cy + 4);
+			MathUtil::format_coord(-vert.y, buffer, max_digits);
+			buffer.push_back('"');
+		}
+	}
+
+	static void FormatLineString(const sgl::geometry *geom, vector<char> &buffer, int32_t max_digits, bool rel, bool close) {
+		D_ASSERT(geom->get_type() == sgl::geometry_type::LINESTRING);
+
+		const auto vertex_count = geom->get_count();
+		if (vertex_count == 0) {
 			return;
 		}
 
-		//box_xy result = box_xy::smallest();
+		sgl::vertex_xy last_vert = geom->get_vertex_xy(0);
+		buffer.push_back('M');
+		buffer.push_back(' ');
+		MathUtil::format_coord(last_vert.x, -last_vert.y, buffer, max_digits);
 
-		const auto root = part->get_parent();
-		bool has_any_vertices = false;
+		if(vertex_count == 1) {
+			return;
+		}
 
-		while (true) {
-			switch (part->get_type()) {
-			case sgl::geometry_type::POINT:
-			case sgl::geometry_type::LINESTRING: {
-				const auto vertex_count = part->get_count();
-				for (uint32_t i = 0; i < vertex_count; i++) {
-					const auto vertex = part->get_vertex_xy(i);
+		buffer.push_back(' ');
+		buffer.push_back(rel ? 'l' : 'L');
+
+		if(rel) {
+			for(uint32_t i = 1; i < vertex_count; i++) {
+				if(i == vertex_count - 1 && close) {
+					buffer.push_back(' ');
+					buffer.push_back('z');
+				} else {
+					const auto vert = geom->get_vertex_xy(i);
+					const auto delta = vert - last_vert;
+					MathUtil::format_coord(delta.x, -delta.y, buffer, max_digits);
 				}
-			} break;
-			case sgl::geometry_type::POLYGON: {
-				if (!part->is_empty()) {
-					const auto shell = part->get_first_part();
-					const auto vertex_count = shell->get_count();
-					has_any_vertices |= vertex_count > 0;
-					for (uint32_t i = 0; i < vertex_count; i++) {
-						const auto vertex = shell->get_vertex_xy(i);
+			}
+		} else {
+			for (uint32_t i = 1; i < vertex_count; i++) {
+				if (i == vertex_count - 1 && close) {
+					buffer.push_back(' ');
+					buffer.push_back('Z');
+				} else {
+					const auto vert = geom->get_vertex_xy(i);
+					buffer.push_back(' ');
+					MathUtil::format_coord(vert.x, -vert.y, buffer, max_digits);
+				}
+			}
+		}
+	}
+
+	static void FormatPolygon(const sgl::geometry *geom, vector<char> &buffer, int32_t max_digits, bool rel) {
+		const auto tail = geom->get_last_part();
+		auto head = tail;
+		if(head) {
+			do {
+				head = head->get_next();
+				FormatLineString(head, buffer, max_digits, rel, true);
+			} while(head != tail);
+		}
+	}
+
+	static void FormatRecursive(const sgl::geometry *geom, vector<char> &buffer, int32_t max_digits, bool rel) {
+		switch(geom->get_type()) {
+		case sgl::geometry_type::POINT: FormatPoint(geom, buffer, max_digits, rel); break;
+		case sgl::geometry_type::LINESTRING: FormatLineString(geom, buffer, max_digits, rel, false); break;
+		case sgl::geometry_type::POLYGON: FormatPolygon(geom, buffer, max_digits, rel); break;
+		case sgl::geometry_type::MULTI_POINT: {
+			const auto tail = geom->get_last_part();
+			auto head = tail;
+			if(head) {
+				do {
+					head = head->get_next();
+					FormatPoint(head, buffer, max_digits, rel);
+					if(head != tail) {
+						buffer.push_back(',');
 					}
-				}
-			} break;
-			case sgl::geometry_type::MULTI_POINT:
-			case sgl::geometry_type::MULTI_LINESTRING:
-			case sgl::geometry_type::MULTI_POLYGON:
-			case sgl::geometry_type::MULTI_GEOMETRY: {
-				if (!part->is_empty()) {
-					part = part->get_first_part();
-					// continue the outer loop here!
-					continue;
-				}
-			} break;
-			default:
-				SGL_ASSERT(false);
-				return;
+				} while(head != tail);
 			}
-
-			// Now go up/sideways
-			while (true) {
-				const auto parent = part->get_parent();
-				if (parent == root) {
-					return;
-				}
-
-				if (part != parent->get_last_part()) {
-					// Go sideways
-					part = part->get_next();
-					break;
-				}
-
-				// Go up
-				part = parent;
+		} break;
+		case sgl::geometry_type::MULTI_LINESTRING: {
+			const auto tail = geom->get_last_part();
+			auto head = tail;
+			if(head) {
+				do {
+					head = head->get_next();
+					FormatLineString(head, buffer, max_digits, rel, false);
+					if(head != tail) {
+						buffer.push_back(' ');
+					}
+				} while(head != tail);
 			}
+		} break;
+		case sgl::geometry_type::MULTI_POLYGON: {
+			const auto tail = geom->get_last_part();
+			auto head = tail;
+			if(head) {
+				do {
+					head = head->get_next();
+					FormatPolygon(head, buffer, max_digits, rel);
+					if(head != tail) {
+						buffer.push_back(' ');
+					}
+				} while(head != tail);
+			}
+		} break;
+		case sgl::geometry_type::MULTI_GEOMETRY: {
+			const auto tail = geom->get_last_part();
+			auto head = tail;
+			if(head) {
+				do {
+					head = head->get_next();
+					FormatRecursive(head, buffer, max_digits, rel);
+					if(head != tail) {
+						buffer.push_back(';');
+					}
+				} while(head != tail);
+			}
+		} break;
+		default:
+			D_ASSERT(false);
+			break;
 		}
 	}
 
@@ -829,65 +1168,46 @@ struct ST_AsSVG {
 	// GEOMETRY
 	//------------------------------------------------------------------------------------------------------------------
 
-	struct State {
-		vector<char> buffer;
-		int32_t max_digits;
-		bool rel;
-	};
-
-	static void WriteDelimeter(State &state, const sgl::geometry *geom) {
-
-	}
-
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
-
-		State visit_state = {};
+		vector<char> buffer;
 
 		TernaryExecutor::Execute<string_t, bool, int32_t, string_t>(
 			args.data[0], args.data[1], args.data[2], result, args.size(),
-			[&](const string_t &blob, bool rel, int32_t max_digits) {
+			[&](const string_t &blob, const bool rel, const int32_t max_digits) {
 
 				// Clear buffer
-				visit_state.buffer.clear();
-				visit_state.max_digits = max_digits;
-				visit_state.rel = rel;
+				buffer.clear();
 
-				// Setup the callbacks
-				sgl::ops::visit_callbacks callbacks;
+				// Deserialize geometry
+				const auto geom = lstate.Deserialize(blob);
 
-				callbacks.on_point = [](void* state_ptr, const sgl::geometry *part) {
-					auto &state = *static_cast<State *>(state_ptr);
+				FormatRecursive(&geom, buffer, max_digits, rel);
 
-					return true;
-				};
-
-				callbacks.on_linestring = [](void* state_ptr, const sgl::geometry *part) {
-					const auto &state = *static_cast<State *>(state_ptr);
-
-					return true;
-				};
-
-				callbacks.on_polygon = [](void* buffer_ptr, const sgl::geometry *part) {
-					const auto &state = *static_cast<State *>(buffer_ptr);
-
-
-					return true;
-				};
-
-				callbacks.on_ring = callbacks.on_linestring;
-
-				sgl::geometry geom;
-				sgl::ops::visit(&geom, nullptr, &callbacks, &visit_state);
+				return StringVector::AddString(result, buffer.data(), buffer.size());
 			});
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
 	// Documentation
 	//------------------------------------------------------------------------------------------------------------------
-	static constexpr auto DESCRIPTION = "";
+	static constexpr auto DESCRIPTION = R"(
+		Convert the geometry into a SVG fragment or path
 
-	static constexpr auto EXAMPLE = "";
+	    Convert the geometry into a SVG fragment or path
+		The SVG fragment is returned as a string. The fragment is a path element that can be used in an SVG document.
+		The second boolean argument specifies whether the path should be relative or absolute.
+		The third argument specifies the maximum number of digits to use for the coordinates.
+
+		Points are formatted as cx/cy using absolute coordinates or x/y using relative coordinates.
+	)";
+
+	static constexpr auto EXAMPLE = R"(
+		SELECT ST_AsSVG('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'::GEOMETRY, false, 15);
+		----
+		M 0 0 L 0 -1 1 -1 1 0 Z
+	)";
 
 	//------------------------------------------------------------------------------------------------------------------
 	// Register
@@ -904,6 +1224,12 @@ struct ST_AsSVG {
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
 			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "conversion");
 		});
 	}
 };
@@ -911,13 +1237,242 @@ struct ST_AsSVG {
 //======================================================================================================================
 // ST_Centroid
 //======================================================================================================================
+// The GEOMETRY version is currently implemented in the GEOS module
 
-// TODO: implement
 struct ST_Centroid {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// POINT_2D
+	//------------------------------------------------------------------------------------------------------------------
+	// Provided for completeness sake
+	static void ExecutePoint(DataChunk &args, ExpressionState &state, Vector &result) {
+		result.Reference(args.data[0]);
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// LINESTRING_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteLineString(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto input = args.data[0];
+		auto count = args.size();
+		UnifiedVectorFormat format;
+		input.ToUnifiedFormat(count, format);
+
+		auto line_vertex_entries = ListVector::GetData(input);
+		auto &line_vertex_vec = ListVector::GetEntry(input);
+		auto &line_vertex_vec_children = StructVector::GetEntries(line_vertex_vec);
+		auto line_x_data = FlatVector::GetData<double>(*line_vertex_vec_children[0]);
+		auto line_y_vec = FlatVector::GetData<double>(*line_vertex_vec_children[1]);
+
+		auto &point_vertex_children = StructVector::GetEntries(result);
+		auto point_x_data = FlatVector::GetData<double>(*point_vertex_children[0]);
+		auto point_y_data = FlatVector::GetData<double>(*point_vertex_children[1]);
+		for (idx_t out_row_idx = 0; out_row_idx < count; out_row_idx++) {
+
+			auto in_row_idx = format.sel->get_index(out_row_idx);
+			if (format.validity.RowIsValid(in_row_idx)) {
+				auto line = line_vertex_entries[in_row_idx];
+				auto line_offset = line.offset;
+				auto line_length = line.length;
+
+				double total_x = 0;
+				double total_y = 0;
+				double total_length = 0;
+
+				// To calculate the centroid of a line, we calculate the centroid of each segment
+				// and then weight the segment centroids by the length of the segment.
+				// The final centroid is the sum of the weighted segment centroids divided by the total length.
+				for (idx_t coord_idx = line_offset; coord_idx < line_offset + line_length - 1; coord_idx++) {
+					auto x1 = line_x_data[coord_idx];
+					auto y1 = line_y_vec[coord_idx];
+					auto x2 = line_x_data[coord_idx + 1];
+					auto y2 = line_y_vec[coord_idx + 1];
+
+					auto segment_length = sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+					total_length += segment_length;
+					total_x += (x1 + x2) * 0.5 * segment_length;
+					total_y += (y1 + y2) * 0.5 * segment_length;
+				}
+
+				point_x_data[out_row_idx] = total_x / total_length;
+				point_y_data[out_row_idx] = total_y / total_length;
+
+			} else {
+				FlatVector::SetNull(result, out_row_idx, true);
+			}
+		}
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// POLYGON_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto input = args.data[0];
+		auto count = args.size();
+		UnifiedVectorFormat format;
+		input.ToUnifiedFormat(count, format);
+
+		auto poly_entries = ListVector::GetData(input);
+		auto &ring_vec = ListVector::GetEntry(input);
+		auto ring_entries = ListVector::GetData(ring_vec);
+		auto &vertex_vec = ListVector::GetEntry(ring_vec);
+		auto &vertex_vec_children = StructVector::GetEntries(vertex_vec);
+		auto x_data = FlatVector::GetData<double>(*vertex_vec_children[0]);
+		auto y_data = FlatVector::GetData<double>(*vertex_vec_children[1]);
+
+		auto &centroid_children = StructVector::GetEntries(result);
+		auto centroid_x_data = FlatVector::GetData<double>(*centroid_children[0]);
+		auto centroid_y_data = FlatVector::GetData<double>(*centroid_children[1]);
+
+		for (idx_t in_row_idx = 0; in_row_idx < count; in_row_idx++) {
+			if (format.validity.RowIsValid(in_row_idx)) {
+				auto poly = poly_entries[in_row_idx];
+				auto poly_offset = poly.offset;
+				auto poly_length = poly.length;
+
+				double poly_centroid_x = 0;
+				double poly_centroid_y = 0;
+				double poly_area = 0;
+
+				// To calculate the centroid of a polygon, we calculate the centroid of each ring
+				// and then weight the ring centroids by the area of the ring.
+				// The final centroid is the sum of the weighted ring centroids divided by the total area.
+				for (idx_t ring_idx = poly_offset; ring_idx < poly_offset + poly_length; ring_idx++) {
+					auto ring = ring_entries[ring_idx];
+					auto ring_offset = ring.offset;
+					auto ring_length = ring.length;
+
+					double ring_centroid_x = 0;
+					double ring_centroid_y = 0;
+					double ring_area = 0;
+
+					// To calculate the centroid of a ring, we calculate the centroid of each triangle
+					// and then weight the triangle centroids by the area of the triangle.
+					// The final centroid is the sum of the weighted triangle centroids divided by the ring area.
+					for (idx_t coord_idx = ring_offset; coord_idx < ring_offset + ring_length - 1; coord_idx++) {
+						auto x1 = x_data[coord_idx];
+						auto y1 = y_data[coord_idx];
+						auto x2 = x_data[coord_idx + 1];
+						auto y2 = y_data[coord_idx + 1];
+
+						auto tri_area = (x1 * y2) - (x2 * y1);
+						ring_centroid_x += (x1 + x2) * tri_area;
+						ring_centroid_y += (y1 + y2) * tri_area;
+						ring_area += tri_area;
+					}
+					ring_area *= 0.5;
+
+					ring_centroid_x /= (ring_area * 6);
+					ring_centroid_y /= (ring_area * 6);
+
+					if (ring_idx == poly_offset) {
+						// The first ring is the outer ring, and the remaining rings are holes.
+						// For the outer ring, we add the area and centroid to the total area and centroid.
+						poly_area += ring_area;
+						poly_centroid_x += ring_centroid_x * ring_area;
+						poly_centroid_y += ring_centroid_y * ring_area;
+					} else {
+						// For holes, we subtract the area and centroid from the total area and centroid.
+						poly_area -= ring_area;
+						poly_centroid_x -= ring_centroid_x * ring_area;
+						poly_centroid_y -= ring_centroid_y * ring_area;
+					}
+				}
+				centroid_x_data[in_row_idx] = poly_centroid_x / poly_area;
+				centroid_y_data[in_row_idx] = poly_centroid_y / poly_area;
+			} else {
+				FlatVector::SetNull(result, in_row_idx, true);
+			}
+		}
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// BOX_2D/F
+	//------------------------------------------------------------------------------------------------------------------
+	template<class T>
+	static void ExecuteBox(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto input = args.data[0];
+		auto count = args.size();
+		UnifiedVectorFormat format;
+		input.ToUnifiedFormat(count, format);
+		auto &box_children = StructVector::GetEntries(input);
+		auto minx_data = FlatVector::GetData<T>(*box_children[0]);
+		auto miny_data = FlatVector::GetData<T>(*box_children[1]);
+		auto maxx_data = FlatVector::GetData<T>(*box_children[2]);
+		auto maxy_data = FlatVector::GetData<T>(*box_children[3]);
+
+		auto &centroid_children = StructVector::GetEntries(result);
+		auto centroid_x_data = FlatVector::GetData<double>(*centroid_children[0]);
+		auto centroid_y_data = FlatVector::GetData<double>(*centroid_children[1]);
+
+		for (idx_t out_row_idx = 0; out_row_idx < count; out_row_idx++) {
+			auto in_row_idx = format.sel->get_index(out_row_idx);
+			if (format.validity.RowIsValid(in_row_idx)) {
+				centroid_x_data[out_row_idx] = (minx_data[in_row_idx] + maxx_data[in_row_idx]) * 0.5;
+				centroid_y_data[out_row_idx] = (miny_data[in_row_idx] + maxy_data[in_row_idx]) * 0.5;
+			} else {
+				FlatVector::SetNull(result, out_row_idx, true);
+			}
+		}
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	// TODO: add example & desc
+	static constexpr auto DESCRIPTION = "";
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Centroid", [&](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("point", GeoTypes::POINT_2D());
+				variant.SetReturnType(GeoTypes::POINT_2D());
+				variant.SetFunction(ExecutePoint);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("linestring", GeoTypes::LINESTRING_2D());
+				variant.SetReturnType(GeoTypes::POINT_2D());
+				variant.SetFunction(ExecuteLineString);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("polygon", GeoTypes::POLYGON_2D());
+				variant.SetReturnType(GeoTypes::POINT_2D());
+				variant.SetFunction(ExecutePolygon);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("box", GeoTypes::BOX_2D());
+				variant.SetReturnType(GeoTypes::POINT_2D());
+				variant.SetFunction(ExecuteBox<double>);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("box", GeoTypes::BOX_2DF());
+				variant.SetReturnType(GeoTypes::POINT_2D());
+				variant.SetFunction(ExecuteBox<float>);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
 	}
 };
 
@@ -1618,12 +2173,333 @@ struct ST_ExteriorRing {
 // ST_FlipCoordinates
 //======================================================================================================================
 
-// TODO: Implement
 struct ST_FlipCoordinates {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// POINT_2D
+	//------------------------------------------------------------------------------------------------------------------
+	// TODO: We should be able to optimize these and avoid the flatten
+	static void ExecutePoint(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto input = args.data[0];
+		auto count = args.size();
+
+		// TODO: Avoid flatten
+		input.Flatten(count);
+
+		auto &coords_in = StructVector::GetEntries(input);
+		auto x_data_in = FlatVector::GetData<double>(*coords_in[0]);
+		auto y_data_in = FlatVector::GetData<double>(*coords_in[1]);
+
+		auto &coords_out = StructVector::GetEntries(result);
+		auto x_data_out = FlatVector::GetData<double>(*coords_out[0]);
+		auto y_data_out = FlatVector::GetData<double>(*coords_out[1]);
+
+		memcpy(x_data_out, y_data_in, count * sizeof(double));
+		memcpy(y_data_out, x_data_in, count * sizeof(double));
+
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// LINESTRING_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteLineString(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto input = args.data[0];
+		auto count = args.size();
+
+		// TODO: Avoid flatten
+		input.Flatten(count);
+
+		auto coord_vec_in = ListVector::GetEntry(input);
+		auto &coords_in = StructVector::GetEntries(coord_vec_in);
+		auto x_data_in = FlatVector::GetData<double>(*coords_in[0]);
+		auto y_data_in = FlatVector::GetData<double>(*coords_in[1]);
+
+		auto coord_count = ListVector::GetListSize(input);
+		ListVector::Reserve(result, coord_count);
+		ListVector::SetListSize(result, coord_count);
+
+		auto line_entries_in = ListVector::GetData(input);
+		auto line_entries_out = ListVector::GetData(result);
+		memcpy(line_entries_out, line_entries_in, count * sizeof(list_entry_t));
+
+		auto coord_vec_out = ListVector::GetEntry(result);
+		auto &coords_out = StructVector::GetEntries(coord_vec_out);
+		auto x_data_out = FlatVector::GetData<double>(*coords_out[0]);
+		auto y_data_out = FlatVector::GetData<double>(*coords_out[1]);
+
+		memcpy(x_data_out, y_data_in, coord_count * sizeof(double));
+		memcpy(y_data_out, x_data_in, coord_count * sizeof(double));
+
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// POLYGON_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto input = args.data[0];
+		auto count = args.size();
+
+		// TODO: Avoid flatten
+		input.Flatten(count);
+
+		auto ring_vec_in = ListVector::GetEntry(input);
+		auto ring_count = ListVector::GetListSize(input);
+
+		auto coord_vec_in = ListVector::GetEntry(ring_vec_in);
+		auto &coords_in = StructVector::GetEntries(coord_vec_in);
+		auto x_data_in = FlatVector::GetData<double>(*coords_in[0]);
+		auto y_data_in = FlatVector::GetData<double>(*coords_in[1]);
+
+		auto coord_count = ListVector::GetListSize(ring_vec_in);
+
+		ListVector::Reserve(result, ring_count);
+		ListVector::SetListSize(result, ring_count);
+		auto ring_vec_out = ListVector::GetEntry(result);
+		ListVector::Reserve(ring_vec_out, coord_count);
+		ListVector::SetListSize(ring_vec_out, coord_count);
+
+		auto ring_entries_in = ListVector::GetData(input);
+		auto ring_entries_out = ListVector::GetData(result);
+		memcpy(ring_entries_out, ring_entries_in, count * sizeof(list_entry_t));
+
+		auto coord_entries_in = ListVector::GetData(ring_vec_in);
+		auto coord_entries_out = ListVector::GetData(ring_vec_out);
+		memcpy(coord_entries_out, coord_entries_in, ring_count * sizeof(list_entry_t));
+
+		auto coord_vec_out = ListVector::GetEntry(ring_vec_out);
+		auto &coords_out = StructVector::GetEntries(coord_vec_out);
+		auto x_data_out = FlatVector::GetData<double>(*coords_out[0]);
+		auto y_data_out = FlatVector::GetData<double>(*coords_out[1]);
+
+		memcpy(x_data_out, y_data_in, coord_count * sizeof(double));
+		memcpy(y_data_out, x_data_in, coord_count * sizeof(double));
+
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// BOX_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteBox(DataChunk &args, ExpressionState &state, Vector &result) {
+
+		auto input = args.data[0];
+		auto count = args.size();
+
+		// TODO: Avoid flatten
+		input.Flatten(count);
+
+		auto &children_in = StructVector::GetEntries(input);
+		auto min_x_in = FlatVector::GetData<double>(*children_in[0]);
+		auto min_y_in = FlatVector::GetData<double>(*children_in[1]);
+		auto max_x_in = FlatVector::GetData<double>(*children_in[2]);
+		auto max_y_in = FlatVector::GetData<double>(*children_in[3]);
+
+		auto &children_out = StructVector::GetEntries(result);
+		auto min_x_out = FlatVector::GetData<double>(*children_out[0]);
+		auto min_y_out = FlatVector::GetData<double>(*children_out[1]);
+		auto max_x_out = FlatVector::GetData<double>(*children_out[2]);
+		auto max_y_out = FlatVector::GetData<double>(*children_out[3]);
+
+		memcpy(min_x_out, min_y_in, count * sizeof(double));
+		memcpy(min_y_out, min_x_in, count * sizeof(double));
+		memcpy(max_x_out, max_y_in, count * sizeof(double));
+		memcpy(max_y_out, max_x_in, count * sizeof(double));
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	// TODO: Move this to SGL, make non-recursive
+	static void FlipPoint(ArenaAllocator &alloc, sgl::geometry *geom) {
+		if(!geom->is_empty()) {
+			const auto vertex_count = geom->get_count();
+			const auto vertex_size = geom->get_vertex_size();
+			const auto vertex_data = geom->get_vertex_data();
+
+			// Copy the vertex data
+			const auto new_vertex_data = alloc.AllocateAligned(vertex_count * vertex_size);
+			memcpy(new_vertex_data, vertex_data, vertex_count * vertex_size);
+
+			// Flip the x and y coordinates
+			const auto vertex_ptr = reinterpret_cast<double*>(new_vertex_data);
+			std::swap(vertex_ptr[0], vertex_ptr[1]);
+
+			// Update the vertex data
+			geom->set_vertex_data(new_vertex_data, 1);
+		}
+	}
+
+	static void FlipLineString(ArenaAllocator &alloc, sgl::geometry *geom) {
+		if(!geom->is_empty()) {
+			const auto vertex_count = geom->get_count();
+			const auto vertex_size = geom->get_vertex_size();
+			const auto vertex_data = geom->get_vertex_data();
+
+			// Copy the vertex data
+			const auto new_vertex_data = alloc.AllocateAligned(vertex_count * vertex_size);
+			memcpy(new_vertex_data, vertex_data, vertex_count * vertex_size);
+
+			// Flip the x and y coordinates
+			for(idx_t i = 0; i < vertex_count; i++) {
+				const auto x_ptr = reinterpret_cast<double*>(new_vertex_data + i * vertex_size);
+				const auto y_ptr = reinterpret_cast<double*>(new_vertex_data + i * vertex_size + sizeof(double));
+
+				std::swap(*x_ptr, *y_ptr);
+			}
+
+			// Update the vertex data
+			geom->set_vertex_data(new_vertex_data, vertex_count);
+		}
+	}
+
+	static void FlipPolygon(ArenaAllocator &alloc, sgl::geometry *geom) {
+		const auto tail = geom->get_last_part();
+		auto head = tail;
+		if(head) {
+			do {
+				head = head->get_next();
+				FlipLineString(alloc, head);
+			} while(head != tail);
+		}
+	}
+
+	static void FlipRecursive(ArenaAllocator &alloc, sgl::geometry *geom) {
+		switch(geom->get_type()) {
+			case sgl::geometry_type::POINT: FlipPoint(alloc, geom); break;
+			case sgl::geometry_type::LINESTRING: FlipLineString(alloc, geom); break;
+			case sgl::geometry_type::POLYGON: FlipPolygon(alloc, geom); break;
+			case sgl::geometry_type::MULTI_POINT: {
+				const auto tail = geom->get_last_part();
+				auto head = tail;
+				if(head) {
+					do {
+						FlipPoint(alloc, head);
+						head = head->get_next();
+					} while(head != tail);
+				}
+			} break;
+			case sgl::geometry_type::MULTI_LINESTRING: {
+				const auto tail = geom->get_last_part();
+				auto head = tail;
+				if(head) {
+					do {
+						FlipLineString(alloc, head);
+						head = head->get_next();
+					} while(head != tail);
+				}
+			} break;
+			case sgl::geometry_type::MULTI_POLYGON: {
+				const auto tail = geom->get_last_part();
+				auto head = tail;
+				if(head) {
+					do {
+						FlipPolygon(alloc, head);
+						head = head->get_next();
+					} while(head != tail);
+				}
+			} break;
+			case sgl::geometry_type::MULTI_GEOMETRY: {
+				const auto tail = geom->get_last_part();
+				auto head = tail;
+				if(head) {
+					do {
+						FlipRecursive(alloc, head);
+						head = head->get_next();
+					} while(head != tail);
+				}
+			} break;
+			default:
+				D_ASSERT(false);
+				break;
+		}
+	}
+
+
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
+
+		auto input = args.data[0];
+		auto count = args.size();
+
+		UnaryExecutor::Execute<string_t, string_t>(input, result, count, [&](const string_t &blob) {
+			// This is pretty memory intensive, so reset arena after each call
+			auto &lstate = LocalState::ResetAndGet(state);
+			auto &arena = lstate.GetArena();
+
+			// Deserialize the geometry
+			auto geom = lstate.Deserialize(blob);
+			// Flip the coordinates
+			FlipRecursive(arena, &geom);
+
+			// Serialize the result
+			return lstate.Serialize(result, geom);
+		});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Description
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Returns a new geometry with the coordinates of the input geometry "flipped" so that x = y and y = x
+	)";
+
+	// TODO: Add example
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_FlipCoordinates", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteGeometry);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("point", GeoTypes::POINT_2D());
+				variant.SetReturnType(GeoTypes::POINT_2D());
+
+				variant.SetFunction(ExecutePoint);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("linestring", GeoTypes::LINESTRING_2D());
+				variant.SetReturnType(GeoTypes::LINESTRING_2D());
+
+				variant.SetFunction(ExecuteLineString);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("polygon", GeoTypes::POLYGON_2D());
+				variant.SetReturnType(GeoTypes::POLYGON_2D());
+
+				variant.SetFunction(ExecutePolygon);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("box", GeoTypes::BOX_2D());
+				variant.SetReturnType(GeoTypes::BOX_2D());
+
+				variant.SetFunction(ExecuteBox);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
 	}
 };
 
@@ -4491,17 +5367,15 @@ struct ST_MMin : VertexAggFunctionBase<ST_MMin, VertexMinAggOp> {
 void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Area::Register(db);
 
-	// 9 functions to go!
-	/*
+	// 8 functions to go!
 	ST_AsGeoJSON::Register(db);
+	/*
 	ST_AsText::Register(db);
 	ST_AsWKB::Register(db);
 	ST_AsHEXWKB::Register(db);
 	*/
 	ST_AsSVG::Register(db);
-	/*
-	ST_Centroid::Register(db); - not applicable now
-	*/
+	ST_Centroid::Register(db);
 	ST_Collect::Register(db);
 	ST_CollectionExtract::Register(db);
 	// ST_Contains::Register(db); - not applicable now
@@ -4513,9 +5387,7 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_EndPoint::Register(db);
 	ST_Extent::Register(db);
 	ST_ExteriorRing::Register(db);
-	/*
 	ST_FlipCoordinates::Register(db);
-	*/
 	ST_Force2D::Register(db);
 	ST_Force3DZ::Register(db);
 	ST_Force3DM::Register(db);

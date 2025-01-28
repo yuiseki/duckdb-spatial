@@ -31,6 +31,22 @@ struct vertex_xy {
 	bool operator==(const vertex_xy &other) const {
 		return x == other.x && y == other.y;
 	}
+
+	vertex_xy operator-(const vertex_xy &other) const {
+        return {x - other.x, y - other.y};
+    }
+
+	vertex_xy operator+(const vertex_xy &other) const {
+        return {x + other.x, y + other.y};
+    }
+
+    vertex_xy operator*(double scalar) const {
+        return {x * scalar, y * scalar};
+    }
+
+    vertex_xy operator/(double scalar) const {
+        return {x / scalar, y / scalar};
+    }
 };
 
 struct vertex_xyzm {
@@ -42,6 +58,22 @@ struct vertex_xyzm {
 	bool operator==(const vertex_xyzm &other) const {
 		return x == other.x && y == other.y && zm == other.zm && m == other.m;
 	}
+
+	vertex_xyzm operator-(const vertex_xyzm &other) const {
+        return {x - other.x, y - other.y, zm - other.zm, m - other.m};
+    }
+
+	vertex_xyzm operator+(const vertex_xyzm &other) const {
+        return {x + other.x, y + other.y, zm + other.zm, m + other.m};
+    }
+
+    vertex_xyzm operator*(double scalar) const {
+        return {x * scalar, y * scalar, zm * scalar, m * scalar};
+    }
+
+    vertex_xyzm operator/(double scalar) const {
+        return {x / scalar, y / scalar, zm / scalar, m / scalar};
+    }
 };
 
 struct box_xy {
@@ -844,55 +876,47 @@ inline bool try_get_extent_xy(const geometry *geom, box_xy *out) {
 	}
 }
 
+// Result for visit action
+enum SGL_VISIT_RESULT {
+	// Continue the traversal, recurse down into child parts
+	SGL_VISIT_CONT = 0,
+	// Stop the traversal immediately
+	SGL_VISIT_EXIT = 1,
+	// Continue the traversal, but skip the current part and dont recurse down
+	SGL_VISIT_SKIP = 2,
+};
+
 struct visit_callbacks {
 	// Return false to stop the traversal
-	bool (*on_point)(void* state, const geometry *geom) = nullptr;
-	bool (*on_linestring)(void* state, const geometry *geom) = nullptr;
-	bool (*on_ring)(void* state, const geometry *geom) = nullptr;
-	bool (*on_polygon)(void* state, const geometry *geom) = nullptr;
-	bool (*on_polygon_end)(void* state, const geometry *geom) = nullptr;
-	bool (*on_multi_point)(void* state, const geometry *geom) = nullptr;
-	bool (*on_multi_linestring)(void* state, const geometry *geom) = nullptr;
-	bool (*on_multi_polygon)(void* state, const geometry *geom) = nullptr;
-	bool (*on_multi_geometry)(void* state, const geometry *geom) = nullptr;
-	bool (*on_multi_point_end)(void* state, const geometry *geom) = nullptr;
-	bool (*on_multi_linestring_end)(void* state, const geometry *geom) = nullptr;
-	bool (*on_multi_polygon_end)(void* state, const geometry *geom) = nullptr;
-	bool (*on_multi_geometry_end)(void* state, const geometry *geom) = nullptr;
+	SGL_VISIT_RESULT (*on_enter_part)(void *state, const geometry *part, const geometry *parent) = nullptr;
+	SGL_VISIT_RESULT (*on_leave_part)(void *state, const geometry *part, const geometry *parent) = nullptr;
 };
 
 inline void visit(const geometry *geom, const geometry *root, const visit_callbacks *visitor, void *state) {
 
-#define HANDLE_POINT(GEOM) if(visitor->on_point && !visitor->on_point(state, GEOM)) { return; }
-#define HANDLE_LINE(GEOM) if(visitor->on_linestring && !visitor->on_linestring(state, GEOM)) { return; }
-#define HANDLE_RING(GEOM) if(visitor->on_ring && !visitor->on_ring(state, GEOM)) { return; }
-
-#define HANDLE_POLY_BEG(GEOM) if(visitor->on_polygon && !visitor->on_polygon(state, GEOM)) { return; }
-#define HANDLE_POLY_END(GEOM) if(visitor->on_polygon_end && !visitor->on_polygon_end(state, GEOM)) { return; }
-#define HANDLE_MULTI_POINT_BEG(GEOM) if(visitor->on_multi_point && !visitor->on_multi_point(state, GEOM)) { return; }
-#define HANDLE_MULTI_POINT_END(GEOM) if(visitor->on_multi_point_end && !visitor->on_multi_point_end(state, GEOM)) { return; }
-#define HANDLE_MULTI_LINE_BEG(GEOM) if(visitor->on_multi_linestring && !visitor->on_multi_linestring(state, GEOM)) { return; }
-#define HANDLE_MULTI_LINE_END(GEOM) if(visitor->on_multi_linestring_end && !visitor->on_multi_linestring_end(state, GEOM)) { return; }
-#define HANDLE_MULTI_POLY_BEG(GEOM) if(visitor->on_multi_polygon && !visitor->on_multi_polygon(state, GEOM)) { return; }
-#define HANDLE_MULTI_POLY_END(GEOM) if(visitor->on_multi_polygon_end && !visitor->on_multi_polygon_end(state, GEOM)) { return; }
-#define HANDLE_MULTI_GEOM_BEG(GEOM) if(visitor->on_multi_geometry && !visitor->on_multi_geometry(state, GEOM)) { return; }
-#define HANDLE_MULTI_GEOM_END(GEOM) if(visitor->on_multi_geometry_end && !visitor->on_multi_geometry_end(state, GEOM)) { return; }
+#define HANDLE_ENTER_PART(PART, PARENT) if(visitor->on_enter_part) { SGL_VISIT_RESULT res = visitor->on_enter_part(state, PART, PARENT); if(res == SGL_VISIT_EXIT) { return; } else if(res == SGL_VISIT_SKIP) { break; } }
+#define HANDLE_LEAVE_PART(PART, PARENT) if(visitor->on_leave_part) { SGL_VISIT_RESULT res = visitor->on_leave_part(state, PART, PARENT); if(res == SGL_VISIT_EXIT) { return; } else if(res == SGL_VISIT_SKIP) { break; } }
+#define HANDLE_ENTER_CHILD_PART(PART, PARENT) if(visitor->on_enter_part) { SGL_VISIT_RESULT res = visitor->on_enter_part(state, PART, PARENT); if(res == SGL_VISIT_EXIT) { return; } else if(res == SGL_VISIT_SKIP) { continue; } }
+#define HANDLE_LEAVE_CHILD_PART(PART, PARENT) if(visitor->on_leave_part) { SGL_VISIT_RESULT res = visitor->on_leave_part(state, PART, PARENT); if(res == SGL_VISIT_EXIT) { return; } else if(res == SGL_VISIT_SKIP) { continue; } }
 
 	auto part = geom;
 	if(part == nullptr) {
 		return;
 	}
 
+	auto parent = part->get_parent();
+
 	while(true) {
 		switch(part->get_type()) {
-		case geometry_type::POINT: {
-			HANDLE_POINT(part);
-		} break;
-		case geometry_type::LINESTRING: {
-			HANDLE_LINE(part);
-		} break;
+		case geometry_type::POINT:
+		case geometry_type::LINESTRING:{
+			HANDLE_ENTER_PART(part, parent);
+			HANDLE_LEAVE_PART(part, parent);
+		}
+		break;
 		case geometry_type::POLYGON: {
-			HANDLE_POLY_BEG(part);
+
+			HANDLE_ENTER_PART(part, parent);
 
 			const auto tail = part->get_last_part();
 			if(tail != nullptr) {
@@ -903,15 +927,16 @@ inline void visit(const geometry *geom, const geometry *root, const visit_callba
 
 					head = head->get_next();
 
-					HANDLE_RING(head);
+					HANDLE_ENTER_CHILD_PART(head, part);
+					HANDLE_LEAVE_CHILD_PART(head, part);
 
 				} while(head != tail);
 			}
 
-			HANDLE_POLY_END(part);
+			HANDLE_LEAVE_PART(part, parent);
 		} break;
 		case geometry_type::MULTI_POINT: {
-			HANDLE_MULTI_POINT_BEG(part);
+			HANDLE_ENTER_PART(part, parent);
 
 			const auto tail = part->get_last_part();
 			if(tail != nullptr) {
@@ -922,16 +947,17 @@ inline void visit(const geometry *geom, const geometry *root, const visit_callba
 
 					head = head->get_next();
 
-					HANDLE_POINT(head);
+					HANDLE_ENTER_CHILD_PART(head, part);
+					HANDLE_LEAVE_CHILD_PART(head, part);
 
 				} while(head != tail);
 
 			}
-			HANDLE_MULTI_POINT_END(part);
+			HANDLE_LEAVE_PART(part, parent);
 
 		} break;
 		case geometry_type::MULTI_LINESTRING: {
-			HANDLE_MULTI_LINE_BEG(part);
+			HANDLE_ENTER_PART(part, parent);
 
 			const auto tail = part->get_last_part();
 			if(tail != nullptr) {
@@ -942,15 +968,16 @@ inline void visit(const geometry *geom, const geometry *root, const visit_callba
 
 					head = head->get_next();
 
-					HANDLE_LINE(head);
+					HANDLE_ENTER_CHILD_PART(head, part);
+					HANDLE_LEAVE_CHILD_PART(head, part);
 
 				} while(head != tail);
 			}
 
-			HANDLE_MULTI_LINE_END(part);
+			HANDLE_LEAVE_PART(part, parent);
 		} break;
 		case geometry_type::MULTI_POLYGON: {
-			HANDLE_MULTI_POLY_BEG(part);
+			HANDLE_ENTER_PART(part, parent);
 
 			const auto tail = part->get_last_part();
 			if(tail != nullptr) {
@@ -961,7 +988,7 @@ inline void visit(const geometry *geom, const geometry *root, const visit_callba
 
 					head = head->get_next();
 
-					HANDLE_POLY_BEG(head);
+					HANDLE_ENTER_CHILD_PART(head, part);
 
 					const auto ring_tail = head->get_last_part();
 					if(ring_tail != nullptr) {
@@ -972,29 +999,31 @@ inline void visit(const geometry *geom, const geometry *root, const visit_callba
 
 							ring_head = ring_head->get_next();
 
-							HANDLE_RING(ring_head);
+							HANDLE_ENTER_CHILD_PART(ring_head, head);
+							HANDLE_LEAVE_CHILD_PART(ring_head, head);
 
 						} while(ring_head != ring_tail);
 					}
 
-					HANDLE_POLY_END(head);
+					HANDLE_LEAVE_CHILD_PART(head, part);
 
 				} while(head != part->get_last_part());
 			}
 
-			HANDLE_MULTI_POLY_END(part);
+			HANDLE_LEAVE_PART(part, parent);
 		} break;
 		case geometry_type::MULTI_GEOMETRY: {
-			HANDLE_MULTI_GEOM_BEG(part);
+			HANDLE_ENTER_PART(part, parent);
 			if(!part->is_empty()) {
 				// Recurse down
 				part = part->get_first_part();
 				continue;
 			}
 			// Otherwise, end the multi geometry
-			HANDLE_MULTI_GEOM_END(part);
+			HANDLE_LEAVE_PART(part, parent);
 		} break;
 		default: {
+			// Unknown type!
 			SGL_ASSERT(false);
 			return;
 		}
@@ -1002,7 +1031,6 @@ inline void visit(const geometry *geom, const geometry *root, const visit_callba
 
 		// Now go up/sideways
 		while(true) {
-			const auto parent = part->get_parent();
 
 			if(parent == root) {
 				return;
@@ -1019,28 +1047,20 @@ inline void visit(const geometry *geom, const geometry *root, const visit_callba
 
 			// Go up
 			part = parent;
+			parent = part->get_parent();
 
 			SGL_ASSERT(part->get_type() == geometry_type::MULTI_GEOMETRY);
 
 			// We just visited the last child of a multi geometry. We should end it.
-			HANDLE_MULTI_GEOM_END(part);
+			// we use LEAVE_CHILD_PART here to trigger a continue in case we skip.
+			HANDLE_LEAVE_CHILD_PART(part, parent);
 		}
 	}
 
-#undef HANDLE_POINT
-#undef HANDLE_LINE
-#undef HANDLE_RING
-#undef HANDLE_POLY_BEG
-#undef HANDLE_POLY_END
-#undef HANDLE_MULTI_POINT_BEG
-#undef HANDLE_MULTI_POINT_END
-#undef HANDLE_MULTI_LINE_BEG
-#undef HANDLE_MULTI_LINE_END
-#undef HANDLE_MULTI_POLY_BEG
-#undef HANDLE_MULTI_POLY_END
-#undef HANDLE_MULTI_GEOM_BEG
-#undef HANDLE_MULTI_GEOM_END
-
+#undef HANDLE_ENTER_PART
+#undef HANDLE_LEAVE_PART
+#undef HANDLE_ENTER_CHILD_PART
+#undef HANDLE_LEAVE_CHILD_PART
 }
 
 } // namespace ops
