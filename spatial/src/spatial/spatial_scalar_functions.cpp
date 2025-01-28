@@ -6,8 +6,11 @@
 
 #define SGL_ASSERT(x) D_ASSERT(x)
 #include "sgl/sgl.hpp"
-
+#include "spatial/core/functions/cast.hpp"
+#include "spatial/core/geometry/wkb_writer.hpp"
 #include "yyjson.h"
+
+#include <duckdb/common/types/blob.hpp>
 
 namespace spatial {
 namespace core {
@@ -969,39 +972,240 @@ struct ST_AsGeoJSON {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_AsText
-//----------------------------------------------------------------------------------------------------------------------
-// TODO: implement
+//======================================================================================================================
+
 struct ST_AsText {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// POINT_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecutePoint(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 1);
+		auto &input = args.data[0];
+		auto count = args.size();
+		CoreVectorOperations::Point2DToVarchar(input, result, count);
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// LINESTRING_2D
+	//------------------------------------------------------------------------------------------------------------------
+	// TODO: We want to format these to trim trailing zeros
+	static void ExecuteLineString(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 1);
+		auto &input = args.data[0];
+		auto count = args.size();
+		CoreVectorOperations::LineString2DToVarchar(input, result, count);
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// POLYGON_2D
+	//------------------------------------------------------------------------------------------------------------------
+	// TODO: We want to format these to trim trailing zeros
+	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 1);
+		auto count = args.size();
+		auto &input = args.data[0];
+		CoreVectorOperations::Polygon2DToVarchar(input, result, count);
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// BOX_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteBox(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 1);
+		auto count = args.size();
+		auto &input = args.data[0];
+		CoreVectorOperations::Box2DToVarchar(input, result, count);
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	// TODO: Move this to SGL once we have proper double formatting
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 1);
+		auto count = args.size();
+		auto &input = args.data[0];
+		CoreVectorOperations::GeometryToVarchar(input, result, count);
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr const char *DESCRIPTION = R"(
+		Returns the geometry as a WKT string
+	)";
+
+	static constexpr const char *EXAMPLE = R"(
+		SELECT ST_AsText(ST_MakeEnvelope(0,0,1,1));
+		----
+		POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))
+	)";
+
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_AsText", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::VARCHAR);
+
+				variant.SetFunction(ExecuteGeometry);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("point", GeoTypes::POINT_2D());
+				variant.SetReturnType(LogicalType::VARCHAR);
+
+				variant.SetFunction(ExecutePoint);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("linestring", GeoTypes::LINESTRING_2D());
+				variant.SetReturnType(LogicalType::VARCHAR);
+
+				variant.SetFunction(ExecuteLineString);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("polygon", GeoTypes::POLYGON_2D());
+				variant.SetReturnType(LogicalType::VARCHAR);
+
+				variant.SetFunction(ExecutePolygon);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("box", GeoTypes::BOX_2D());
+				variant.SetReturnType(LogicalType::VARCHAR);
+
+				variant.SetFunction(ExecuteBox);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "conversion");
+		});
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_AsWKB
-//----------------------------------------------------------------------------------------------------------------------
-// TODO: implement
+//======================================================================================================================
+
 struct ST_AsWKB {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
+			[&](const string_t &input) {
+				return WKBWriter::Write(input, result);
+			});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = "Returns the geometry as a WKB (Well-Known-Binary) blob";
+	static constexpr auto EXAMPLE = R"(
+		SELECT ST_AsWKB('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'::GEOMETRY)::BLOB;
+		----
+		\x01\x03\x00\x00\x00\x01\x00\x00\x00\x05...
+	)";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_AsWKB", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::WKB_BLOB());
+
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "conversion");
+		});
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_AsHEXWKB
-//----------------------------------------------------------------------------------------------------------------------
-// TODO: implement
+//======================================================================================================================
+
 struct ST_AsHEXWKB {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		vector<data_t> buffer;
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
+			buffer.clear();
+
+			WKBWriter::Write(blob, buffer);
+
+			auto blob_size = buffer.size() * 2; // every byte is rendered as two characters
+			auto blob_str = StringVector::EmptyString(result, blob_size);
+			auto blob_ptr = blob_str.GetDataWriteable();
+
+			idx_t str_idx = 0;
+			for (auto byte : buffer) {
+				auto byte_a = byte >> 4;
+				auto byte_b = byte & 0x0F;
+				blob_ptr[str_idx++] = Blob::HEX_TABLE[byte_a];
+				blob_ptr[str_idx++] = Blob::HEX_TABLE[byte_b];
+			}
+
+			blob_str.Finalize();
+			return blob_str;
+		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr const char *DESCRIPTION = R"(
+		Returns the geometry as a HEXWKB string
+	)";
+
+	static constexpr const char *EXAMPLE = R"(
+		SELECT ST_AsHexWKB('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'::geometry);
+		----
+		01030000000100000005000000000000000000000000000...
+	)";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_AsHEXWKB", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::VARCHAR);
+
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "conversion");
+		});
 	}
 };
 
@@ -5367,13 +5571,11 @@ struct ST_MMin : VertexAggFunctionBase<ST_MMin, VertexMinAggOp> {
 void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Area::Register(db);
 
-	// 8 functions to go!
+	// 4 functions to go!
 	ST_AsGeoJSON::Register(db);
-	/*
 	ST_AsText::Register(db);
 	ST_AsWKB::Register(db);
 	ST_AsHEXWKB::Register(db);
-	*/
 	ST_AsSVG::Register(db);
 	ST_Centroid::Register(db);
 	ST_Collect::Register(db);

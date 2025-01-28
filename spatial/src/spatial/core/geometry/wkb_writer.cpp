@@ -150,12 +150,22 @@ string_t WKBWriter::Write(const geometry_t &geometry, Vector &result) {
 	return blob;
 }
 
+string_t WKBWriter::Write(const string_t &geometry, Vector &result) {
+	const geometry_t geom(geometry);
+	return Write(geom, result);
+}
+
 void WKBWriter::Write(const geometry_t &geometry, vector<data_t> &buffer) {
 	WKBSizeCalculator size_processor;
 	WKBSerializer serializer;
 	auto size = size_processor.Execute(geometry);
 	buffer.resize(size);
 	serializer.Execute(geometry, buffer.data(), buffer.data() + size);
+}
+
+void WKBWriter::Write(const string_t &geometry, vector<data_t> &buffer) {
+	const geometry_t geom(geometry);
+	Write(geom, buffer);
 }
 
 const_data_ptr_t WKBWriter::Write(const geometry_t &geometry, uint32_t *size, ArenaAllocator &allocator) {
