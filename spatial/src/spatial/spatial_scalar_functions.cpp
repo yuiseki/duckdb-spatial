@@ -15,9 +15,9 @@
 namespace spatial {
 namespace core {
 
-//------------------------------------------------------------------------------
+//######################################################################################################################
 // Util
-//------------------------------------------------------------------------------
+//######################################################################################################################
 
 class BinaryReader {
 public:
@@ -445,9 +445,9 @@ void Serde::Deserialize(sgl::geometry &result, ArenaAllocator &arena, const char
 	DeserializeRecursive(cursor, result, has_z, has_m, arena);
 }
 
-//------------------------------------------------------------------------------
+//----------------------------------------------------------------------------------------------------------------------
 // LocalState
-//------------------------------------------------------------------------------
+//----------------------------------------------------------------------------------------------------------------------
 
 namespace {
 
@@ -1906,14 +1906,163 @@ struct ST_CollectionExtract {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_Contains
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_Contains {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// POINT_2D -> POLYGON_2D
+	//------------------------------------------------------------------------------------------------------------------
+	// TODO: This should probably be revised. Im not sure if the current implementation is entirely accurate
+
+	static void Operation(Vector &in_point, Vector &in_polygon, Vector &result, idx_t count) {
+		enum class Side { LEFT, RIGHT, ON };
+
+		in_polygon.Flatten(count);
+		in_point.Flatten(count);
+
+		// Setup point vectors
+		auto &p_children = StructVector::GetEntries(in_point);
+		auto p_x_data = FlatVector::GetData<double>(*p_children[0]);
+		auto p_y_data = FlatVector::GetData<double>(*p_children[1]);
+
+		// Setup polygon vectors
+		auto polygon_entries = ListVector::GetData(in_polygon);
+		auto &ring_vec = ListVector::GetEntry(in_polygon);
+		auto ring_entries = ListVector::GetData(ring_vec);
+		auto &coord_vec = ListVector::GetEntry(ring_vec);
+		auto &coord_children = StructVector::GetEntries(coord_vec);
+		auto x_data = FlatVector::GetData<double>(*coord_children[0]);
+		auto y_data = FlatVector::GetData<double>(*coord_children[1]);
+
+		auto result_data = FlatVector::GetData<bool>(result);
+
+		for (idx_t polygon_idx = 0; polygon_idx < count; polygon_idx++) {
+			auto polygon = polygon_entries[polygon_idx];
+			auto polygon_offset = polygon.offset;
+			auto polygon_length = polygon.length;
+			bool first = true;
+
+			// does the point lie inside the polygon?
+			bool contains = false;
+
+			auto x = p_x_data[polygon_idx];
+			auto y = p_y_data[polygon_idx];
+
+			for (idx_t ring_idx = polygon_offset; ring_idx < polygon_offset + polygon_length; ring_idx++) {
+				auto ring = ring_entries[ring_idx];
+				auto ring_offset = ring.offset;
+				auto ring_length = ring.length;
+
+				auto x1 = x_data[ring_offset];
+				auto y1 = y_data[ring_offset];
+				int winding_number = 0;
+
+				for (idx_t coord_idx = ring_offset + 1; coord_idx < ring_offset + ring_length; coord_idx++) {
+					// foo foo foo
+					auto x2 = x_data[coord_idx];
+					auto y2 = y_data[coord_idx];
+
+					if (x1 == x2 && y1 == y2) {
+						x1 = x2;
+						y1 = y2;
+						continue;
+					}
+
+					auto y_min = std::min(y1, y2);
+					auto y_max = std::max(y1, y2);
+
+					if (y > y_max || y < y_min) {
+						x1 = x2;
+						y1 = y2;
+						continue;
+					}
+
+					auto side = Side::ON;
+					double side_v = ((x - x1) * (y2 - y1) - (x2 - x1) * (y - y1));
+					if (side_v == 0) {
+						side = Side::ON;
+					} else if (side_v < 0) {
+						side = Side::LEFT;
+					} else {
+						side = Side::RIGHT;
+					}
+
+					if (side == Side::ON &&
+					    (((x1 <= x && x < x2) || (x1 >= x && x > x2)) || ((y1 <= y && y < y2) || (y1 >= y && y > y2)))) {
+
+						// return Contains::ON_EDGE;
+						contains = false;
+						break;
+					} else if (side == Side::LEFT && (y1 < y && y <= y2)) {
+						winding_number++;
+					} else if (side == Side::RIGHT && (y2 <= y && y < y1)) {
+						winding_number--;
+					}
+
+					x1 = x2;
+					y1 = y2;
+				}
+				bool in_ring = winding_number != 0;
+				if (first) {
+					if (!in_ring) {
+						// if the first ring is not inside, then the point is not inside the polygon
+						contains = false;
+						break;
+					} else {
+						// if the first ring is inside, then the point is inside the polygon
+						// but might be inside a hole, so we continue
+						contains = true;
+					}
+				} else {
+					if (in_ring) {
+						// if the hole is inside, then the point is not inside the polygon
+						contains = false;
+						break;
+					} // else continue
+				}
+				first = false;
+			}
+			result_data[polygon_idx] = contains;
+		}
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
 	}
 
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		Operation(args.data[0], args.data[1], result, args.size());
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+
+	// TODO: Add example
+	static constexpr auto DESCRIPTION = "";
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Contains", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom1", GeoTypes::POLYGON_2D());
+				variant.AddParameter("geom2", GeoTypes::POINT_2D());
+				variant.SetReturnType(LogicalType::BOOLEAN);
+
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "relation");
+		});
 	}
 };
 
@@ -5323,6 +5472,55 @@ struct ST_EndPoint {
 	}
 };
 
+//======================================================================================================================
+// ST_Within
+//======================================================================================================================
+
+struct ST_Within {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// POINT_2D -> POLYGON_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &point_in = args.data[0];
+		auto &polygon_in = args.data[1];
+
+		// Just execute ST_Contains, but reversed
+		ST_Contains::Operation(point_in, polygon_in, result, args.size());
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	// TODO: add example
+	static constexpr auto DESCRIPTION = "";
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
+	static void Register(DatabaseInstance &db) {
+		// ST_Within is the inverse of ST_Contains
+		FunctionBuilder::RegisterScalar(db, "ST_Within", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom1", GeoTypes::POINT_2D());
+				variant.AddParameter("geom2", GeoTypes::POLYGON_2D());
+				variant.SetReturnType(LogicalType::BOOLEAN);
+
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "relation");
+		});
+	}
+};
+
+
+
 enum class VertexOrdinate { X, Y, Z, M };
 
 template <class OP>
@@ -5568,10 +5766,14 @@ struct ST_MMin : VertexAggFunctionBase<ST_MMin, VertexMinAggOp> {
 
 } // namespace
 
+//######################################################################################################################
+// Register
+//######################################################################################################################
+
 void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Area::Register(db);
 
-	// 4 functions to go!
+	// 7 functions to go!
 	ST_AsGeoJSON::Register(db);
 	ST_AsText::Register(db);
 	ST_AsWKB::Register(db);
@@ -5580,7 +5782,7 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Centroid::Register(db);
 	ST_Collect::Register(db);
 	ST_CollectionExtract::Register(db);
-	// ST_Contains::Register(db); - not applicable now
+	ST_Contains::Register(db);
 	ST_Dimension::Register(db);
 	/*
 	// ST_Distance::Register(db); -- not applicable now
@@ -5624,6 +5826,7 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_QuadKey::Register(db);
 	ST_RemoveRepeatedPoints::Register(db);
 	ST_StartPoint::Register(db);
+	ST_Within::Register(db);
 	ST_X::Register(db);
 	ST_XMax::Register(db);
 	ST_XMin::Register(db);
