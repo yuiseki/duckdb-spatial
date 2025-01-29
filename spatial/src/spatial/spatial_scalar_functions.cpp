@@ -919,7 +919,7 @@ struct ST_AsGeoJSON {
 			char *json_data = yyjson_mut_write_opts(doc, 0, allocator.GetYYJSONAllocator(), &json_size, nullptr);
 			// Because the arena allocator only resets after each pipeline invocation, we can safely just point into the
 			// arena here without needing to copy the data to the string heap with StringVector::AddString
-			return { json_data, json_size };
+			return string_t { json_data, static_cast<uint32_t>(json_size) };
 		});
 	}
 
@@ -2334,7 +2334,7 @@ struct ST_Dump {
 			vector<std::tuple<sgl::geometry*, vector<int32_t>>> stack;
 			vector<std::tuple<sgl::geometry*, vector<int32_t>>> items;
 
-			stack.emplace_back(geom, vector<int32_t>());
+			stack.emplace_back(&geom, vector<int32_t>());
 
 			while (!stack.empty()) {
 				auto current = stack.back();
@@ -3089,7 +3089,7 @@ struct ST_ForceBase {
 	// Register
 	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
-		FunctionBuilder::RegisterScalar([](ScalarFunctionBuilder &func) {
+		FunctionBuilder::RegisterScalar(db, IMPL::NAME, [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("geom", GeoTypes::GEOMETRY());
 				variant.SetReturnType(GeoTypes::GEOMETRY());
@@ -3496,7 +3496,15 @@ struct ST_GeomFromText {
 	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
+		auto &alloc = lstate.GetAllocator();
 
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &wkt) {
+			const auto geom = sgl::ops::from_wkt(&alloc, wkt.GetDataUnsafe(), wkt.GetSize());
+			if(geom.get_type() == sgl::geometry_type::INVALID) {
+				throw InvalidInputException("Invalid WKT data");
+			}
+			return lstate.Serialize(result, geom);
+		});
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -3556,7 +3564,7 @@ struct ST_GeomFromWKB {
 		auto &alloc = lstate.GetAllocator();
 		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &wkb) {
 
-			const auto geom = sgl::ops::from_wkb(&alloc, data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
+			const auto geom = sgl::ops::from_wkb(&alloc, const_data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
 
 			// TODO: Better error messages.
 			// We should be able to provide the actual name of the geometry type
@@ -3588,7 +3596,7 @@ struct ST_GeomFromWKB {
 		for(idx_t i = 0; i < count; i++) {
 			const auto &wkb = FlatVector::GetData<string_t>(input)[i];
 
-			const auto geom = sgl::ops::from_wkb(&alloc, data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
+			const auto geom = sgl::ops::from_wkb(&alloc, const_data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
 			if(geom.get_type() != sgl::geometry_type::POINT) {
 				throw InvalidInputException("ST_Point2DFromWKB: WKB is not a POINT");
 			}
@@ -3625,7 +3633,7 @@ struct ST_GeomFromWKB {
 		for (idx_t i = 0; i < count; i++) {
 			auto wkb = wkb_data[i];
 
-			const auto geom = sgl::ops::from_wkb(&alloc, data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
+			const auto geom = sgl::ops::from_wkb(&alloc, const_data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
 			if(geom.get_type() != sgl::geometry_type::LINESTRING) {
 				throw InvalidInputException("ST_LineString2DFromWKB: WKB is not a LINESTRING");
 			}
@@ -3685,7 +3693,7 @@ struct ST_GeomFromWKB {
 		for (idx_t i = 0; i < count; i++) {
 			auto wkb = wkb_data[i];
 
-			const auto geom = sgl::ops::from_wkb(&alloc, data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
+			const auto geom = sgl::ops::from_wkb(&alloc, const_data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
 			if(geom.get_type() != sgl::geometry_type::POLYGON) {
 				throw InvalidInputException("ST_Polygon2DFromWKB: WKB is not a POLYGON");
 			}
@@ -4189,7 +4197,7 @@ struct ST_Distance_Sphere {
 	)";
 
 	// TODO: Example
-	static constexpr auto EXAMPLE = R"";
+	static constexpr auto EXAMPLE = R"()";
 
 	//------------------------------------------------------------------------------------------------------------------
 	// Register
@@ -5909,7 +5917,7 @@ struct ST_RemoveRepeatedPoints {
 	)";
 
 	// TODO: example
-	static constexpr auto EXAMPLE = R"";
+	static constexpr auto EXAMPLE = R"()";
 
 	//------------------------------------------------------------------------------------------------------------------
 	// Register
@@ -6505,9 +6513,7 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Force4D::Register(db);
 	ST_GeometryType::Register(db);
 	ST_GeomFromHEXWKB::Register(db);
-	/*
 	ST_GeomFromText::Register(db);
-	*/
 	ST_GeomFromWKB::Register(db);
 	ST_HasZ::Register(db);
 	ST_HasM::Register(db);

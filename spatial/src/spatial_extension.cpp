@@ -94,12 +94,14 @@ namespace duckdb {
 
 static void LoadInternal(DatabaseInstance &instance) {
 	spatial::core::CoreModule::Register(instance);
+
+	spatial::core::CoreModule::RegisterSpatialFunctions(instance);
+
 	spatial::proj::ProjModule::Register(instance);
 	spatial::gdal::GdalModule::Register(instance);
 	spatial::geos::GeosModule::Register(instance);
 	spatial::geographiclib::GeographicLibModule::Register(instance);
 
-	spatial::core::CoreModule::RegisterSpatialFunctions(instance);
 }
 
 void SpatialExtension::Load(DuckDB &db) {

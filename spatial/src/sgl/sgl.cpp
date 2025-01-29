@@ -415,6 +415,10 @@ size_t to_wkb(const geometry *geom, uint8_t *buffer, size_t size) {
 #undef WKB_WRITE_DATA
 }
 
+//------------------------------------------------------------------------------
+// WKB Parsing
+//------------------------------------------------------------------------------
+
 struct wkb_reader {
 	const uint8_t* beg = nullptr;
 	const uint8_t* ptr = nullptr;
@@ -470,15 +474,23 @@ const uint8_t* wkb_reader_read_data(wkb_reader* reader, size_t size) {
 }
 
 geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size) {
+	return geometry(geometry_type::INVALID);
+}
+
+/*
+geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size) {
 
 	// Setup state
-	wkb_reader state = {0};
+	wkb_reader state;
 	state.beg = buffer;
 	state.ptr = buffer;
 	state.end = buffer + size;
+	state.le = false;
+	state.error = false;
 
 	uint32_t stack[256];
 	uint32_t depth = 0;
+	uint32_t remaining = 0;
 
 	geometry root;
 	geometry *geom = &root;
@@ -501,7 +513,7 @@ begin:
 	geom->set_z(has_z);
 	geom->set_m(has_m);
 
-	switch(geom) {
+	switch(geom->get_type()) {
 	case geometry_type::POINT: {
 		// Read the point data;
 		const auto data = WKB_READ_DATA(geom->get_vertex_size());
@@ -570,7 +582,7 @@ next:
 		goto done;
 	}
 
-	const auto remaining = stack[depth-1];
+	remaining = stack[depth-1];
 
 	if(remaining == 0) {
 		depth--;
@@ -578,10 +590,12 @@ next:
 		goto next;
 	}
 
-	auto new_geom = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
-	auto parent = geom->get_parent();
-	parent->append_part(new_geom);
-	geom = new_geom;
+	{
+		auto new_geom = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+		auto parent = geom->get_parent();
+		parent->append_part(new_geom);
+		geom = new_geom;
+	}
 
 	stack[depth-1]--;
 	goto begin;
@@ -598,7 +612,7 @@ error:
 #undef WKB_READ_DATA
 
 }
-
+*/
 
 //------------------------------------------------------------------------------
 // WKT Parsing
@@ -744,10 +758,11 @@ static void parse_vertices(wkt_reader *reader, geometry *geom) {
 	geom->set_vertex_data(reinterpret_cast<const char*>(vertex_data), vertex_data_len);
 }
 
+// TODO: Handle errors
 geometry from_wkt(allocator *alloc, const char *buffer, size_t size) {
 
 	// Setup state
-	wkt_reader state = {0};
+	wkt_reader state;
 	state.beg = buffer;
 	state.ptr = buffer;
 	state.end = buffer + size;
@@ -768,159 +783,165 @@ geometry from_wkt(allocator *alloc, const char *buffer, size_t size) {
 		expect_char(&state, ';');
 	}
 
-begin:
-	// Now we should have a geometry type
-	if(match_token(&state, "POINT")) {
-		geom->set_type(geometry_type::POINT);
-	}
-	else if(match_token(&state, "LINESTRING")) {
-		geom->set_type(geometry_type::LINESTRING);
-	}
-	else if(match_token(&state, "POLYGON")) {
-		geom->set_type(geometry_type::POLYGON);
-	}
-	else if(match_token(&state, "MULTIPOINT")) {
-		geom->set_type(geometry_type::MULTI_POINT);
-	}
-	else if(match_token(&state, "MULTILINESTRING")) {
-		geom->set_type(geometry_type::MULTI_LINESTRING);
-	}
-	else if(match_token(&state, "MULTIPOLYGON")) {
-		geom->set_type(geometry_type::MULTI_POLYGON);
-	}
-	else if(match_token(&state, "GEOMETRYCOLLECTION")) {
-		geom->set_type(geometry_type::MULTI_GEOMETRY);
-	} else {
-		goto error;
-	}
-
-	// Match Z and M
-
-	if(match_char(&state, 'z')) {
-		geom->set_z(true);
-	}
-	if(match_char(&state, 'm')) {
-		geom->set_m(true);
-	}
-
-	// TODO: compare with root z/m
-
-	// Parse EMPTY
-	if(!match_token(&state ,'EMPTY')) {
-		switch(geom->get_type()) {
-		case geometry_type::POINT: {
-			parse_vertex(&state, geom);
-		} break;
-		case geometry_type::LINESTRING: {
-			parse_vertices(&state, geom);
-		} break;
-		case geometry_type::POLYGON: {
-			expect_char(&state, '(');
-			do {
-				auto ring = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
-				new (ring) geometry(geometry_type::LINESTRING, geom->has_z(), geom->has_m());
-				if(!match_token(&state, "EMPTY")) {
-					parse_vertices(&state, ring);
-				}
-				geom->append_part(ring);
-			} while(match_char(&state, ','));
-			expect_char(&state, ')');
-		} break;
-		case geometry_type::MULTI_POINT: {
-			expect_char(&state, '(');
-			// Multipoints are special in that parens around each point is optional.
-			do {
-				bool has_paren = false;
-				if(match_char(&state, '(')) {
-					has_paren = true;
-				}
-				auto point = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
-				new (point) geometry(geometry_type::POINT, geom->has_z(), geom->has_m());
-				if(!match_token(&state, "EMPTY")) {
-					parse_vertex(&state, point);
-				}
-				if(has_paren) {
-					expect_char(&state, ')');
-				}
-				geom->append_part(point);
-			} while(match_char(&state, ','));
-			expect_char(&state, ')');
-		} break;
-		case geometry_type::MULTI_LINESTRING: {
-			expect_char(&state, '(');
-			do {
-				auto line = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
-				new (line) geometry(geometry_type::LINESTRING, geom->has_z(), geom->has_m());
-				if(!match_token(&state, "EMPTY")) {
-					parse_vertices(&state, line);
-				}
-				geom->append_part(line);
-			} while(match_char(&state, ','));
-			expect_char(&state, ')');
-		} break;
-		case geometry_type::MULTI_POLYGON: {
-			expect_char(&state, '(');
-			do {
-				auto poly = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
-				new (poly) geometry(geometry_type::POLYGON, geom->has_z(), geom->has_m());
-				if(!match_token(&state, "EMPTY")) {
-					expect_char(&state, '(');
-					do {
-						auto ring = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
-						new (ring) geometry(geometry_type::LINESTRING, geom->has_z(), geom->has_m());
-						if(!match_token(&state, "EMPTY")) {
-							parse_vertices(&state, ring);
-						}
-						poly->append_part(ring);
-					} while(match_char(&state, ','));
-					expect_char(&state, ')');
-				}
-				geom->append_part(poly);
-			} while(match_char(&state, ','));
-			expect_char(&state, ')');
-		} break;
-		case geometry_type::MULTI_GEOMETRY: {
-			expect_char(&state, '(');
-
-			// add another child
-			auto new_geom = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
-			new (new_geom) geometry(geometry_type::INVALID);
-
-			geom->append_part(new_geom);
-			geom = new_geom;
-
-			goto begin;
-		} break;
-		default:
-			SGL_ASSERT(false);
+	// Main loop
+	while(true) {
+		// Now we should have a geometry type
+		if(match_token(&state, "POINT")) {
+			geom->set_type(geometry_type::POINT);
+		}
+		else if(match_token(&state, "LINESTRING")) {
+			geom->set_type(geometry_type::LINESTRING);
+		}
+		else if(match_token(&state, "POLYGON")) {
+			geom->set_type(geometry_type::POLYGON);
+		}
+		else if(match_token(&state, "MULTIPOINT")) {
+			geom->set_type(geometry_type::MULTI_POINT);
+		}
+		else if(match_token(&state, "MULTILINESTRING")) {
+			geom->set_type(geometry_type::MULTI_LINESTRING);
+		}
+		else if(match_token(&state, "MULTIPOLYGON")) {
+			geom->set_type(geometry_type::MULTI_POLYGON);
+		}
+		else if(match_token(&state, "GEOMETRYCOLLECTION")) {
+			geom->set_type(geometry_type::MULTI_GEOMETRY);
+		} else {
 			goto error;
 		}
-	}
 
-next:
-	const auto parent = geom->get_parent();
-	if(parent) {
+		// Match Z and M
 
-		SGL_ASSERT(parent->get_type() == geometry_type::MULTI_GEOMETRY);
-
-		if(match_char(&state, ',')) {
-			// The geometry collection is not done yet, add another sibling
-			auto new_geom = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
-			new (new_geom) geometry(geometry_type::INVALID);
-
-			parent->append_part(new_geom);
-			geom = new_geom;
-
-			goto begin;
+		if(match_char(&state, 'z')) {
+			geom->set_z(true);
+		}
+		if(match_char(&state, 'm')) {
+			geom->set_m(true);
 		}
 
-		expect_char(&state, ')');
-		// The geometry collection is done, go up
-		geom = parent;
-		goto next;
-	}
+		// TODO: compare with root z/m
 
-	return root;
+		// Parse EMPTY
+		if(!match_token(&state ,"EMPTY")) {
+			switch(geom->get_type()) {
+			case geometry_type::POINT: {
+				parse_vertex(&state, geom);
+			} break;
+			case geometry_type::LINESTRING: {
+				parse_vertices(&state, geom);
+			} break;
+			case geometry_type::POLYGON: {
+				expect_char(&state, '(');
+				do {
+					auto ring = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+					new (ring) geometry(geometry_type::LINESTRING, geom->has_z(), geom->has_m());
+					if(!match_token(&state, "EMPTY")) {
+						parse_vertices(&state, ring);
+					}
+					geom->append_part(ring);
+				} while(match_char(&state, ','));
+				expect_char(&state, ')');
+			} break;
+			case geometry_type::MULTI_POINT: {
+				expect_char(&state, '(');
+				// Multipoints are special in that parens around each point is optional.
+				do {
+					bool has_paren = false;
+					if(match_char(&state, '(')) {
+						has_paren = true;
+					}
+					auto point = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+					new (point) geometry(geometry_type::POINT, geom->has_z(), geom->has_m());
+					if(!match_token(&state, "EMPTY")) {
+						parse_vertex(&state, point);
+					}
+					if(has_paren) {
+						expect_char(&state, ')');
+					}
+					geom->append_part(point);
+				} while(match_char(&state, ','));
+				expect_char(&state, ')');
+			} break;
+			case geometry_type::MULTI_LINESTRING: {
+				expect_char(&state, '(');
+				do {
+					auto line = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+					new (line) geometry(geometry_type::LINESTRING, geom->has_z(), geom->has_m());
+					if(!match_token(&state, "EMPTY")) {
+						parse_vertices(&state, line);
+					}
+					geom->append_part(line);
+				} while(match_char(&state, ','));
+				expect_char(&state, ')');
+			} break;
+			case geometry_type::MULTI_POLYGON: {
+				expect_char(&state, '(');
+				do {
+					auto poly = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+					new (poly) geometry(geometry_type::POLYGON, geom->has_z(), geom->has_m());
+					if(!match_token(&state, "EMPTY")) {
+						expect_char(&state, '(');
+						do {
+							auto ring = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+							new (ring) geometry(geometry_type::LINESTRING, geom->has_z(), geom->has_m());
+							if(!match_token(&state, "EMPTY")) {
+								parse_vertices(&state, ring);
+							}
+							poly->append_part(ring);
+						} while(match_char(&state, ','));
+						expect_char(&state, ')');
+					}
+					geom->append_part(poly);
+				} while(match_char(&state, ','));
+				expect_char(&state, ')');
+			} break;
+			case geometry_type::MULTI_GEOMETRY: {
+				expect_char(&state, '(');
+
+				// add another child
+				auto new_geom = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+				new (new_geom) geometry(geometry_type::INVALID);
+
+				geom->append_part(new_geom);
+				geom = new_geom;
+
+				// This continue moves us to the next iteration
+				continue;
+
+			} break;
+			default:
+				SGL_ASSERT(false);
+				goto error;
+			}
+		}
+
+		while(true) {
+			const auto parent = geom->get_parent();
+			if(parent) {
+
+				SGL_ASSERT(parent->get_type() == geometry_type::MULTI_GEOMETRY);
+
+				if(match_char(&state, ',')) {
+					// The geometry collection is not done yet, add another sibling
+					auto new_geom = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+					new (new_geom) geometry(geometry_type::INVALID);
+
+					parent->append_part(new_geom);
+					geom = new_geom;
+
+					//goto begin;
+					break;
+				}
+
+				expect_char(&state, ')');
+				// The geometry collection is done, go up
+				geom = parent;
+			}
+			else {
+				return root;
+			}
+		}
+	}
 
 error:
 	// error!
