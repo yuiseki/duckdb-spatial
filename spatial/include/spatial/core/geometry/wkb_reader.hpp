@@ -44,7 +44,7 @@ public:
 	}
 	bool GeomHasM() const {
 		return has_any_m;
-	};
+	}
 };
 
 } // namespace core

@@ -5,12 +5,11 @@
 #include "duckdb/common/vector_operations/generic_executor.hpp"
 
 #define SGL_ASSERT(x) D_ASSERT(x)
+#include "duckdb/common/types/blob.hpp"
 #include "sgl/sgl.hpp"
 #include "spatial/core/functions/cast.hpp"
 #include "spatial/core/geometry/wkb_writer.hpp"
 #include "yyjson.h"
-
-#include <duckdb/common/types/blob.hpp>
 
 namespace spatial {
 namespace core {
@@ -444,6 +443,8 @@ void Serde::Deserialize(sgl::geometry &result, ArenaAllocator &arena, const char
 	// Deserialize the geometry
 	DeserializeRecursive(cursor, result, has_z, has_m, arena);
 }
+
+
 
 //----------------------------------------------------------------------------------------------------------------------
 // LocalState
@@ -2481,7 +2482,7 @@ struct ST_Extent {
 
 		UnifiedVectorFormat input_vdata;
 		args.data[0].ToUnifiedFormat(args.size(), input_vdata);
-		const auto input_data = UnifiedVectorFormat::GetData<geometry_t>(input_vdata);
+		const auto input_data = UnifiedVectorFormat::GetData<string_t>(input_vdata);
 
 		const auto count = args.size();
 
@@ -3349,10 +3350,90 @@ struct ST_GeometryType {
 //======================================================================================================================
 
 struct ST_GeomFromHEXWKB {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	// TODO: Move this into SGL
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 1);
+		auto &input = args.data[0];
+		auto count = args.size();
+
+		auto &lstate = LocalState::ResetAndGet(state);
+		auto &alloc = lstate.GetAllocator();
+
+		UnaryExecutor::Execute<string_t, string_t>(input, result, count,
+			[&](const string_t &input_hex) {
+			const auto hex_size = input_hex.GetSize();
+			const auto hex_ptr = const_data_ptr_cast(input_hex.GetData());
+
+			if (hex_size % 2 == 1) {
+				throw InvalidInputException("Invalid HEX WKB string, length must be even.");
+			}
+
+			const auto blob_size = hex_size / 2;
+
+			const unique_ptr<data_t[]> wkb_blob(new data_t[blob_size]);
+			const auto blob_ptr = wkb_blob.get();
+			auto blob_idx = 0;
+			for (idx_t hex_idx = 0; hex_idx < hex_size; hex_idx += 2) {
+				const auto byte_a = Blob::HEX_MAP[hex_ptr[hex_idx]];
+				const auto byte_b = Blob::HEX_MAP[hex_ptr[hex_idx + 1]];
+				D_ASSERT(byte_a != -1);
+				D_ASSERT(byte_b != -1);
+
+				blob_ptr[blob_idx++] = (byte_a << 4) + byte_b;
+			}
+
+			const auto geom = sgl::ops::from_wkb(&alloc, blob_ptr, blob_size);
+			if(geom.get_type() == sgl::geometry_type::INVALID) {
+				throw InvalidInputException("Invalid WKB data");
+			}
+
+			return lstate.Serialize(result, geom);
+		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	// TODO: Add docs
+	static constexpr auto DESCRIPTION = R"(
+		Deserialize a GEOMETRY from a HEX(E)WKB encoded string
+
+		DuckDB spatial doesnt currently differentiate between `WKB` and `EWKB`, so `ST_GeomFromHEXWKB` and `ST_GeomFromHEXEWKB" are just aliases of eachother.
+	)";
+
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+
+		// Our WKB reader also parses EWKB, even though it will just ignore SRID's.
+		// so we'll just add an alias for now. In the future, once we actually handle
+		// EWKB and store SRID's, these functions should differentiate between
+		// the two formats.
+
+		for (const auto &alias : {"ST_GeomFromHEXWKB", "ST_GeomFromHEXEWKB"}) {
+			FunctionBuilder::RegisterScalar(db, alias, [](ScalarFunctionBuilder &func) {
+				func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+					variant.AddParameter("hexwkb", LogicalType::VARCHAR);
+					variant.SetReturnType(GeoTypes::GEOMETRY());
+
+					variant.SetInit(LocalState::Init);
+					variant.SetFunction(Execute);
+				});
+
+				func.SetDescription(DESCRIPTION);
+				func.SetExample(EXAMPLE);
+
+				func.SetTag("ext", "spatial");
+				func.SetTag("category", "construction");
+			});
+		}
 	}
 };
 
@@ -3367,14 +3448,283 @@ struct ST_GeomFromText {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_GeomFromWKB
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_GeomFromWKB {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		auto &alloc = lstate.GetAllocator();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &wkb) {
+
+			const auto geom = sgl::ops::from_wkb(&alloc, data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
+
+			if(geom.get_type() == sgl::geometry_type::INVALID) {
+				throw InvalidInputException("Invalid WKB data");
+			}
+
+			return lstate.Serialize(result, geom);
+		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// POINT_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecutePoint(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		auto &alloc = lstate.GetAllocator();
+
+		auto count = args.size();
+		auto &input = args.data[0];
+
+		input.Flatten(count);
+
+		const auto &point_children = StructVector::GetEntries(result);
+		const auto x_data = FlatVector::GetData<double>(*point_children[0]);
+		const auto y_data = FlatVector::GetData<double>(*point_children[1]);
+
+		for(idx_t i = 0; i < count; i++) {
+			const auto &wkb = FlatVector::GetData<string_t>(input)[i];
+
+			const auto geom = sgl::ops::from_wkb(&alloc, data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
+			if(geom.get_type() != sgl::geometry_type::POINT) {
+				throw InvalidInputException("ST_Point2DFromWKB: WKB is not a POINT");
+			}
+
+			const auto vertex = geom.get_vertex_xy(0);
+
+			x_data[i] = vertex.x;
+			x_data[i] = vertex.y;
+		}
+
+		if(args.AllConstant()) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// LINESTRING_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteLineString(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		auto &alloc = lstate.GetAllocator();
+
+		D_ASSERT(args.data.size() == 1);
+		const auto count = args.size();
+		auto &wkb_blobs = args.data[0];
+		wkb_blobs.Flatten(count);
+
+		auto &inner = ListVector::GetEntry(result);
+		const auto lines = ListVector::GetData(result);
+		const auto wkb_data = FlatVector::GetData<string_t>(wkb_blobs);
+
+		idx_t total_size = 0;
+
+		for (idx_t i = 0; i < count; i++) {
+			auto wkb = wkb_data[i];
+
+			const auto geom = sgl::ops::from_wkb(&alloc, data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
+			if(geom.get_type() != sgl::geometry_type::LINESTRING) {
+				throw InvalidInputException("ST_LineString2DFromWKB: WKB is not a LINESTRING");
+			}
+
+			const auto line_size = geom.get_count();
+
+			lines[i].offset = total_size;
+			lines[i].length = line_size;
+
+			ListVector::Reserve(result, total_size + line_size);
+
+			// Since ListVector::Reserve potentially reallocates, we need to re-fetch the inner vector pointers
+			auto &children = StructVector::GetEntries(inner);
+			auto &x_child = children[0];
+			auto &y_child = children[1];
+			auto x_data = FlatVector::GetData<double>(*x_child);
+			auto y_data = FlatVector::GetData<double>(*y_child);
+
+			for (idx_t j = 0; j < line_size; j++) {
+				const auto vertex = geom.get_vertex_xy(j);
+				x_data[total_size + j] = vertex.x;
+				y_data[total_size + j] = vertex.y;
+			}
+
+			total_size += line_size;
+		}
+
+		ListVector::SetListSize(result, total_size);
+
+		if (args.AllConstant()) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// POLYGON_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		auto &alloc = lstate.GetAllocator();
+
+		D_ASSERT(args.data.size() == 1);
+		auto count = args.size();
+
+		// Set up input data
+		auto &wkb_blobs = args.data[0];
+		wkb_blobs.Flatten(count);
+		auto wkb_data = FlatVector::GetData<string_t>(wkb_blobs);
+
+		// Set up output data
+		auto &ring_vec = ListVector::GetEntry(result);
+		auto polygons = ListVector::GetData(result);
+
+		idx_t total_ring_count = 0;
+		idx_t total_point_count = 0;
+
+		for (idx_t i = 0; i < count; i++) {
+			auto wkb = wkb_data[i];
+
+			const auto geom = sgl::ops::from_wkb(&alloc, data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
+			if(geom.get_type() != sgl::geometry_type::POLYGON) {
+				throw InvalidInputException("ST_Polygon2DFromWKB: WKB is not a POLYGON");
+			}
+
+			const auto ring_count = geom.get_count();
+
+			polygons[i].offset = total_ring_count;
+			polygons[i].length = ring_count;
+
+			ListVector::Reserve(result, total_ring_count + ring_count);
+			// Since ListVector::Reserve potentially reallocates, we need to re-fetch the inner vector pointers
+
+			const auto tail = geom.get_last_part();
+			auto ring = tail;
+			if(ring) {
+				int j = 0;
+				do {
+					ring = ring->get_next();
+					const auto point_count = ring->get_count();
+
+					ListVector::Reserve(ring_vec, total_point_count + point_count);
+					auto ring_entries = ListVector::GetData(ring_vec);
+					auto &inner = ListVector::GetEntry(ring_vec);
+
+					auto &children = StructVector::GetEntries(inner);
+					auto &x_child = children[0];
+					auto &y_child = children[1];
+					auto x_data = FlatVector::GetData<double>(*x_child);
+					auto y_data = FlatVector::GetData<double>(*y_child);
+
+					for (idx_t k = 0; k < point_count; k++) {
+						const auto vertex = ring->get_vertex_xy(k);
+						x_data[total_point_count + k] = vertex.x;
+						y_data[total_point_count + k] = vertex.y;
+					}
+
+					ring_entries[total_ring_count + j].offset = total_point_count;
+					ring_entries[total_ring_count + j].length = point_count;
+
+					total_point_count += point_count;
+
+					j++;
+
+				} while(ring != tail);
+			}
+
+			total_ring_count += ring_count;
+		}
+
+		ListVector::SetListSize(result, total_ring_count);
+		ListVector::SetListSize(ring_vec, total_point_count);
+
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Deserializes a GEOMETRY from a WKB encoded blob
+	)";
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Point2DFromWKB", [](ScalarFunctionBuilder &builder) {
+			builder.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("point", GeoTypes::POINT_2D());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecutePoint);
+			});
+
+			builder.SetDescription("Deserialize a POINT_2D from a WKB encoded blob");
+			builder.SetExample("");
+			builder.SetTag("ext", "spatial");
+			builder.SetTag("category", "conversion");
+		});
+
+		FunctionBuilder::RegisterScalar(db, "ST_LineString2DFromWKB", [](ScalarFunctionBuilder &builder) {
+			builder.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("linestring", GeoTypes::LINESTRING_2D());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteLineString);
+			});
+
+			builder.SetDescription("Deserialize a LINESTRING_2D from a WKB encoded blob");
+			builder.SetExample("");
+			builder.SetTag("ext", "spatial");
+			builder.SetTag("category", "conversion");
+		});
+
+		FunctionBuilder::RegisterScalar(db, "ST_Polygon2DFromWKB", [](ScalarFunctionBuilder &builder) {
+			builder.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("polygon", GeoTypes::POLYGON_2D());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecutePolygon);
+			});
+
+			builder.SetDescription("Deserialize a POLYGON_2D from a WKB encoded blob");
+			builder.SetExample("");
+			builder.SetTag("ext", "spatial");
+			builder.SetTag("category", "conversion");
+		});
+
+		FunctionBuilder::RegisterScalar(db, "ST_GeomFromWKB", [](ScalarFunctionBuilder &builder) {
+			builder.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("wkb", GeoTypes::WKB_BLOB());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteGeometry);
+			});
+
+			builder.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("blob", LogicalType::BLOB);
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteGeometry);
+			});
+
+			builder.SetDescription(DESCRIPTION);
+			builder.SetExample(EXAMPLE);
+			builder.SetTag("ext", "spatial");
+			builder.SetTag("category", "conversion");
+		});
 	}
 };
 
@@ -3942,23 +4292,27 @@ struct ST_Hilbert {
 	}
 
 	static void ExecuteGeometryWithBounds(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
 		auto constexpr max_hilbert = std::numeric_limits<uint16_t>::max();
 
 		using BOX_TYPE = StructTypeQuaternary<double, double, double, double>;
-		using GEOM_TYPE = PrimitiveType<geometry_t>;
+		using GEOM_TYPE = PrimitiveType<string_t>;
 		using UINT32_TYPE = PrimitiveType<uint32_t>;
 
 		GenericExecutor::ExecuteBinary<GEOM_TYPE, BOX_TYPE, UINT32_TYPE>(
 		    args.data[0], args.data[1], result, args.size(), [&](const GEOM_TYPE &geom_type, const BOX_TYPE &bounds) {
-			    const auto geom = geom_type.val;
+			    const auto blob = geom_type.val;
 
-			    // TODO: This is shit, dont rely on cached bounds
-			    Box2D<double> geom_bounds;
-			    if (!geom.TryGetCachedBounds(geom_bounds)) {
-				    throw InvalidInputException(
-				        "ST_Hilbert(geom, bounds) requires that all geometries have a bounding box");
-			    }
+		    	const auto geom = lstate.Deserialize(blob);
+
+		    	// TODO: Dont deserialize, just get the bounds from blob instead.
+				sgl::box_xy geom_bounds = {0};
+
+		    	if(!sgl::ops::try_get_extent_xy(&geom, &geom_bounds)) {
+		    		throw InvalidInputException(
+						"ST_Hilbert(geom, bounds) does not support empty geometries");
+		    	}
 
 			    const auto dx = geom_bounds.min.x + (geom_bounds.max.x - geom_bounds.min.x) / 2;
 			    const auto dy = geom_bounds.min.y + (geom_bounds.max.y - geom_bounds.min.y) / 2;
@@ -6031,7 +6385,7 @@ struct ST_MMin : VertexAggFunctionBase<ST_MMin, VertexMinAggOp> {
 void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Area::Register(db);
 
-	// 3 functions to go!
+	// 2 functions to go!
 	ST_AsGeoJSON::Register(db);
 	ST_AsText::Register(db);
 	ST_AsWKB::Register(db);
@@ -6053,11 +6407,11 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Force3DM::Register(db);
 	ST_Force4D::Register(db);
 	ST_GeometryType::Register(db);
-	/*
 	ST_GeomFromHEXWKB::Register(db);
+	/*
 	ST_GeomFromText::Register(db);
-	ST_GeomFromWKB::Register(db);
 	*/
+	ST_GeomFromWKB::Register(db);
 	ST_HasZ::Register(db);
 	ST_HasM::Register(db);
 	ST_ZMFlag::Register(db);

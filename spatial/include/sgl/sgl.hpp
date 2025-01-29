@@ -658,6 +658,12 @@ int32_t max_surface_dimension(const geometry *geom);
 box_xy extent_xy(const geometry *geom);
 void force_zm(allocator &alloc, geometry *geom, bool has_z, bool has_m, double default_z, double default_m);
 
+size_t to_wkb_size(const geometry *geom);
+size_t to_wkb(const geometry *geom, uint8_t *buffer, size_t size);
+
+geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size);
+
+
 } // namespace ops
 
 } // namespace sgl
