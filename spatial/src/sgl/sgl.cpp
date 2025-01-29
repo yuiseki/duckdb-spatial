@@ -483,7 +483,8 @@ geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size) {
 	state.le = false;
 	state.error = false;
 
-	uint32_t stack[256];
+	static constexpr auto MAX_RECURSION_DEPTH = 256;
+	uint32_t stack[MAX_RECURSION_DEPTH];
 	uint32_t depth = 0;
 
 	geometry root;
@@ -545,7 +546,7 @@ geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size) {
 		case geometry_type::MULTI_GEOMETRY: {
 			// Check stack depth
 
-			if(depth == 256) {
+			if(depth == MAX_RECURSION_DEPTH) {
 				// TODO: Better error handling
 				goto error;
 			}
