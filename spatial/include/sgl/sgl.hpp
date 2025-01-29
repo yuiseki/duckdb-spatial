@@ -662,6 +662,7 @@ size_t to_wkb_size(const geometry *geom);
 size_t to_wkb(const geometry *geom, uint8_t *buffer, size_t size);
 
 geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size);
+geometry from_wkt(allocator *alloc, const char *buffer, size_t size);
 
 
 } // namespace ops

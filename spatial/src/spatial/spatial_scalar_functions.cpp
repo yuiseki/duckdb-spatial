@@ -3437,14 +3437,108 @@ struct ST_GeomFromHEXWKB {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_GeomFromText
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_GeomFromText {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Binding
+	//------------------------------------------------------------------------------------------------------------------
+	// TODO: Remove this, this doesnt make any sense here. Invalid geometries should be handled by TRY_CAST
+	//
+	struct BindData final : public FunctionData {
+		explicit BindData(bool ignore_invalid) : ignore_invalid(ignore_invalid) { }
+
+		unique_ptr<FunctionData> Copy() const override {
+			return make_uniq<BindData>(ignore_invalid);
+		}
+		bool Equals(const FunctionData &other_p) const override {
+			return true;
+		}
+
+		bool ignore_invalid = false;
+	};
+
+	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
+													vector<unique_ptr<Expression>> &arguments) {
+		if (arguments.empty()) {
+			throw InvalidInputException("ST_GeomFromText requires at least one argument");
+		}
+		const auto &input_type = arguments[0]->return_type;
+		if (input_type.id() != LogicalTypeId::VARCHAR) {
+			throw InvalidInputException("ST_GeomFromText requires a string argument");
+		}
+
+		bool ignore_invalid = false;
+		for (idx_t i = 1; i < arguments.size(); i++) {
+			auto &arg = arguments[i];
+			if (arg->HasParameter()) {
+				throw InvalidInputException("Parameters are not supported in ST_GeomFromText optional arguments");
+			}
+			if (!arg->IsFoldable()) {
+				throw InvalidInputException(
+					"Non-constant arguments are not supported in ST_GeomFromText optional arguments");
+			}
+			if (arg->alias == "ignore_invalid") {
+				if (arg->return_type.id() != LogicalTypeId::BOOLEAN) {
+					throw InvalidInputException("ST_GeomFromText optional argument 'ignore_invalid' must be a boolean");
+				}
+				ignore_invalid = BooleanValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
+			}
+		}
+		return make_uniq<BindData>(ignore_invalid);
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute
+	//------------------------------------------------------------------------------------------------------------------
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DOCUMENTATION = R"(
+		Deserialize a GEOMETRY from a WKT encoded string
+	)";
+
+	// TODO: add example
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_GeomFromText", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("wkt", LogicalType::VARCHAR);
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetBind(Bind);
+				variant.SetFunction(Execute);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("wkt", LogicalType::VARCHAR);
+				variant.AddParameter("ignore_invalid", LogicalType::BOOLEAN);
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetBind(Bind);
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(DOCUMENTATION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "conversion");
+		});
 	}
 };
 
@@ -3463,6 +3557,9 @@ struct ST_GeomFromWKB {
 		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &wkb) {
 
 			const auto geom = sgl::ops::from_wkb(&alloc, data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
+
+			// TODO: Better error messages.
+			// We should be able to provide the actual name of the geometry type
 
 			if(geom.get_type() == sgl::geometry_type::INVALID) {
 				throw InvalidInputException("Invalid WKB data");
@@ -6385,7 +6482,7 @@ struct ST_MMin : VertexAggFunctionBase<ST_MMin, VertexMinAggOp> {
 void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Area::Register(db);
 
-	// 2 functions to go!
+	// 1 functions to go!
 	ST_AsGeoJSON::Register(db);
 	ST_AsText::Register(db);
 	ST_AsWKB::Register(db);
