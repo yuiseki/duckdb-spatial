@@ -474,11 +474,6 @@ const uint8_t* wkb_reader_read_data(wkb_reader* reader, size_t size) {
 }
 
 geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size) {
-	return geometry(geometry_type::INVALID);
-}
-
-/*
-geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size) {
 
 	// Setup state
 	wkb_reader state;
@@ -490,7 +485,6 @@ geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size) {
 
 	uint32_t stack[256];
 	uint32_t depth = 0;
-	uint32_t remaining = 0;
 
 	geometry root;
 	geometry *geom = &root;
@@ -500,108 +494,98 @@ geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size) {
 #define WKB_READ_F64 wkb_reader_read_f64(&state); if (state.error) { goto error; }
 #define WKB_READ_DATA(SIZE) wkb_reader_read_data(&state, SIZE); if (state.error) { goto error; }
 
-begin:
-	const auto le = WKB_READ_U8;
-	const auto type_id = WKB_READ_U32;
+	while (true) {
+		const auto le = WKB_READ_U8;
+		const auto type_id = WKB_READ_U32;
 
-	const auto type = static_cast<sgl::geometry_type>((type_id & 0xffff) % 1000);
-	const auto flags = (type_id & 0xffff) / 1000;
-	const auto has_z = (flags == 1) || (flags == 3) || ((type_id & 0x80000000) != 0);
-	const auto has_m = (flags == 2) || (flags == 3) || ((type_id & 0x40000000) != 0);
+		const auto type = static_cast<sgl::geometry_type>((type_id & 0xffff) % 1000);
+		const auto flags = (type_id & 0xffff) / 1000;
+		const auto has_z = (flags == 1) || (flags == 3) || ((type_id & 0x80000000) != 0);
+		const auto has_m = (flags == 2) || (flags == 3) || ((type_id & 0x40000000) != 0);
 
-	geom->set_type(type);
-	geom->set_z(has_z);
-	geom->set_m(has_m);
+		geom->set_type(type);
+		geom->set_z(has_z);
+		geom->set_m(has_m);
 
-	switch(geom->get_type()) {
-	case geometry_type::POINT: {
-		// Read the point data;
-		const auto data = WKB_READ_DATA(geom->get_vertex_size());
-		geom->set_vertex_data(data, 1);
+		switch(geom->get_type()) {
+		case geometry_type::POINT: {
+			// Read the point data;
+			const auto data = WKB_READ_DATA(geom->get_vertex_size());
+			geom->set_vertex_data(data, 1);
+		} break;
+		case geometry_type::LINESTRING: {
+			// Read the point count
+			const auto count = WKB_READ_U32;
+			// Read the point data;
+			const auto data = WKB_READ_DATA(geom->get_vertex_size() * count);
+			geom->set_vertex_data(data, count);
+		} break;
+		case geometry_type::POLYGON: {
+			// Read the ring count
+			const auto count = WKB_READ_U32;
 
-		goto next;
-	}
-	case geometry_type::LINESTRING: {
-		// Read the point count
-		const auto count = WKB_READ_U32;
-		// Read the point data;
-		const auto data = WKB_READ_DATA(geom->get_vertex_size() * count);
-		geom->set_vertex_data(data, count);
+			// Read the point data;
+			for(size_t i = 0; i < count; i++) {
+				const auto ring_count = WKB_READ_U32;
+				const auto data = WKB_READ_DATA(geom->get_vertex_size() * ring_count);
 
-		goto next;
-	}
-	case geometry_type::POLYGON: {
-		// Read the ring count
-		const auto count = WKB_READ_U32;
+				// create a new ring
+				const auto ring = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+				ring->set_type(geometry_type::LINESTRING);
+				ring->set_z(has_z);
+				ring->set_m(has_m);
+				ring->set_vertex_data(data, ring_count);
 
-		// Read the point data;
-		for(size_t i = 0; i < count; i++) {
-			const auto ring_count = WKB_READ_U32;
-			const auto data = WKB_READ_DATA(geom->get_vertex_size() * ring_count);
+				geom->append_part(ring);
+			}
+		} break;
+		case geometry_type::MULTI_POINT:
+		case geometry_type::MULTI_LINESTRING:
+		case geometry_type::MULTI_POLYGON:
+		case geometry_type::MULTI_GEOMETRY: {
+			// Check stack depth
 
-			// create a new ring
-			const auto ring = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
-			ring->set_type(geometry_type::LINESTRING);
-			ring->set_z(has_z);
-			ring->set_m(has_m);
-			ring->set_vertex_data(data, ring_count);
+			if(depth == 256) {
+				// TODO: Better error handling
+				goto error;
+			}
 
-			geom->append_part(ring);
-		}
+			// read the count
+			const auto count = WKB_READ_U32;
+			stack[depth++] = count;
 
-		goto next;
-	}
-	case geometry_type::MULTI_POINT:
-	case geometry_type::MULTI_LINESTRING:
-	case geometry_type::MULTI_POLYGON:
-	case geometry_type::MULTI_GEOMETRY: {
-		// Check stack depth
+			// make a new child
+			auto new_geom = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+			geom->append_part(new_geom);
+			geom = new_geom;
 
-		if(depth == 256) {
-			// TODO: Better error handling
+		} continue; // This continue is important, as we dont want to go up the stack yet
+		default:
+			SGL_ASSERT(false);
 			goto error;
 		}
 
-		// read the count
-		const auto count = WKB_READ_U32;
-		stack[depth++] = count;
+		while(true) {
+			if(depth == 0) {
+				return root;
+			}
 
-		// make a new child
-		auto new_geom = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
-		geom->append_part(new_geom);
-		geom = new_geom;
+			const auto remaining = stack[depth-1];
 
-		goto begin;
+			if(remaining != 0) {
+				auto new_geom = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+				auto parent = geom->get_parent();
+				parent->append_part(new_geom);
+				geom = new_geom;
+
+				stack[depth-1]--;
+				break;
+			}
+
+			depth--;
+			geom = geom->get_parent();
+		}
 	}
-	default:
-		goto error;
-	}
-
-next:
-	if(depth == 0) {
-		goto done;
-	}
-
-	remaining = stack[depth-1];
-
-	if(remaining == 0) {
-		depth--;
-		geom = geom->get_parent();
-		goto next;
-	}
-
-	{
-		auto new_geom = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
-		auto parent = geom->get_parent();
-		parent->append_part(new_geom);
-		geom = new_geom;
-	}
-
-	stack[depth-1]--;
-	goto begin;
-
-done:
-	return root;
 
 error:
 	return geometry(geometry_type::INVALID);
@@ -612,7 +596,7 @@ error:
 #undef WKB_READ_DATA
 
 }
-*/
+
 
 //------------------------------------------------------------------------------
 // WKT Parsing
@@ -776,6 +760,7 @@ geometry from_wkt(allocator *alloc, const char *buffer, size_t size) {
 	parse_ws(&state);
 
 	// Skip leading SRID, we dont support it
+	// TODO: Parse this and stuff it into the reader state
 	if(match_token(&state, "SRID")) {
 		while(state.ptr < state.end && *state.ptr != ';') {
 			state.ptr++;
@@ -905,10 +890,7 @@ geometry from_wkt(allocator *alloc, const char *buffer, size_t size) {
 				geom->append_part(new_geom);
 				geom = new_geom;
 
-				// This continue moves us to the next iteration
-				continue;
-
-			} break;
+			} continue; // This continue moves us to the next iteration
 			default:
 				SGL_ASSERT(false);
 				goto error;
@@ -917,29 +899,28 @@ geometry from_wkt(allocator *alloc, const char *buffer, size_t size) {
 
 		while(true) {
 			const auto parent = geom->get_parent();
-			if(parent) {
-
-				SGL_ASSERT(parent->get_type() == geometry_type::MULTI_GEOMETRY);
-
-				if(match_char(&state, ',')) {
-					// The geometry collection is not done yet, add another sibling
-					auto new_geom = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
-					new (new_geom) geometry(geometry_type::INVALID);
-
-					parent->append_part(new_geom);
-					geom = new_geom;
-
-					//goto begin;
-					break;
-				}
-
-				expect_char(&state, ')');
-				// The geometry collection is done, go up
-				geom = parent;
-			}
-			else {
+			if(!parent) {
+				// Done!
 				return root;
 			}
+
+			SGL_ASSERT(parent->get_type() == geometry_type::MULTI_GEOMETRY);
+
+			if(match_char(&state, ',')) {
+				// The geometry collection is not done yet, add another sibling
+				auto new_geom = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+				new (new_geom) geometry(geometry_type::INVALID);
+
+				parent->append_part(new_geom);
+				geom = new_geom;
+
+				//goto begin;
+				break;
+			}
+
+			expect_char(&state, ')');
+			// The geometry collection is done, go up
+			geom = parent;
 		}
 	}
 
