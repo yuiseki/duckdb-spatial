@@ -68,6 +68,14 @@ public:
 		ptr += size;
 	}
 
+	const char* GetStart() const {
+		return beg;
+	}
+
+	const char* GetEnd() const {
+		return end;
+	}
+
 private:
 	void CheckSize(const size_t size) const {
 		if (ptr + size > end) {
@@ -115,6 +123,15 @@ public:
 		memcpy(ptr, buffer, size);
 		ptr += size;
 	}
+
+	char* GetStart() const {
+		return beg;
+	}
+
+	char* GetEnd() const {
+		return end;
+	}
+
 
 private:
 	void CheckSize(const size_t size) const {
@@ -754,6 +771,45 @@ struct ST_AsGeoJSON {
 	// JSON Formatting Functions
 	//------------------------------------------------------------------------------------------------------------------
 	// TODO: Move these into SGL at some point, make non-recursive
+	static void FormatCoord(const sgl::geometry *geom, yyjson_mut_doc *doc, yyjson_mut_val *obj) {
+		const auto vertex_type = static_cast<sgl::vertex_type>(geom->has_z() + geom->has_m() * 2);
+		const auto vertex_count = geom->get_count();
+
+		if(vertex_count == 0) {
+			// Make empty
+			const auto coord = yyjson_mut_arr(doc);
+			yyjson_mut_obj_add_val(doc, obj, "coordinates", coord);
+			return;
+		}
+
+		// GeoJSON does not support M values, so we ignore them
+		switch (vertex_type) {
+		case sgl::vertex_type::XY:
+		case sgl::vertex_type::XYM: {
+			const auto coord = yyjson_mut_arr(doc);
+			const auto vert = geom->get_vertex_xy(0);
+			yyjson_mut_arr_add_real(doc, coord, vert.x);
+			yyjson_mut_arr_add_real(doc, coord, vert.y);
+			yyjson_mut_obj_add_val(doc, obj, "coordinates", coord);
+
+		} break;
+		case sgl::vertex_type::XYZ:
+		case sgl::vertex_type::XYZM: {
+				const auto coord = yyjson_mut_arr(doc);
+				const auto vert = geom->get_vertex_xyzm(0);
+
+				yyjson_mut_arr_add_real(doc, coord, vert.x);
+				yyjson_mut_arr_add_real(doc, coord, vert.y);
+				yyjson_mut_arr_add_real(doc, coord, vert.zm);
+				yyjson_mut_obj_add_val(doc, obj, "coordinates", coord);
+
+		} break;
+		default:
+			D_ASSERT(false);
+			break;
+		}
+	}
+
 	static void FormatCoords(const sgl::geometry *geom, yyjson_mut_doc *doc, yyjson_mut_val *obj) {
 		const auto vertex_type = static_cast<sgl::vertex_type>(geom->has_z() + geom->has_m() * 2);
 		const auto vertex_count = geom->get_count();
@@ -792,9 +848,7 @@ struct ST_AsGeoJSON {
 		switch (geom->get_type()) {
 		case sgl::geometry_type::POINT: {
 			yyjson_mut_obj_add_str(doc, obj, "type", "Point");
-			const auto coords = yyjson_mut_arr(doc);
-			yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
-			FormatCoords(geom, doc, coords);
+			FormatCoord(geom, doc, obj);
 		} break;
 		case sgl::geometry_type::LINESTRING: {
 			yyjson_mut_obj_add_str(doc, obj, "type", "LineString");
@@ -819,7 +873,7 @@ struct ST_AsGeoJSON {
 			}
 		} break;
 		case sgl::geometry_type::MULTI_POINT: {
-			yyjson_mut_obj_add_str(doc, obj, "type", "MultiPolygon");
+			yyjson_mut_obj_add_str(doc, obj, "type", "MultiPoint");
 
 			const auto coords = yyjson_mut_arr(doc);
 			yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
@@ -3447,6 +3501,308 @@ struct ST_GeomFromHEXWKB {
 };
 
 //======================================================================================================================
+// ST_GeomFromGeoJSON
+//======================================================================================================================
+
+struct ST_GeomFromGeoJSON {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOJSON -> GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	// TODO: Move this into SGL and make non-recursive
+
+	static sgl::geometry PointFromGeoJSON(yyjson_val *coord_array, ArenaAllocator &arena, const string_t &raw, bool &has_z) {
+		auto len = yyjson_arr_size(coord_array);
+		if (len == 0) {
+			// empty point
+			return sgl::point::make_empty(has_z);
+		}
+		if (len < 2) {
+			throw InvalidInputException("GeoJSON input coordinates field is not an array of at least length 2: %s",
+			                            raw.GetString());
+		}
+		auto x_val = yyjson_arr_get_first(coord_array);
+		if (!yyjson_is_num(x_val)) {
+			throw InvalidInputException("GeoJSON input coordinates field is not an array of numbers: %s", raw.GetString());
+		}
+		auto y_val = yyjson_arr_get(coord_array, 1);
+		if (!yyjson_is_num(y_val)) {
+			throw InvalidInputException("GeoJSON input coordinates field is not an array of numbers: %s", raw.GetString());
+		}
+
+		auto x = yyjson_get_num(x_val);
+		auto y = yyjson_get_num(y_val);
+
+		auto geom_has_z = len > 2;
+		if (geom_has_z) {
+			has_z = true;
+			auto z_val = yyjson_arr_get(coord_array, 2);
+			if (!yyjson_is_num(z_val)) {
+				throw InvalidInputException("GeoJSON input coordinates field is not an array of numbers: %s",
+				                            raw.GetString());
+			}
+			auto z = yyjson_get_num(z_val);
+			return Point::CreateFromVertex(arena, VertexXYZ {x, y, z});
+		} else {
+			return Point::CreateFromVertex(arena, VertexXY {x, y});
+		}
+	}
+
+	static sgl::geometry VerticesFromGeoJSON(yyjson_val *coord_array, ArenaAllocator &arena, const string_t &raw, bool &has_z) {
+		auto len = yyjson_arr_size(coord_array);
+		if (len == 0) {
+			// Empty
+			return LineString::CreateEmpty(has_z, false);
+		} else {
+			// Sniff the coordinates to see if we have Z
+			bool has_any_z = false;
+			size_t idx, max;
+			yyjson_val *coord;
+			yyjson_arr_foreach(coord_array, idx, max, coord) {
+				if (!yyjson_is_arr(coord)) {
+					throw InvalidInputException("GeoJSON input coordinates field is not an array of arrays: %s",
+					                            raw.GetString());
+				}
+				auto coord_len = yyjson_arr_size(coord);
+				if (coord_len > 2) {
+					has_any_z = true;
+				} else if (coord_len < 2) {
+					throw InvalidInputException(
+					    "GeoJSON input coordinates field is not an array of arrays of length >= 2: %s", raw.GetString());
+				}
+			}
+
+			if (has_any_z) {
+				has_z = true;
+			}
+
+			auto vertices = LineString::Create(arena, len, has_any_z, false);
+
+			yyjson_arr_foreach(coord_array, idx, max, coord) {
+				auto coord_len = yyjson_arr_size(coord);
+				auto x_val = yyjson_arr_get_first(coord);
+				if (!yyjson_is_num(x_val)) {
+					throw InvalidInputException("GeoJSON input coordinates field is not an array of arrays of numbers: %s",
+					                            raw.GetString());
+				}
+				auto y_val = yyjson_arr_get(coord, 1);
+				if (!yyjson_is_num(y_val)) {
+					throw InvalidInputException("GeoJSON input coordinates field is not an array of arrays of numbers: %s",
+					                            raw.GetString());
+				}
+				auto x = yyjson_get_num(x_val);
+				auto y = yyjson_get_num(y_val);
+				auto z = 0.0;
+
+				if (coord_len > 2) {
+					auto z_val = yyjson_arr_get(coord, 2);
+					if (!yyjson_is_num(z_val)) {
+						throw InvalidInputException(
+						    "GeoJSON input coordinates field is not an array of arrays of numbers: %s", raw.GetString());
+					}
+					z = yyjson_get_num(z_val);
+				}
+				if (has_any_z) {
+					LineString::SetVertex<VertexXYZ>(vertices, idx, {x, y, z});
+				} else {
+					LineString::SetVertex<VertexXY>(vertices, idx, {x, y});
+				}
+			}
+			return vertices;
+		}
+	}
+
+	static sgl::geometry LineStringFromGeoJSON(yyjson_val *coord_array, ArenaAllocator &arena, const string_t &raw,
+	                                      bool &has_z) {
+		return VerticesFromGeoJSON(coord_array, arena, raw, has_z);
+	}
+
+	static sgl::geometry PolygonFromGeoJSON(yyjson_val *coord_array, ArenaAllocator &arena, const string_t &raw, bool &has_z) {
+		auto num_rings = yyjson_arr_size(coord_array);
+		if (num_rings == 0) {
+			// Empty
+			return Polygon::CreateEmpty(has_z, false);
+		} else {
+			// Polygon
+			auto polygon = Polygon::Create(arena, num_rings, has_z, false);
+			size_t idx, max;
+			yyjson_val *ring_val;
+			yyjson_arr_foreach(coord_array, idx, max, ring_val) {
+				if (!yyjson_is_arr(ring_val)) {
+					throw InvalidInputException("GeoJSON input coordinates field is not an array of arrays: %s",
+					                            raw.GetString());
+				}
+				Polygon::Part(polygon, idx) = VerticesFromGeoJSON(ring_val, arena, raw, has_z);
+			}
+
+			return polygon;
+		}
+	}
+
+	static sgl::geometry MultiPointFromGeoJSON(yyjson_val *coord_array, ArenaAllocator &arena, const string_t &raw,
+	                                      bool &has_z) {
+		auto num_points = yyjson_arr_size(coord_array);
+		if (num_points == 0) {
+			// Empty
+			return MultiPoint::CreateEmpty(has_z, false);
+		} else {
+			// MultiPoint
+			auto multi_point = MultiPoint::Create(arena, num_points, has_z, false);
+			size_t idx, max;
+			yyjson_val *point_val;
+			yyjson_arr_foreach(coord_array, idx, max, point_val) {
+				if (!yyjson_is_arr(point_val)) {
+					throw InvalidInputException("GeoJSON input coordinates field is not an array of arrays: %s",
+					                            raw.GetString());
+				}
+				if (yyjson_arr_size(point_val) < 2) {
+					throw InvalidInputException(
+					    "GeoJSON input coordinates field is not an array of arrays of length >= 2: %s", raw.GetString());
+				}
+				MultiPoint::Part(multi_point, idx) = PointFromGeoJSON(point_val, arena, raw, has_z);
+			}
+			return multi_point;
+		}
+	}
+
+	static sgl::geometry MultiLineStringFromGeoJSON(yyjson_val *coord_array, ArenaAllocator &arena, const string_t &raw,
+	                                           bool &has_z) {
+		auto num_linestrings = yyjson_arr_size(coord_array);
+		if (num_linestrings == 0) {
+			// Empty
+			return MultiLineString::CreateEmpty(has_z, false);
+		} else {
+			// MultiLineString
+			auto multi_linestring = MultiLineString::Create(arena, num_linestrings, has_z, false);
+			size_t idx, max;
+			yyjson_val *linestring_val;
+			yyjson_arr_foreach(coord_array, idx, max, linestring_val) {
+				if (!yyjson_is_arr(linestring_val)) {
+					throw InvalidInputException("GeoJSON input coordinates field is not an array of arrays: %s",
+					                            raw.GetString());
+				}
+				MultiLineString::Part(multi_linestring, idx) = LineStringFromGeoJSON(linestring_val, arena, raw, has_z);
+			}
+
+			return multi_linestring;
+		}
+	}
+
+	static sgl::geometry MultiPolygonFromGeoJSON(yyjson_val *coord_array, ArenaAllocator &arena, const string_t &raw,
+	                                        bool &has_z) {
+		auto num_polygons = yyjson_arr_size(coord_array);
+		if (num_polygons == 0) {
+			// Empty
+			return MultiPolygon::CreateEmpty(has_z, false);
+		} else {
+			// MultiPolygon
+			auto multi_polygon = MultiPolygon::Create(arena, num_polygons, has_z, false);
+			size_t idx, max;
+			yyjson_val *polygon_val;
+			yyjson_arr_foreach(coord_array, idx, max, polygon_val) {
+				if (!yyjson_is_arr(polygon_val)) {
+					throw InvalidInputException("GeoJSON input coordinates field is not an array of arrays: %s",
+					                            raw.GetString());
+				}
+				MultiPolygon::Part(multi_polygon, idx) = PolygonFromGeoJSON(polygon_val, arena, raw, has_z);
+			}
+
+			return multi_polygon;
+		}
+	}
+
+	static sgl::geometry FromGeoJSON(yyjson_val *root, ArenaAllocator &arena, const string_t &raw, bool &has_z);
+
+	static sgl::geometry GeometryCollectionFromGeoJSON(yyjson_val *root, ArenaAllocator &arena, const string_t &raw,
+	                                              bool &has_z) {
+		auto geometries_val = yyjson_obj_get(root, "geometries");
+		if (!geometries_val) {
+			throw InvalidInputException("GeoJSON input does not have a geometries field: %s", raw.GetString());
+		}
+		if (!yyjson_is_arr(geometries_val)) {
+			throw InvalidInputException("GeoJSON input geometries field is not an array: %s", raw.GetString());
+		}
+		auto num_geometries = yyjson_arr_size(geometries_val);
+		if (num_geometries == 0) {
+			// Empty
+			return GeometryCollection::CreateEmpty(has_z, false);
+		} else {
+			// GeometryCollection
+			auto geometry_collection = GeometryCollection::Create(arena, num_geometries, has_z, false);
+			size_t idx, max;
+			yyjson_val *geometry_val;
+			yyjson_arr_foreach(geometries_val, idx, max, geometry_val) {
+				GeometryCollection::Part(geometry_collection, idx) = FromGeoJSON(geometry_val, arena, raw, has_z);
+			}
+
+			return geometry_collection;
+		}
+	}
+
+	static sgl::geometry FromGeoJSON(yyjson_val *root, ArenaAllocator &arena, const string_t &raw, bool &has_z) {
+		auto type_val = yyjson_obj_get(root, "type");
+		if (!type_val) {
+			throw InvalidInputException("GeoJSON input does not have a type field: %s", raw.GetString());
+		}
+		auto type_str = yyjson_get_str(type_val);
+		if (!type_str) {
+			throw InvalidInputException("GeoJSON input type field is not a string: %s", raw.GetString());
+		}
+
+		if (StringUtil::Equals(type_str, "GeometryCollection")) {
+			return GeometryCollectionFromGeoJSON(root, arena, raw, has_z);
+		}
+
+		// Get the coordinates
+		auto coord_array = yyjson_obj_get(root, "coordinates");
+		if (!coord_array) {
+			throw InvalidInputException("GeoJSON input does not have a coordinates field: %s", raw.GetString());
+		}
+		if (!yyjson_is_arr(coord_array)) {
+			throw InvalidInputException("GeoJSON input coordinates field is not an array: %s", raw.GetString());
+		}
+
+		if (StringUtil::Equals(type_str, "Point")) {
+			return PointFromGeoJSON(coord_array, arena, raw, has_z);
+		} else if (StringUtil::Equals(type_str, "LineString")) {
+			return LineStringFromGeoJSON(coord_array, arena, raw, has_z);
+		} else if (StringUtil::Equals(type_str, "Polygon")) {
+			return PolygonFromGeoJSON(coord_array, arena, raw, has_z);
+		} else if (StringUtil::Equals(type_str, "MultiPoint")) {
+			return MultiPointFromGeoJSON(coord_array, arena, raw, has_z);
+		} else if (StringUtil::Equals(type_str, "MultiLineString")) {
+			return MultiLineStringFromGeoJSON(coord_array, arena, raw, has_z);
+		} else if (StringUtil::Equals(type_str, "MultiPolygon")) {
+			return MultiPolygonFromGeoJSON(coord_array, arena, raw, has_z);
+		} else {
+			throw InvalidInputException("GeoJSON input has invalid type field: %s", raw.GetString());
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+	    Deserializes a GEOMETRY from a GeoJSON fragment.
+	)";
+
+	static constexpr auto EXAMPLE = R"(
+		SELECT ST_GeomFromGeoJSON('{"type":"Point","coordinates":[1.0,2.0]}');
+		----
+		POINT (1 2)
+	)";
+
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
+	static void Register(DatabaseInstance &db) {
+		// todo
+	}
+};
+
+
+//======================================================================================================================
 // ST_GeomFromText
 //======================================================================================================================
 
@@ -3636,7 +3992,7 @@ struct ST_GeomFromWKB {
 			const auto vertex = geom.get_vertex_xy(0);
 
 			x_data[i] = vertex.x;
-			x_data[i] = vertex.y;
+			y_data[i] = vertex.y;
 		}
 
 		if (args.AllConstant()) {
@@ -4444,7 +4800,7 @@ struct ST_Hilbert {
 			    const auto geom = lstate.Deserialize(blob);
 
 			    // TODO: Dont deserialize, just get the bounds from blob instead.
-			    sgl::box_xy geom_bounds = {0};
+			    sgl::box_xy geom_bounds = {};
 
 			    if (!sgl::ops::try_get_extent_xy(&geom, &geom_bounds)) {
 				    throw InvalidInputException("ST_Hilbert(geom, bounds) does not support empty geometries");
@@ -4574,6 +4930,9 @@ struct ST_Intersects {
 
 				variant.SetFunction(ExecuteBox);
 			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
 
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "relation");
@@ -6543,6 +6902,7 @@ void CoreModule::RegisterSpatialFunctions(DatabaseInstance &db) {
 	ST_Force4D::Register(db);
 	ST_GeometryType::Register(db);
 	ST_GeomFromHEXWKB::Register(db);
+	ST_GeomFromGeoJSON::Register(db);
 	ST_GeomFromText::Register(db);
 	ST_GeomFromWKB::Register(db);
 	ST_HasZ::Register(db);
