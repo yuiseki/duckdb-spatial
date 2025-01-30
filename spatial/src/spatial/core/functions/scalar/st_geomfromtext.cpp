@@ -56,7 +56,6 @@ static void GeometryFromWKTFunction(DataChunk &args, ExpressionState &state, Vec
 	                                                      });
 }
 
-
 static unique_ptr<FunctionData> GeometryFromWKTBind(ClientContext &context, ScalarFunction &bound_function,
                                                     vector<unique_ptr<Expression>> &arguments) {
 	if (arguments.empty()) {

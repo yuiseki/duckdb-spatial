@@ -33,20 +33,20 @@ struct vertex_xy {
 	}
 
 	vertex_xy operator-(const vertex_xy &other) const {
-        return {x - other.x, y - other.y};
-    }
+		return {x - other.x, y - other.y};
+	}
 
 	vertex_xy operator+(const vertex_xy &other) const {
-        return {x + other.x, y + other.y};
-    }
+		return {x + other.x, y + other.y};
+	}
 
-    vertex_xy operator*(double scalar) const {
-        return {x * scalar, y * scalar};
-    }
+	vertex_xy operator*(double scalar) const {
+		return {x * scalar, y * scalar};
+	}
 
-    vertex_xy operator/(double scalar) const {
-        return {x / scalar, y / scalar};
-    }
+	vertex_xy operator/(double scalar) const {
+		return {x / scalar, y / scalar};
+	}
 };
 
 struct vertex_xyzm {
@@ -60,20 +60,20 @@ struct vertex_xyzm {
 	}
 
 	vertex_xyzm operator-(const vertex_xyzm &other) const {
-        return {x - other.x, y - other.y, zm - other.zm, m - other.m};
-    }
+		return {x - other.x, y - other.y, zm - other.zm, m - other.m};
+	}
 
 	vertex_xyzm operator+(const vertex_xyzm &other) const {
-        return {x + other.x, y + other.y, zm + other.zm, m + other.m};
-    }
+		return {x + other.x, y + other.y, zm + other.zm, m + other.m};
+	}
 
-    vertex_xyzm operator*(double scalar) const {
-        return {x * scalar, y * scalar, zm * scalar, m * scalar};
-    }
+	vertex_xyzm operator*(double scalar) const {
+		return {x * scalar, y * scalar, zm * scalar, m * scalar};
+	}
 
-    vertex_xyzm operator/(double scalar) const {
-        return {x / scalar, y / scalar, zm / scalar, m / scalar};
-    }
+	vertex_xyzm operator/(double scalar) const {
+		return {x / scalar, y / scalar, zm / scalar, m / scalar};
+	}
 };
 
 struct box_xy {
@@ -178,6 +178,10 @@ public:
 	uint8_t *get_vertex_data();
 	void set_vertex_data(const uint8_t *data, uint32_t size);
 	void set_vertex_data(const char *data, uint32_t size);
+
+	void allocate_vertex_data(allocator *alloc, uint32_t size);
+	// Requires that the vertex data has been allocated with allocate_vertex_data
+	void realloc_vertex_data(allocator *alloc, uint32_t new_size);
 
 	size_t get_vertex_size() const;
 	vertex_xy get_vertex_xy(uint32_t n) const;
@@ -662,8 +666,20 @@ size_t to_wkb_size(const geometry *geom);
 size_t to_wkb(const geometry *geom, uint8_t *buffer, size_t size);
 
 geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size);
-geometry from_wkt(allocator *alloc, const char *buffer, size_t size);
 
+struct wkt_reader {
+	// Set by the user
+	allocator *alloc;
+	const char *buf;
+	const char *end;
+
+	// Set by the parser
+	const char *pos;
+	const char *error;
+};
+
+bool wkt_reader_try_parse(wkt_reader *reader, geometry *out);
+std::string wkt_reader_get_error_context(const wkt_reader *reader);
 
 } // namespace ops
 
@@ -905,32 +921,63 @@ struct visit_callbacks {
 
 inline void visit(const geometry *geom, const geometry *root, const visit_callbacks *visitor, void *state) {
 
-#define HANDLE_ENTER_PART(PART, PARENT) if(visitor->on_enter_part) { SGL_VISIT_RESULT res = visitor->on_enter_part(state, PART, PARENT); if(res == SGL_VISIT_EXIT) { return; } else if(res == SGL_VISIT_SKIP) { break; } }
-#define HANDLE_LEAVE_PART(PART, PARENT) if(visitor->on_leave_part) { SGL_VISIT_RESULT res = visitor->on_leave_part(state, PART, PARENT); if(res == SGL_VISIT_EXIT) { return; } else if(res == SGL_VISIT_SKIP) { break; } }
-#define HANDLE_ENTER_CHILD_PART(PART, PARENT) if(visitor->on_enter_part) { SGL_VISIT_RESULT res = visitor->on_enter_part(state, PART, PARENT); if(res == SGL_VISIT_EXIT) { return; } else if(res == SGL_VISIT_SKIP) { continue; } }
-#define HANDLE_LEAVE_CHILD_PART(PART, PARENT) if(visitor->on_leave_part) { SGL_VISIT_RESULT res = visitor->on_leave_part(state, PART, PARENT); if(res == SGL_VISIT_EXIT) { return; } else if(res == SGL_VISIT_SKIP) { continue; } }
+#define HANDLE_ENTER_PART(PART, PARENT)                                                                                \
+	if (visitor->on_enter_part) {                                                                                      \
+		SGL_VISIT_RESULT res = visitor->on_enter_part(state, PART, PARENT);                                            \
+		if (res == SGL_VISIT_EXIT) {                                                                                   \
+			return;                                                                                                    \
+		} else if (res == SGL_VISIT_SKIP) {                                                                            \
+			break;                                                                                                     \
+		}                                                                                                              \
+	}
+#define HANDLE_LEAVE_PART(PART, PARENT)                                                                                \
+	if (visitor->on_leave_part) {                                                                                      \
+		SGL_VISIT_RESULT res = visitor->on_leave_part(state, PART, PARENT);                                            \
+		if (res == SGL_VISIT_EXIT) {                                                                                   \
+			return;                                                                                                    \
+		} else if (res == SGL_VISIT_SKIP) {                                                                            \
+			break;                                                                                                     \
+		}                                                                                                              \
+	}
+#define HANDLE_ENTER_CHILD_PART(PART, PARENT)                                                                          \
+	if (visitor->on_enter_part) {                                                                                      \
+		SGL_VISIT_RESULT res = visitor->on_enter_part(state, PART, PARENT);                                            \
+		if (res == SGL_VISIT_EXIT) {                                                                                   \
+			return;                                                                                                    \
+		} else if (res == SGL_VISIT_SKIP) {                                                                            \
+			continue;                                                                                                  \
+		}                                                                                                              \
+	}
+#define HANDLE_LEAVE_CHILD_PART(PART, PARENT)                                                                          \
+	if (visitor->on_leave_part) {                                                                                      \
+		SGL_VISIT_RESULT res = visitor->on_leave_part(state, PART, PARENT);                                            \
+		if (res == SGL_VISIT_EXIT) {                                                                                   \
+			return;                                                                                                    \
+		} else if (res == SGL_VISIT_SKIP) {                                                                            \
+			continue;                                                                                                  \
+		}                                                                                                              \
+	}
 
 	auto part = geom;
-	if(part == nullptr) {
+	if (part == nullptr) {
 		return;
 	}
 
 	auto parent = part->get_parent();
 
-	while(true) {
-		switch(part->get_type()) {
+	while (true) {
+		switch (part->get_type()) {
 		case geometry_type::POINT:
-		case geometry_type::LINESTRING:{
+		case geometry_type::LINESTRING: {
 			HANDLE_ENTER_PART(part, parent);
 			HANDLE_LEAVE_PART(part, parent);
-		}
-		break;
+		} break;
 		case geometry_type::POLYGON: {
 
 			HANDLE_ENTER_PART(part, parent);
 
 			const auto tail = part->get_last_part();
-			if(tail != nullptr) {
+			if (tail != nullptr) {
 				auto head = tail;
 				do {
 					SGL_ASSERT(head != nullptr);
@@ -941,7 +988,7 @@ inline void visit(const geometry *geom, const geometry *root, const visit_callba
 					HANDLE_ENTER_CHILD_PART(head, part);
 					HANDLE_LEAVE_CHILD_PART(head, part);
 
-				} while(head != tail);
+				} while (head != tail);
 			}
 
 			HANDLE_LEAVE_PART(part, parent);
@@ -950,7 +997,7 @@ inline void visit(const geometry *geom, const geometry *root, const visit_callba
 			HANDLE_ENTER_PART(part, parent);
 
 			const auto tail = part->get_last_part();
-			if(tail != nullptr) {
+			if (tail != nullptr) {
 				auto head = tail;
 				do {
 					SGL_ASSERT(head != nullptr);
@@ -961,8 +1008,7 @@ inline void visit(const geometry *geom, const geometry *root, const visit_callba
 					HANDLE_ENTER_CHILD_PART(head, part);
 					HANDLE_LEAVE_CHILD_PART(head, part);
 
-				} while(head != tail);
-
+				} while (head != tail);
 			}
 			HANDLE_LEAVE_PART(part, parent);
 
@@ -971,7 +1017,7 @@ inline void visit(const geometry *geom, const geometry *root, const visit_callba
 			HANDLE_ENTER_PART(part, parent);
 
 			const auto tail = part->get_last_part();
-			if(tail != nullptr) {
+			if (tail != nullptr) {
 				auto head = tail;
 				do {
 					SGL_ASSERT(head != nullptr);
@@ -982,7 +1028,7 @@ inline void visit(const geometry *geom, const geometry *root, const visit_callba
 					HANDLE_ENTER_CHILD_PART(head, part);
 					HANDLE_LEAVE_CHILD_PART(head, part);
 
-				} while(head != tail);
+				} while (head != tail);
 			}
 
 			HANDLE_LEAVE_PART(part, parent);
@@ -991,7 +1037,7 @@ inline void visit(const geometry *geom, const geometry *root, const visit_callba
 			HANDLE_ENTER_PART(part, parent);
 
 			const auto tail = part->get_last_part();
-			if(tail != nullptr) {
+			if (tail != nullptr) {
 				auto head = tail;
 				do {
 					SGL_ASSERT(head != nullptr);
@@ -1002,7 +1048,7 @@ inline void visit(const geometry *geom, const geometry *root, const visit_callba
 					HANDLE_ENTER_CHILD_PART(head, part);
 
 					const auto ring_tail = head->get_last_part();
-					if(ring_tail != nullptr) {
+					if (ring_tail != nullptr) {
 						auto ring_head = ring_tail;
 						do {
 							SGL_ASSERT(ring_head != nullptr);
@@ -1013,19 +1059,19 @@ inline void visit(const geometry *geom, const geometry *root, const visit_callba
 							HANDLE_ENTER_CHILD_PART(ring_head, head);
 							HANDLE_LEAVE_CHILD_PART(ring_head, head);
 
-						} while(ring_head != ring_tail);
+						} while (ring_head != ring_tail);
 					}
 
 					HANDLE_LEAVE_CHILD_PART(head, part);
 
-				} while(head != part->get_last_part());
+				} while (head != part->get_last_part());
 			}
 
 			HANDLE_LEAVE_PART(part, parent);
 		} break;
 		case geometry_type::MULTI_GEOMETRY: {
 			HANDLE_ENTER_PART(part, parent);
-			if(!part->is_empty()) {
+			if (!part->is_empty()) {
 				// Recurse down
 				part = part->get_first_part();
 				continue;
@@ -1041,13 +1087,13 @@ inline void visit(const geometry *geom, const geometry *root, const visit_callba
 		}
 
 		// Now go up/sideways
-		while(true) {
+		while (true) {
 
-			if(parent == root) {
+			if (parent == root) {
 				return;
 			}
 
-			if(part != parent->get_last_part()) {
+			if (part != parent->get_last_part()) {
 				// We should only get here if we are in a multi geometry
 				SGL_ASSERT(parent->get_type() == geometry_type::MULTI_GEOMETRY);
 

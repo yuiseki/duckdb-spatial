@@ -11,6 +11,8 @@
 #include "spatial/core/geometry/wkb_writer.hpp"
 #include "yyjson.h"
 
+#include <duckdb/planner/expression/bound_function_expression.hpp>
+
 namespace spatial {
 namespace core {
 
@@ -444,8 +446,6 @@ void Serde::Deserialize(sgl::geometry &result, ArenaAllocator &arena, const char
 	DeserializeRecursive(cursor, result, has_z, has_m, arena);
 }
 
-
-
 //----------------------------------------------------------------------------------------------------------------------
 // LocalState
 //----------------------------------------------------------------------------------------------------------------------
@@ -717,7 +717,7 @@ class JSONAllocator {
 	// Stolen from the JSON extension :)
 public:
 	explicit JSONAllocator(ArenaAllocator &allocator)
-		: allocator(allocator), yyjson_allocator({Allocate, Reallocate, Free, &allocator}) {
+	    : allocator(allocator), yyjson_allocator({Allocate, Reallocate, Free, &allocator}) {
 	}
 	yyjson_alc *GetYYJSONAllocator() {
 		return &yyjson_allocator;
@@ -725,6 +725,7 @@ public:
 	void Reset() {
 		allocator.Reset();
 	}
+
 private:
 	static void *Allocate(void *ctx, size_t size) {
 		const auto alloc = static_cast<ArenaAllocator *>(ctx);
@@ -755,7 +756,7 @@ struct ST_AsGeoJSON {
 		switch (vertex_type) {
 		case sgl::vertex_type::XY:
 		case sgl::vertex_type::XYM: {
-			for(uint32_t i = 0; i < vertex_count; i++) {
+			for (uint32_t i = 0; i < vertex_count; i++) {
 				const auto coord = yyjson_mut_arr(doc);
 				const auto vert = geom->get_vertex_xy(i);
 				yyjson_mut_arr_add_real(doc, coord, vert.x);
@@ -765,7 +766,7 @@ struct ST_AsGeoJSON {
 		} break;
 		case sgl::vertex_type::XYZ:
 		case sgl::vertex_type::XYZM: {
-			for(uint32_t i = 0; i < vertex_count; i++) {
+			for (uint32_t i = 0; i < vertex_count; i++) {
 				const auto coord = yyjson_mut_arr(doc);
 				const auto vert = geom->get_vertex_xyzm(i);
 
@@ -773,7 +774,6 @@ struct ST_AsGeoJSON {
 				yyjson_mut_arr_add_real(doc, coord, vert.y);
 				yyjson_mut_arr_add_real(doc, coord, vert.zm);
 				yyjson_mut_arr_append(obj, coord);
-
 			}
 		} break;
 		default:
@@ -783,118 +783,118 @@ struct ST_AsGeoJSON {
 	}
 
 	static void FormatRecursive(const sgl::geometry *geom, yyjson_mut_doc *doc, yyjson_mut_val *obj) {
-		switch(geom->get_type()) {
-			case sgl::geometry_type::POINT: {
-				yyjson_mut_obj_add_str(doc, obj, "type", "Point");
-				const auto coords = yyjson_mut_arr(doc);
-				yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
-				FormatCoords(geom, doc, coords);
-			} break;
-			case sgl::geometry_type::LINESTRING: {
-				yyjson_mut_obj_add_str(doc, obj, "type", "LineString");
-				const auto coords = yyjson_mut_arr(doc);
-				yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
-				FormatCoords(geom, doc, coords);
-			} break;
-			case sgl::geometry_type::POLYGON: {
-				yyjson_mut_obj_add_str(doc, obj, "type", "Polygon");
-				const auto coords = yyjson_mut_arr(doc);
-				yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
+		switch (geom->get_type()) {
+		case sgl::geometry_type::POINT: {
+			yyjson_mut_obj_add_str(doc, obj, "type", "Point");
+			const auto coords = yyjson_mut_arr(doc);
+			yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
+			FormatCoords(geom, doc, coords);
+		} break;
+		case sgl::geometry_type::LINESTRING: {
+			yyjson_mut_obj_add_str(doc, obj, "type", "LineString");
+			const auto coords = yyjson_mut_arr(doc);
+			yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
+			FormatCoords(geom, doc, coords);
+		} break;
+		case sgl::geometry_type::POLYGON: {
+			yyjson_mut_obj_add_str(doc, obj, "type", "Polygon");
+			const auto coords = yyjson_mut_arr(doc);
+			yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
 
-				const auto tail = geom->get_last_part();
-				auto head = tail;
-				if(head) {
-					do {
-						head = head->get_next();
-						const auto ring = yyjson_mut_arr(doc);
-						FormatCoords(head, doc, ring);
-						yyjson_mut_arr_append(coords, ring);
-					} while(head != tail);
-				}
-			} break;
-			case sgl::geometry_type::MULTI_POINT: {
-				yyjson_mut_obj_add_str(doc, obj, "type", "MultiPolygon");
+			const auto tail = geom->get_last_part();
+			auto head = tail;
+			if (head) {
+				do {
+					head = head->get_next();
+					const auto ring = yyjson_mut_arr(doc);
+					FormatCoords(head, doc, ring);
+					yyjson_mut_arr_append(coords, ring);
+				} while (head != tail);
+			}
+		} break;
+		case sgl::geometry_type::MULTI_POINT: {
+			yyjson_mut_obj_add_str(doc, obj, "type", "MultiPolygon");
 
-				const auto coords = yyjson_mut_arr(doc);
-				yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
+			const auto coords = yyjson_mut_arr(doc);
+			yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
 
-				const auto tail = geom->get_last_part();
-				auto head = tail;
+			const auto tail = geom->get_last_part();
+			auto head = tail;
 
-				if(head) {
-					do {
-						head = head->get_next();
-						FormatCoords(head, doc, coords);
-					} while(head != tail);
-				}
-			} break;
-			case sgl::geometry_type::MULTI_LINESTRING: {
-				yyjson_mut_obj_add_str(doc, obj, "type", "MultiLineString");
+			if (head) {
+				do {
+					head = head->get_next();
+					FormatCoords(head, doc, coords);
+				} while (head != tail);
+			}
+		} break;
+		case sgl::geometry_type::MULTI_LINESTRING: {
+			yyjson_mut_obj_add_str(doc, obj, "type", "MultiLineString");
 
-				const auto coords = yyjson_mut_arr(doc);
-				yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
+			const auto coords = yyjson_mut_arr(doc);
+			yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
 
-				const auto tail = geom->get_last_part();
-				auto head = tail;
+			const auto tail = geom->get_last_part();
+			auto head = tail;
 
-				if(head) {
-					do {
-						head = head->get_next();
-						const auto line = yyjson_mut_arr(doc);
-						FormatCoords(head, doc, line);
-						yyjson_mut_arr_append(coords, line);
-					} while(head != tail);
-				}
-			} break;
-			case sgl::geometry_type::MULTI_POLYGON: {
-				yyjson_mut_obj_add_str(doc, obj, "type", "MultiPolygon");
+			if (head) {
+				do {
+					head = head->get_next();
+					const auto line = yyjson_mut_arr(doc);
+					FormatCoords(head, doc, line);
+					yyjson_mut_arr_append(coords, line);
+				} while (head != tail);
+			}
+		} break;
+		case sgl::geometry_type::MULTI_POLYGON: {
+			yyjson_mut_obj_add_str(doc, obj, "type", "MultiPolygon");
 
-				const auto coords = yyjson_mut_arr(doc);
-				yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
+			const auto coords = yyjson_mut_arr(doc);
+			yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
 
-				const auto tail = geom->get_last_part();
-				auto head = tail;
+			const auto tail = geom->get_last_part();
+			auto head = tail;
 
-				if(head) {
-					do {
-						head = head->get_next();
-						const auto poly = yyjson_mut_arr(doc);
+			if (head) {
+				do {
+					head = head->get_next();
+					const auto poly = yyjson_mut_arr(doc);
 
-						const auto ring_tail = head->get_last_part();
-						auto ring_head = ring_tail;
-						if(ring_head) {
-							do {
-								ring_head = ring_head->get_next();
-								const auto ring = yyjson_mut_arr(doc);
-								FormatCoords(ring_head, doc, ring);
-								yyjson_mut_arr_append(poly, ring);
-							} while(ring_head != ring_tail);
-						}
-						yyjson_mut_arr_append(coords, poly);
-					} while(head != tail);
-				}
-			} break;
-			case sgl::geometry_type::MULTI_GEOMETRY: {
-				yyjson_mut_obj_add_str(doc, obj, "type", "GeometryCollection");
+					const auto ring_tail = head->get_last_part();
+					auto ring_head = ring_tail;
+					if (ring_head) {
+						do {
+							ring_head = ring_head->get_next();
+							const auto ring = yyjson_mut_arr(doc);
+							FormatCoords(ring_head, doc, ring);
+							yyjson_mut_arr_append(poly, ring);
+						} while (ring_head != ring_tail);
+					}
+					yyjson_mut_arr_append(coords, poly);
+				} while (head != tail);
+			}
+		} break;
+		case sgl::geometry_type::MULTI_GEOMETRY: {
+			yyjson_mut_obj_add_str(doc, obj, "type", "GeometryCollection");
 
-				const auto geoms = yyjson_mut_arr(doc);
-				yyjson_mut_obj_add_val(doc, obj, "geometries", geoms);
+			const auto geoms = yyjson_mut_arr(doc);
+			yyjson_mut_obj_add_val(doc, obj, "geometries", geoms);
 
-				const auto tail = geom->get_last_part();
-				auto head = tail;
+			const auto tail = geom->get_last_part();
+			auto head = tail;
 
-				if(head) {
-					do {
-						head = head->get_next();
-						const auto sub_geom = yyjson_mut_obj(doc);
-						FormatRecursive(head, doc, sub_geom);
-						yyjson_mut_arr_append(geoms, sub_geom);
-					} while(head != tail);
-				}
-			} break;
-			default:
-				D_ASSERT(false);
-				break;
+			if (head) {
+				do {
+					head = head->get_next();
+					const auto sub_geom = yyjson_mut_obj(doc);
+					FormatRecursive(head, doc, sub_geom);
+					yyjson_mut_arr_append(geoms, sub_geom);
+				} while (head != tail);
+			}
+		} break;
+		default:
+			D_ASSERT(false);
+			break;
 		}
 	}
 
@@ -919,7 +919,7 @@ struct ST_AsGeoJSON {
 			char *json_data = yyjson_mut_write_opts(doc, 0, allocator.GetYYJSONAllocator(), &json_size, nullptr);
 			// Because the arena allocator only resets after each pipeline invocation, we can safely just point into the
 			// arena here without needing to copy the data to the string heap with StringVector::AddString
-			return string_t { json_data, static_cast<uint32_t>(json_size) };
+			return string_t {json_data, static_cast<uint32_t>(json_size)};
 		});
 	}
 
@@ -1045,7 +1045,6 @@ struct ST_AsText {
 		POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))
 	)";
 
-
 	//------------------------------------------------------------------------------------------------------------------
 	// Register
 	//------------------------------------------------------------------------------------------------------------------
@@ -1106,10 +1105,8 @@ struct ST_AsWKB {
 	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
-			[&](const string_t &input) {
-				return WKBWriter::Write(input, result);
-			});
+		UnaryExecutor::Execute<string_t, string_t>(
+		    args.data[0], result, args.size(), [&](const string_t &input) { return WKBWriter::Write(input, result); });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -1223,11 +1220,11 @@ struct ST_AsSVG {
 
 	static void FormatPoint(const sgl::geometry *geom, vector<char> &buffer, int32_t max_digits, bool rel) {
 		D_ASSERT(geom->get_type() == sgl::geometry_type::POINT);
-		if(geom->is_empty()) {
+		if (geom->is_empty()) {
 			return;
 		}
 		const auto vert = geom->get_vertex_xy(0);
-		if(rel) {
+		if (rel) {
 			constexpr auto x = "x=\"";
 			constexpr auto y = "y=\"";
 			buffer.insert(buffer.end(), x, x + 3);
@@ -1250,7 +1247,8 @@ struct ST_AsSVG {
 		}
 	}
 
-	static void FormatLineString(const sgl::geometry *geom, vector<char> &buffer, int32_t max_digits, bool rel, bool close) {
+	static void FormatLineString(const sgl::geometry *geom, vector<char> &buffer, int32_t max_digits, bool rel,
+	                             bool close) {
 		D_ASSERT(geom->get_type() == sgl::geometry_type::LINESTRING);
 
 		const auto vertex_count = geom->get_count();
@@ -1263,16 +1261,16 @@ struct ST_AsSVG {
 		buffer.push_back(' ');
 		MathUtil::format_coord(last_vert.x, -last_vert.y, buffer, max_digits);
 
-		if(vertex_count == 1) {
+		if (vertex_count == 1) {
 			return;
 		}
 
 		buffer.push_back(' ');
 		buffer.push_back(rel ? 'l' : 'L');
 
-		if(rel) {
-			for(uint32_t i = 1; i < vertex_count; i++) {
-				if(i == vertex_count - 1 && close) {
+		if (rel) {
+			for (uint32_t i = 1; i < vertex_count; i++) {
+				if (i == vertex_count - 1 && close) {
 					buffer.push_back(' ');
 					buffer.push_back('z');
 				} else {
@@ -1298,69 +1296,75 @@ struct ST_AsSVG {
 	static void FormatPolygon(const sgl::geometry *geom, vector<char> &buffer, int32_t max_digits, bool rel) {
 		const auto tail = geom->get_last_part();
 		auto head = tail;
-		if(head) {
+		if (head) {
 			do {
 				head = head->get_next();
 				FormatLineString(head, buffer, max_digits, rel, true);
-			} while(head != tail);
+			} while (head != tail);
 		}
 	}
 
 	static void FormatRecursive(const sgl::geometry *geom, vector<char> &buffer, int32_t max_digits, bool rel) {
-		switch(geom->get_type()) {
-		case sgl::geometry_type::POINT: FormatPoint(geom, buffer, max_digits, rel); break;
-		case sgl::geometry_type::LINESTRING: FormatLineString(geom, buffer, max_digits, rel, false); break;
-		case sgl::geometry_type::POLYGON: FormatPolygon(geom, buffer, max_digits, rel); break;
+		switch (geom->get_type()) {
+		case sgl::geometry_type::POINT:
+			FormatPoint(geom, buffer, max_digits, rel);
+			break;
+		case sgl::geometry_type::LINESTRING:
+			FormatLineString(geom, buffer, max_digits, rel, false);
+			break;
+		case sgl::geometry_type::POLYGON:
+			FormatPolygon(geom, buffer, max_digits, rel);
+			break;
 		case sgl::geometry_type::MULTI_POINT: {
 			const auto tail = geom->get_last_part();
 			auto head = tail;
-			if(head) {
+			if (head) {
 				do {
 					head = head->get_next();
 					FormatPoint(head, buffer, max_digits, rel);
-					if(head != tail) {
+					if (head != tail) {
 						buffer.push_back(',');
 					}
-				} while(head != tail);
+				} while (head != tail);
 			}
 		} break;
 		case sgl::geometry_type::MULTI_LINESTRING: {
 			const auto tail = geom->get_last_part();
 			auto head = tail;
-			if(head) {
+			if (head) {
 				do {
 					head = head->get_next();
 					FormatLineString(head, buffer, max_digits, rel, false);
-					if(head != tail) {
+					if (head != tail) {
 						buffer.push_back(' ');
 					}
-				} while(head != tail);
+				} while (head != tail);
 			}
 		} break;
 		case sgl::geometry_type::MULTI_POLYGON: {
 			const auto tail = geom->get_last_part();
 			auto head = tail;
-			if(head) {
+			if (head) {
 				do {
 					head = head->get_next();
 					FormatPolygon(head, buffer, max_digits, rel);
-					if(head != tail) {
+					if (head != tail) {
 						buffer.push_back(' ');
 					}
-				} while(head != tail);
+				} while (head != tail);
 			}
 		} break;
 		case sgl::geometry_type::MULTI_GEOMETRY: {
 			const auto tail = geom->get_last_part();
 			auto head = tail;
-			if(head) {
+			if (head) {
 				do {
 					head = head->get_next();
 					FormatRecursive(head, buffer, max_digits, rel);
-					if(head != tail) {
+					if (head != tail) {
 						buffer.push_back(';');
 					}
-				} while(head != tail);
+				} while (head != tail);
 			}
 		} break;
 		default:
@@ -1379,19 +1383,18 @@ struct ST_AsSVG {
 		vector<char> buffer;
 
 		TernaryExecutor::Execute<string_t, bool, int32_t, string_t>(
-			args.data[0], args.data[1], args.data[2], result, args.size(),
-			[&](const string_t &blob, const bool rel, const int32_t max_digits) {
+		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    [&](const string_t &blob, const bool rel, const int32_t max_digits) {
+			    // Clear buffer
+			    buffer.clear();
 
-				// Clear buffer
-				buffer.clear();
+			    // Deserialize geometry
+			    const auto geom = lstate.Deserialize(blob);
 
-				// Deserialize geometry
-				const auto geom = lstate.Deserialize(blob);
+			    FormatRecursive(&geom, buffer, max_digits, rel);
 
-				FormatRecursive(&geom, buffer, max_digits, rel);
-
-				return StringVector::AddString(result, buffer.data(), buffer.size());
-			});
+			    return StringVector::AddString(result, buffer.data(), buffer.size());
+		    });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -1600,7 +1603,7 @@ struct ST_Centroid {
 	//------------------------------------------------------------------------------------------------------------------
 	// BOX_2D/F
 	//------------------------------------------------------------------------------------------------------------------
-	template<class T>
+	template <class T>
 	static void ExecuteBox(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto input = args.data[0];
 		auto count = args.size();
@@ -1991,8 +1994,8 @@ struct ST_Contains {
 						side = Side::RIGHT;
 					}
 
-					if (side == Side::ON &&
-					    (((x1 <= x && x < x2) || (x1 >= x && x > x2)) || ((y1 <= y && y < y2) || (y1 >= y && y > y2)))) {
+					if (side == Side::ON && (((x1 <= x && x < x2) || (x1 >= x && x > x2)) ||
+					                         ((y1 <= y && y < y2) || (y1 >= y && y > y2)))) {
 
 						// return Contains::ON_EDGE;
 						contains = false;
@@ -2268,7 +2271,6 @@ struct ST_Distance {
 	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Distance", [](ScalarFunctionBuilder &func) {
-
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("point1", GeoTypes::POINT_2D());
 				variant.AddParameter("point2", GeoTypes::POINT_2D());
@@ -2331,8 +2333,8 @@ struct ST_Dump {
 			auto &blob = UnifiedVectorFormat::GetData<string_t>(geom_format)[in_row_idx];
 			auto geom = lstate.Deserialize(blob);
 
-			vector<std::tuple<sgl::geometry*, vector<int32_t>>> stack;
-			vector<std::tuple<sgl::geometry*, vector<int32_t>>> items;
+			vector<std::tuple<sgl::geometry *, vector<int32_t>>> stack;
+			vector<std::tuple<sgl::geometry *, vector<int32_t>>> items;
 
 			stack.emplace_back(&geom, vector<int32_t>());
 
@@ -2346,13 +2348,13 @@ struct ST_Dump {
 					// Push all children
 
 					auto head = current_geom->get_first_part();
-					if(!head) {
+					if (!head) {
 						continue;
 					}
 
 					stack.emplace_back(head, current_path);
 
-					while(head != current_geom->get_last_part()) {
+					while (head != current_geom->get_last_part()) {
 						head = head->get_next();
 						stack.emplace_back(head, current_path);
 					}
@@ -2442,11 +2444,8 @@ struct ST_Dump {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("geom", GeoTypes::GEOMETRY());
 
-				variant.SetReturnType(LogicalType::LIST(
-				LogicalType::STRUCT({
-					{"geom", GeoTypes::GEOMETRY()},
-					{"path", LogicalType::LIST(
-						LogicalType::INTEGER)}})));
+				variant.SetReturnType(LogicalType::LIST(LogicalType::STRUCT(
+				    {{"geom", GeoTypes::GEOMETRY()}, {"path", LogicalType::LIST(LogicalType::INTEGER)}})));
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
@@ -2842,7 +2841,7 @@ struct ST_FlipCoordinates {
 	//------------------------------------------------------------------------------------------------------------------
 	// TODO: Move this to SGL, make non-recursive
 	static void FlipPoint(ArenaAllocator &alloc, sgl::geometry *geom) {
-		if(!geom->is_empty()) {
+		if (!geom->is_empty()) {
 			const auto vertex_count = geom->get_count();
 			const auto vertex_size = geom->get_vertex_size();
 			const auto vertex_data = geom->get_vertex_data();
@@ -2852,7 +2851,7 @@ struct ST_FlipCoordinates {
 			memcpy(new_vertex_data, vertex_data, vertex_count * vertex_size);
 
 			// Flip the x and y coordinates
-			const auto vertex_ptr = reinterpret_cast<double*>(new_vertex_data);
+			const auto vertex_ptr = reinterpret_cast<double *>(new_vertex_data);
 			std::swap(vertex_ptr[0], vertex_ptr[1]);
 
 			// Update the vertex data
@@ -2861,7 +2860,7 @@ struct ST_FlipCoordinates {
 	}
 
 	static void FlipLineString(ArenaAllocator &alloc, sgl::geometry *geom) {
-		if(!geom->is_empty()) {
+		if (!geom->is_empty()) {
 			const auto vertex_count = geom->get_count();
 			const auto vertex_size = geom->get_vertex_size();
 			const auto vertex_data = geom->get_vertex_data();
@@ -2871,9 +2870,9 @@ struct ST_FlipCoordinates {
 			memcpy(new_vertex_data, vertex_data, vertex_count * vertex_size);
 
 			// Flip the x and y coordinates
-			for(idx_t i = 0; i < vertex_count; i++) {
-				const auto x_ptr = reinterpret_cast<double*>(new_vertex_data + i * vertex_size);
-				const auto y_ptr = reinterpret_cast<double*>(new_vertex_data + i * vertex_size + sizeof(double));
+			for (idx_t i = 0; i < vertex_count; i++) {
+				const auto x_ptr = reinterpret_cast<double *>(new_vertex_data + i * vertex_size);
+				const auto y_ptr = reinterpret_cast<double *>(new_vertex_data + i * vertex_size + sizeof(double));
 
 				std::swap(*x_ptr, *y_ptr);
 			}
@@ -2886,65 +2885,70 @@ struct ST_FlipCoordinates {
 	static void FlipPolygon(ArenaAllocator &alloc, sgl::geometry *geom) {
 		const auto tail = geom->get_last_part();
 		auto head = tail;
-		if(head) {
+		if (head) {
 			do {
 				head = head->get_next();
 				FlipLineString(alloc, head);
-			} while(head != tail);
+			} while (head != tail);
 		}
 	}
 
 	static void FlipRecursive(ArenaAllocator &alloc, sgl::geometry *geom) {
-		switch(geom->get_type()) {
-			case sgl::geometry_type::POINT: FlipPoint(alloc, geom); break;
-			case sgl::geometry_type::LINESTRING: FlipLineString(alloc, geom); break;
-			case sgl::geometry_type::POLYGON: FlipPolygon(alloc, geom); break;
-			case sgl::geometry_type::MULTI_POINT: {
-				const auto tail = geom->get_last_part();
-				auto head = tail;
-				if(head) {
-					do {
-						FlipPoint(alloc, head);
-						head = head->get_next();
-					} while(head != tail);
-				}
-			} break;
-			case sgl::geometry_type::MULTI_LINESTRING: {
-				const auto tail = geom->get_last_part();
-				auto head = tail;
-				if(head) {
-					do {
-						FlipLineString(alloc, head);
-						head = head->get_next();
-					} while(head != tail);
-				}
-			} break;
-			case sgl::geometry_type::MULTI_POLYGON: {
-				const auto tail = geom->get_last_part();
-				auto head = tail;
-				if(head) {
-					do {
-						FlipPolygon(alloc, head);
-						head = head->get_next();
-					} while(head != tail);
-				}
-			} break;
-			case sgl::geometry_type::MULTI_GEOMETRY: {
-				const auto tail = geom->get_last_part();
-				auto head = tail;
-				if(head) {
-					do {
-						FlipRecursive(alloc, head);
-						head = head->get_next();
-					} while(head != tail);
-				}
-			} break;
-			default:
-				D_ASSERT(false);
-				break;
+		switch (geom->get_type()) {
+		case sgl::geometry_type::POINT:
+			FlipPoint(alloc, geom);
+			break;
+		case sgl::geometry_type::LINESTRING:
+			FlipLineString(alloc, geom);
+			break;
+		case sgl::geometry_type::POLYGON:
+			FlipPolygon(alloc, geom);
+			break;
+		case sgl::geometry_type::MULTI_POINT: {
+			const auto tail = geom->get_last_part();
+			auto head = tail;
+			if (head) {
+				do {
+					FlipPoint(alloc, head);
+					head = head->get_next();
+				} while (head != tail);
+			}
+		} break;
+		case sgl::geometry_type::MULTI_LINESTRING: {
+			const auto tail = geom->get_last_part();
+			auto head = tail;
+			if (head) {
+				do {
+					FlipLineString(alloc, head);
+					head = head->get_next();
+				} while (head != tail);
+			}
+		} break;
+		case sgl::geometry_type::MULTI_POLYGON: {
+			const auto tail = geom->get_last_part();
+			auto head = tail;
+			if (head) {
+				do {
+					FlipPolygon(alloc, head);
+					head = head->get_next();
+				} while (head != tail);
+			}
+		} break;
+		case sgl::geometry_type::MULTI_GEOMETRY: {
+			const auto tail = geom->get_last_part();
+			auto head = tail;
+			if (head) {
+				do {
+					FlipRecursive(alloc, head);
+					head = head->get_next();
+				} while (head != tail);
+			}
+		} break;
+		default:
+			D_ASSERT(false);
+			break;
 		}
 	}
-
 
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 
@@ -3363,8 +3367,7 @@ struct ST_GeomFromHEXWKB {
 		auto &lstate = LocalState::ResetAndGet(state);
 		auto &alloc = lstate.GetAllocator();
 
-		UnaryExecutor::Execute<string_t, string_t>(input, result, count,
-			[&](const string_t &input_hex) {
+		UnaryExecutor::Execute<string_t, string_t>(input, result, count, [&](const string_t &input_hex) {
 			const auto hex_size = input_hex.GetSize();
 			const auto hex_ptr = const_data_ptr_cast(input_hex.GetData());
 
@@ -3387,7 +3390,7 @@ struct ST_GeomFromHEXWKB {
 			}
 
 			const auto geom = sgl::ops::from_wkb(&alloc, blob_ptr, blob_size);
-			if(geom.get_type() == sgl::geometry_type::INVALID) {
+			if (geom.get_type() == sgl::geometry_type::INVALID) {
 				throw InvalidInputException("Invalid WKB data");
 			}
 
@@ -3449,7 +3452,8 @@ struct ST_GeomFromText {
 	// TODO: Remove this, this doesnt make any sense here. Invalid geometries should be handled by TRY_CAST
 	//
 	struct BindData final : public FunctionData {
-		explicit BindData(bool ignore_invalid) : ignore_invalid(ignore_invalid) { }
+		explicit BindData(bool ignore_invalid) : ignore_invalid(ignore_invalid) {
+		}
 
 		unique_ptr<FunctionData> Copy() const override {
 			return make_uniq<BindData>(ignore_invalid);
@@ -3462,7 +3466,7 @@ struct ST_GeomFromText {
 	};
 
 	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
-													vector<unique_ptr<Expression>> &arguments) {
+	                                     vector<unique_ptr<Expression>> &arguments) {
 		if (arguments.empty()) {
 			throw InvalidInputException("ST_GeomFromText requires at least one argument");
 		}
@@ -3479,7 +3483,7 @@ struct ST_GeomFromText {
 			}
 			if (!arg->IsFoldable()) {
 				throw InvalidInputException(
-					"Non-constant arguments are not supported in ST_GeomFromText optional arguments");
+				    "Non-constant arguments are not supported in ST_GeomFromText optional arguments");
 			}
 			if (arg->alias == "ignore_invalid") {
 				if (arg->return_type.id() != LogicalTypeId::BOOLEAN) {
@@ -3498,13 +3502,36 @@ struct ST_GeomFromText {
 		auto &lstate = LocalState::ResetAndGet(state);
 		auto &alloc = lstate.GetAllocator();
 
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &wkt) {
-			const auto geom = sgl::ops::from_wkt(&alloc, wkt.GetDataUnsafe(), wkt.GetSize());
-			if(geom.get_type() == sgl::geometry_type::INVALID) {
-				throw InvalidInputException("Invalid WKT data");
-			}
-			return lstate.Serialize(result, geom);
-		});
+		const auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
+		const auto &bind_data = func_expr.bind_info->Cast<BindData>();
+		const auto ignore_invalid = bind_data.ignore_invalid;
+
+		sgl::ops::wkt_reader reader = {};
+		reader.alloc = &alloc;
+
+		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
+		    args.data[0], result, args.size(), [&](const string_t &wkt, ValidityMask &mask, idx_t row_idx) {
+			    const auto wkt_ptr = wkt.GetDataUnsafe();
+			    const auto wkt_len = wkt.GetSize();
+
+			    reader.buf = wkt_ptr;
+			    reader.end = wkt_ptr + wkt_len;
+
+			    sgl::geometry geom;
+
+			    if (!sgl::ops::wkt_reader_try_parse(&reader, &geom)) {
+
+				    if (ignore_invalid) {
+					    mask.SetInvalid(row_idx);
+					    return string_t {};
+				    }
+
+				    const auto error_ctx = sgl::ops::wkt_reader_get_error_context(&reader);
+				    throw InvalidInputException("%s %s", reader.error, error_ctx);
+			    }
+
+			    return lstate.Serialize(result, geom);
+		    });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -3563,13 +3590,12 @@ struct ST_GeomFromWKB {
 		auto &lstate = LocalState::ResetAndGet(state);
 		auto &alloc = lstate.GetAllocator();
 		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &wkb) {
-
 			const auto geom = sgl::ops::from_wkb(&alloc, const_data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
 
 			// TODO: Better error messages.
 			// We should be able to provide the actual name of the geometry type
 
-			if(geom.get_type() == sgl::geometry_type::INVALID) {
+			if (geom.get_type() == sgl::geometry_type::INVALID) {
 				throw InvalidInputException("Invalid WKB data");
 			}
 
@@ -3593,11 +3619,11 @@ struct ST_GeomFromWKB {
 		const auto x_data = FlatVector::GetData<double>(*point_children[0]);
 		const auto y_data = FlatVector::GetData<double>(*point_children[1]);
 
-		for(idx_t i = 0; i < count; i++) {
+		for (idx_t i = 0; i < count; i++) {
 			const auto &wkb = FlatVector::GetData<string_t>(input)[i];
 
 			const auto geom = sgl::ops::from_wkb(&alloc, const_data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
-			if(geom.get_type() != sgl::geometry_type::POINT) {
+			if (geom.get_type() != sgl::geometry_type::POINT) {
 				throw InvalidInputException("ST_Point2DFromWKB: WKB is not a POINT");
 			}
 
@@ -3607,7 +3633,7 @@ struct ST_GeomFromWKB {
 			x_data[i] = vertex.y;
 		}
 
-		if(args.AllConstant()) {
+		if (args.AllConstant()) {
 			result.SetVectorType(VectorType::CONSTANT_VECTOR);
 		}
 	}
@@ -3634,7 +3660,7 @@ struct ST_GeomFromWKB {
 			auto wkb = wkb_data[i];
 
 			const auto geom = sgl::ops::from_wkb(&alloc, const_data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
-			if(geom.get_type() != sgl::geometry_type::LINESTRING) {
+			if (geom.get_type() != sgl::geometry_type::LINESTRING) {
 				throw InvalidInputException("ST_LineString2DFromWKB: WKB is not a LINESTRING");
 			}
 
@@ -3694,7 +3720,7 @@ struct ST_GeomFromWKB {
 			auto wkb = wkb_data[i];
 
 			const auto geom = sgl::ops::from_wkb(&alloc, const_data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
-			if(geom.get_type() != sgl::geometry_type::POLYGON) {
+			if (geom.get_type() != sgl::geometry_type::POLYGON) {
 				throw InvalidInputException("ST_Polygon2DFromWKB: WKB is not a POLYGON");
 			}
 
@@ -3708,7 +3734,7 @@ struct ST_GeomFromWKB {
 
 			const auto tail = geom.get_last_part();
 			auto ring = tail;
-			if(ring) {
+			if (ring) {
 				int j = 0;
 				do {
 					ring = ring->get_next();
@@ -3737,7 +3763,7 @@ struct ST_GeomFromWKB {
 
 					j++;
 
-				} while(ring != tail);
+				} while (ring != tail);
 			}
 
 			total_ring_count += ring_count;
@@ -4409,15 +4435,14 @@ struct ST_Hilbert {
 		    args.data[0], args.data[1], result, args.size(), [&](const GEOM_TYPE &geom_type, const BOX_TYPE &bounds) {
 			    const auto blob = geom_type.val;
 
-		    	const auto geom = lstate.Deserialize(blob);
+			    const auto geom = lstate.Deserialize(blob);
 
-		    	// TODO: Dont deserialize, just get the bounds from blob instead.
-				sgl::box_xy geom_bounds = {0};
+			    // TODO: Dont deserialize, just get the bounds from blob instead.
+			    sgl::box_xy geom_bounds = {0};
 
-		    	if(!sgl::ops::try_get_extent_xy(&geom, &geom_bounds)) {
-		    		throw InvalidInputException(
-						"ST_Hilbert(geom, bounds) does not support empty geometries");
-		    	}
+			    if (!sgl::ops::try_get_extent_xy(&geom, &geom_bounds)) {
+				    throw InvalidInputException("ST_Hilbert(geom, bounds) does not support empty geometries");
+			    }
 
 			    const auto dx = geom_bounds.min.x + (geom_bounds.max.x - geom_bounds.min.x) / 2;
 			    const auto dy = geom_bounds.min.y + (geom_bounds.max.y - geom_bounds.min.y) / 2;
@@ -4518,10 +4543,10 @@ struct ST_Intersects {
 		using BOOL_TYPE = PrimitiveType<bool>;
 
 		GenericExecutor::ExecuteBinary<BOX_TYPE, BOX_TYPE, BOOL_TYPE>(
-			args.data[0], args.data[1], result, args.size(), [&](BOX_TYPE &left, BOX_TYPE &right) {
-				return !(left.a_val > right.c_val || left.c_val < right.a_val || left.b_val > right.d_val ||
-						 left.d_val < right.b_val);
-			});
+		    args.data[0], args.data[1], result, args.size(), [&](BOX_TYPE &left, BOX_TYPE &right) {
+			    return !(left.a_val > right.c_val || left.c_val < right.a_val || left.b_val > right.d_val ||
+			             left.d_val < right.b_val);
+		    });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -4563,25 +4588,26 @@ struct ST_IntersectsExtent {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		BinaryExecutor::Execute<string_t, string_t, bool>(args.data[0], args.data[1], result, args.size(),
-			[&](const string_t &lhs_blob, const string_t &rhs_blob) {
-				// TODO: In the future we should store if the geom is empty/vertex count in the blob
+		                                                  [&](const string_t &lhs_blob, const string_t &rhs_blob) {
+			                                                  // TODO: In the future we should store if the geom is
+			                                                  // empty/vertex count in the blob
 
-				const auto lhs_geom = lstate.Deserialize(lhs_blob);
+			                                                  const auto lhs_geom = lstate.Deserialize(lhs_blob);
 
-				sgl::box_xy lhs_ext = {};
-				if(!sgl::ops::try_get_extent_xy(&lhs_geom, &lhs_ext)) {
-					return false;
-				}
+			                                                  sgl::box_xy lhs_ext = {};
+			                                                  if (!sgl::ops::try_get_extent_xy(&lhs_geom, &lhs_ext)) {
+				                                                  return false;
+			                                                  }
 
-				const auto rhs_geom = lstate.Deserialize(rhs_blob);
+			                                                  const auto rhs_geom = lstate.Deserialize(rhs_blob);
 
-				sgl::box_xy rhs_ext = {};
-				if(!sgl::ops::try_get_extent_xy(&rhs_geom, &rhs_ext)) {
-					return false;
-				}
+			                                                  sgl::box_xy rhs_ext = {};
+			                                                  if (!sgl::ops::try_get_extent_xy(&rhs_geom, &rhs_ext)) {
+				                                                  return false;
+			                                                  }
 
-				return lhs_ext.intersects(rhs_ext);
-			});
+			                                                  return lhs_ext.intersects(rhs_ext);
+		                                                  });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -6235,8 +6261,6 @@ struct ST_Within {
 		});
 	}
 };
-
-
 
 enum class VertexOrdinate { X, Y, Z, M };
 

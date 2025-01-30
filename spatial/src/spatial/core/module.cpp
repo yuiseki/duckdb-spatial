@@ -17,7 +17,7 @@ namespace core {
 
 void CoreModule::Register(DatabaseInstance &db) {
 	GeoTypes::Register(db);
-	//CoreScalarFunctions::Register(db);
+	// CoreScalarFunctions::Register(db);
 	CoreCastFunctions::Register(db);
 	CoreTableFunctions::Register(db);
 	CoreAggregateFunctions::Register(db);

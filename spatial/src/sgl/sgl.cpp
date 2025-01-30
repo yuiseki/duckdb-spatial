@@ -312,7 +312,7 @@ size_t to_wkb_size(const geometry *geom) {
 		size_t size = 1 + 4 + 4;
 		const auto tail = geom->get_last_part();
 		auto head = tail;
-		if(head) {
+		if (head) {
 			do {
 				head = head->get_next();
 				// count (4)
@@ -332,7 +332,7 @@ size_t to_wkb_size(const geometry *geom) {
 		size_t size = 1 + 4 + 4;
 		const auto tail = geom->get_last_part();
 		auto head = tail;
-		if(head) {
+		if (head) {
 			do {
 				head = head->get_next();
 				size += to_wkb_size(head);
@@ -349,10 +349,29 @@ size_t to_wkb_size(const geometry *geom) {
 // TODO: Make non-recursive
 size_t to_wkb(const geometry *geom, uint8_t *buffer, size_t size) {
 
-#define WKB_WRITE_U8(PTR, VAL) do { uint8_t v = VAL; memcpy(PTR, &v, sizeof(uint8_t)); PTR += sizeof(uint8_t); } while(0)
-#define WKB_WRITE_U32(PTR, VAL) do { uint32_t v = VAL; memcpy(PTR, &v, sizeof(uint32_t)); PTR += sizeof(uint32_t); } while(0)
-#define WKB_WRITE_DOUBLE(PTR, VAL) do { double v = VAL; memcpy(PTR, &v, sizeof(double)); PTR += sizeof(double); } while(0)
-#define WKB_WRITE_DATA(PTR, SRC, SIZE) do { memcpy(PTR, SRC, SIZE); PTR += SIZE; } while(0)
+#define WKB_WRITE_U8(PTR, VAL)                                                                                         \
+	do {                                                                                                               \
+		uint8_t v = VAL;                                                                                               \
+		memcpy(PTR, &v, sizeof(uint8_t));                                                                              \
+		PTR += sizeof(uint8_t);                                                                                        \
+	} while (0)
+#define WKB_WRITE_U32(PTR, VAL)                                                                                        \
+	do {                                                                                                               \
+		uint32_t v = VAL;                                                                                              \
+		memcpy(PTR, &v, sizeof(uint32_t));                                                                             \
+		PTR += sizeof(uint32_t);                                                                                       \
+	} while (0)
+#define WKB_WRITE_DOUBLE(PTR, VAL)                                                                                     \
+	do {                                                                                                               \
+		double v = VAL;                                                                                                \
+		memcpy(PTR, &v, sizeof(double));                                                                               \
+		PTR += sizeof(double);                                                                                         \
+	} while (0)
+#define WKB_WRITE_DATA(PTR, SRC, SIZE)                                                                                 \
+	do {                                                                                                               \
+		memcpy(PTR, SRC, SIZE);                                                                                        \
+		PTR += SIZE;                                                                                                   \
+	} while (0)
 
 	auto ptr = buffer;
 
@@ -364,7 +383,7 @@ size_t to_wkb(const geometry *geom, uint8_t *buffer, size_t size) {
 	// Write the body
 	switch (geom->get_type()) {
 	case geometry_type::POINT: {
-		if(geom->is_empty()) {
+		if (geom->is_empty()) {
 			// WKB does not support empty points, so we write NaNs instead
 			WKB_WRITE_DOUBLE(ptr, std::numeric_limits<double>::quiet_NaN());
 			WKB_WRITE_DOUBLE(ptr, std::numeric_limits<double>::quiet_NaN());
@@ -380,7 +399,7 @@ size_t to_wkb(const geometry *geom, uint8_t *buffer, size_t size) {
 		WKB_WRITE_U32(ptr, geom->get_count());
 		const auto tail = geom->get_last_part();
 		auto head = tail;
-		if(head) {
+		if (head) {
 			do {
 				head = head->get_next();
 				WKB_WRITE_U32(ptr, head->get_count());
@@ -395,7 +414,7 @@ size_t to_wkb(const geometry *geom, uint8_t *buffer, size_t size) {
 		WKB_WRITE_U32(ptr, geom->get_count());
 		const auto tail = geom->get_last_part();
 		auto head = tail;
-		if(head) {
+		if (head) {
 			do {
 				head = head->get_next();
 				ptr += to_wkb(head, ptr, size - (ptr - buffer));
@@ -420,15 +439,15 @@ size_t to_wkb(const geometry *geom, uint8_t *buffer, size_t size) {
 //------------------------------------------------------------------------------
 
 struct wkb_reader {
-	const uint8_t* beg = nullptr;
-	const uint8_t* ptr = nullptr;
-	const uint8_t* end = nullptr;
+	const uint8_t *beg = nullptr;
+	const uint8_t *ptr = nullptr;
+	const uint8_t *end = nullptr;
 	bool le = false;
 	bool error = false;
 };
 
-uint8_t wkb_reader_read_u8(wkb_reader* reader) {
-	if(reader->ptr + sizeof(uint8_t) > reader->end) {
+uint8_t wkb_reader_read_u8(wkb_reader *reader) {
+	if (reader->ptr + sizeof(uint8_t) > reader->end) {
 		reader->error = true;
 		return 0;
 	}
@@ -438,8 +457,8 @@ uint8_t wkb_reader_read_u8(wkb_reader* reader) {
 	return val;
 }
 
-uint32_t wkb_reader_read_u32(wkb_reader* reader) {
-	if(reader->ptr + sizeof(uint32_t) > reader->end) {
+uint32_t wkb_reader_read_u32(wkb_reader *reader) {
+	if (reader->ptr + sizeof(uint32_t) > reader->end) {
 		reader->error = true;
 		return 0;
 	}
@@ -450,8 +469,8 @@ uint32_t wkb_reader_read_u32(wkb_reader* reader) {
 	return val;
 }
 
-double wkb_reader_read_f64(wkb_reader* reader) {
-	if(reader->ptr + sizeof(double) > reader->end) {
+double wkb_reader_read_f64(wkb_reader *reader) {
+	if (reader->ptr + sizeof(double) > reader->end) {
 		reader->error = true;
 		return 0;
 	}
@@ -462,8 +481,8 @@ double wkb_reader_read_f64(wkb_reader* reader) {
 	return val;
 }
 
-const uint8_t* wkb_reader_read_data(wkb_reader* reader, size_t size) {
-	if(reader->ptr + size > reader->end) {
+const uint8_t *wkb_reader_read_data(wkb_reader *reader, size_t size) {
+	if (reader->ptr + size > reader->end) {
 		reader->error = true;
 		return nullptr;
 	}
@@ -490,10 +509,12 @@ geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size) {
 	geometry root;
 	geometry *geom = &root;
 
+// clang-format off
 #define WKB_READ_U8 wkb_reader_read_u8(&state); if (state.error) { goto error; }
 #define WKB_READ_U32 wkb_reader_read_u32(&state); if (state.error) { goto error; }
 #define WKB_READ_F64 wkb_reader_read_f64(&state); if (state.error) { goto error; }
 #define WKB_READ_DATA(SIZE) wkb_reader_read_data(&state, SIZE); if (state.error) { goto error; }
+	// clang-format on
 
 	while (true) {
 		const auto le = WKB_READ_U8;
@@ -508,7 +529,7 @@ geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size) {
 		geom->set_z(has_z);
 		geom->set_m(has_m);
 
-		switch(geom->get_type()) {
+		switch (geom->get_type()) {
 		case geometry_type::POINT: {
 			// Read the point data;
 			const auto data = WKB_READ_DATA(geom->get_vertex_size());
@@ -526,12 +547,12 @@ geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size) {
 			const auto count = WKB_READ_U32;
 
 			// Read the point data;
-			for(size_t i = 0; i < count; i++) {
+			for (size_t i = 0; i < count; i++) {
 				const auto ring_count = WKB_READ_U32;
 				const auto data = WKB_READ_DATA(geom->get_vertex_size() * ring_count);
 
 				// create a new ring
-				const auto ring = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+				const auto ring = static_cast<geometry *>(alloc->alloc(sizeof(geometry)));
 				ring->set_type(geometry_type::LINESTRING);
 				ring->set_z(has_z);
 				ring->set_m(has_m);
@@ -546,7 +567,7 @@ geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size) {
 		case geometry_type::MULTI_GEOMETRY: {
 			// Check stack depth
 
-			if(depth == MAX_RECURSION_DEPTH) {
+			if (depth == MAX_RECURSION_DEPTH) {
 				// TODO: Better error handling
 				goto error;
 			}
@@ -556,30 +577,30 @@ geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size) {
 			stack[depth++] = count;
 
 			// make a new child
-			auto new_geom = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+			auto new_geom = static_cast<geometry *>(alloc->alloc(sizeof(geometry)));
 			geom->append_part(new_geom);
 			geom = new_geom;
-
-		} continue; // This continue is important, as we dont want to go up the stack yet
+		}
+			continue; // This continue is important, as we dont want to go up the stack yet
 		default:
 			SGL_ASSERT(false);
 			goto error;
 		}
 
-		while(true) {
-			if(depth == 0) {
+		while (true) {
+			if (depth == 0) {
 				return root;
 			}
 
-			const auto remaining = stack[depth-1];
+			const auto remaining = stack[depth - 1];
 
-			if(remaining != 0) {
-				auto new_geom = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+			if (remaining != 0) {
+				auto new_geom = static_cast<geometry *>(alloc->alloc(sizeof(geometry)));
 				auto parent = geom->get_parent();
 				parent->append_part(new_geom);
 				geom = new_geom;
 
-				stack[depth-1]--;
+				stack[depth - 1]--;
 				break;
 			}
 
@@ -595,46 +616,38 @@ error:
 #undef WKB_READ_U32
 #undef WKB_READ_F64
 #undef WKB_READ_DATA
-
 }
 
 //------------------------------------------------------------------------------
 // WKT Parsing
 //------------------------------------------------------------------------------
 
-struct wkt_reader {
-	const char* beg = nullptr;
-	const char* ptr = nullptr;
-	const char* end = nullptr;
-	allocator* alloc = nullptr;
-	bool error = false;
-	const char* error_msg = nullptr;
-};
-
-static void parse_ws(wkt_reader* state) {
-	while(state->ptr < state->end && std::isspace(*state->ptr)) {
-		state->ptr++;
+static void parse_ws(wkt_reader *state) {
+	while (state->pos < state->end && std::isspace(*state->pos)) {
+		state->pos++;
 	}
 }
 
-static bool match_token(wkt_reader *state, const char* token) {
+static bool match_token(wkt_reader *state, const char *token) {
 	// case insensitive match
-	auto ptr = state->ptr;
-	while(ptr < state->end) {
-		if(std::tolower(*token) != std::tolower(*ptr)) {
-			return false;
-		}
+	auto ptr = state->pos;
+	while (ptr < state->end && *token != '\0' && std::tolower(*token) == std::tolower(*ptr)) {
 		token++;
 		ptr++;
 	}
-	state->ptr = ptr;
+
+	if (*token != '\0') {
+		return false;
+	}
+
+	state->pos = ptr;
 	parse_ws(state);
 	return true;
 }
 
 static bool match_char(wkt_reader *state, char c) {
-	if(state->ptr < state->end && std::tolower(*state->ptr) == std::tolower(c)) {
-		state->ptr++;
+	if (state->pos < state->end && std::tolower(*state->pos) == std::tolower(c)) {
+		state->pos++;
 		parse_ws(state);
 		return true;
 	}
@@ -646,355 +659,376 @@ static bool match_double(wkt_reader *state, double *result) {
 	// out-of-bounds reads. Instead, we will manually parse the number and then use std::strtod to
 	// convert the value.
 
-	auto ptr = state->ptr;
+	auto ptr = state->pos;
 
 	// Match sign
-	if(ptr < state->end && (*ptr == '+' || *ptr == '-')) {
+	if (ptr < state->end && (*ptr == '+' || *ptr == '-')) {
 		ptr++;
 	}
 
 	// Match number part
-	while(ptr < state->end && std::isdigit(*ptr)) {
+	while (ptr < state->end && std::isdigit(*ptr)) {
 		ptr++;
 	}
 
 	// Match decimal part
-	if(ptr < state->end && *ptr == '.') {
+	if (ptr < state->end && *ptr == '.') {
 		ptr++;
-		while(ptr < state->end && std::isdigit(*ptr)) {
+		while (ptr < state->end && std::isdigit(*ptr)) {
 			ptr++;
 		}
 	}
 
 	// Match exponent part
-	if(ptr < state->end && (*ptr == 'e' || *ptr == 'E')) {
+	if (ptr < state->end && (*ptr == 'e' || *ptr == 'E')) {
 		ptr++;
-		if(ptr < state->end && (*ptr == '+' || *ptr == '-')) {
+		if (ptr < state->end && (*ptr == '+' || *ptr == '-')) {
 			ptr++;
 		}
 
-		while(ptr < state->end && std::isdigit(*ptr)) {
+		while (ptr < state->end && std::isdigit(*ptr)) {
 			ptr++;
 		}
 	}
 
 	// Did we manage to parse anything?
-	if(ptr == state->ptr) {
+	if (ptr == state->pos) {
 		return false;
 	}
 
 	// If we got here, we know there is something resembling a  number within the bounds of the buffer
 	// We can now use std::strtod to actually parse the number
-	char* end;
-	*result = std::strtod(state->ptr, &end);
-	if(state->ptr == end) {
+	char *end;
+	*result = std::strtod(state->pos, &end);
+	if (state->pos == end) {
 		return false;
 	}
-	state->ptr = end;
+	state->pos = end;
 	parse_ws(state);
 	return true;
 }
 
-static void parse_vertex(wkt_reader *state, geometry *geom) {
+struct vertex_buffer {
+	allocator *alloc;
+	const uint32_t stride;
+	double *ptr;
+	uint32_t len;
+	uint32_t cap;
 
-	if(!match_char(state, '(')) {
-		state->error = true;
-		// Empty
-		return;
+	vertex_buffer(allocator *alloc, uint32_t stride) : alloc(alloc), stride(stride), len(0), cap(1) {
+		ptr = static_cast<double *>(this->alloc->alloc(sizeof(double) * stride * cap));
 	}
 
-	double buf[4] = {0, 0, 0, 0};
-	const auto vertex_stride = 2 + geom->has_z() + geom->has_m();
+	void push_back(const double *data) {
+		if (len == cap) {
+			const auto new_cap = cap * 2;
+			const auto old_size = sizeof(double) * stride * cap;
+			const auto new_size = sizeof(double) * stride * new_cap;
 
-	for(size_t i = 0; i < vertex_stride; i++) {
-		// Parse doubles
-		if(!match_double(state, &buf[i])) {
-			state->error = true;
-			return;
-		}
-	}
-
-	if(!match_char(state, ')')) {
-		state->error = true;
-		return;
-	}
-
-	// Allocate the vertex data in the allocator
-	const auto ptr = static_cast<double*>(state->alloc->alloc(sizeof(double) * vertex_stride));
-	memcpy(ptr, buf, sizeof(double) * vertex_stride);
-
-	// Set the vertex data
-	geom->set_vertex_data(reinterpret_cast<const char*>(ptr), 1);
-}
-
-static void parse_vertices(wkt_reader *state, geometry *geom) {
-
-	if(!match_char(state, '(')) {
-		state->error = true;
-		// Empty
-		return;
-	}
-
-	const auto has_z = geom->has_z();
-	const auto has_m = geom->has_m();
-
-	const auto vertex_stride = 2 + has_z + has_m;
-
-	uint32_t vertex_data_cap = 1;
-	uint32_t vertex_data_len = 0;
-
-	auto vertex_data = static_cast<double*>(state->alloc->alloc(sizeof(double) * vertex_stride * vertex_data_cap));
-
-	do {
-		if(vertex_data_len == vertex_data_cap) {
-			// Reallocate if needed
-			const auto new_cap = vertex_data_cap * 2;
-			const auto old_size = sizeof(double) * vertex_stride * vertex_data_cap;
-			const auto new_size = sizeof(double) * vertex_stride * new_cap;
-
-			vertex_data = static_cast<double*>(state->alloc->realloc(vertex_data, old_size, new_size));
-			vertex_data_cap = new_cap;
+			ptr = static_cast<double *>(alloc->realloc(ptr, old_size, new_size));
+			cap = new_cap;
 		}
 
-		const auto v_ptr = vertex_data + vertex_data_len * vertex_stride;
+		memcpy(ptr + len * stride, data, sizeof(double) * stride);
+		len++;
+	}
 
-		for(size_t i = 0; i < vertex_stride; i++) {
-			if(!match_double(state, &v_ptr[i])) {
-				state->error = true;
-				return;
-			}
+	void assign(geometry *geom) {
+
+		// Shrink to fit
+		if (cap > len) {
+			const auto old_size = sizeof(double) * stride * cap;
+			const auto new_size = sizeof(double) * stride * len;
+			ptr = static_cast<double *>(alloc->realloc(ptr, old_size, new_size));
 		}
 
-		vertex_data_len++;
-
-	} while (match_char(state, ','));
-
-	// Shrink to the correct size
-	if(vertex_data_len != vertex_data_cap) {
-		const auto old_size = sizeof(double) * vertex_stride * vertex_data_cap;
-		const auto new_size = sizeof(double) * vertex_stride * vertex_data_len;
-
-		vertex_data = static_cast<double*>(state->alloc->realloc(vertex_data, old_size, new_size));
+		geom->set_vertex_data(reinterpret_cast<const char *>(ptr), len);
 	}
+};
 
-	if(!match_char(state, ')')) {
-		state->error = true;
-		return;
-	}
+// TODO: break this up into smaller functions, unify result/state
+bool wkt_reader_try_parse(wkt_reader *state, geometry *out) {
 
-	geom->set_vertex_data(reinterpret_cast<const char*>(vertex_data), vertex_data_len);
-}
+	SGL_ASSERT(state != nullptr);
+	SGL_ASSERT(out != nullptr);
 
-// TODO: Handle errors
-geometry from_wkt(allocator *alloc, const char *buffer, size_t size) {
+	// These need to be set by the caller
+	SGL_ASSERT(state->alloc != nullptr);
+	SGL_ASSERT(state->buf != nullptr);
+	SGL_ASSERT(state->end != nullptr);
 
 	// Setup state
-	wkt_reader state;
-	state.beg = buffer;
-	state.ptr = buffer;
-	state.end = buffer + size;
-	state.alloc = alloc;
-	state.error = false;
+	state->pos = state->buf;
+	state->error = nullptr;
 
-	geometry result;
-	geometry *geom = &result;
+	allocator *alloc = state->alloc;
 
-#define expect_char(STATE, C) do { if(!match_char(STATE, C)) { (STATE)->error = true; (STATE)->error_msg = "Expected character: '" #C "'"; return result; } } while(0)
+	geometry *root = out;
+	geometry *geom = root;
+
+	// clang-format off
+#define expect_char(STATE, C) do { if(!match_char(STATE, C)) { (STATE)->error = "Expected character: '" #C "'"; return false; } } while(0)
+#define expect_number(STATE, RESULT) do { if(!match_double(STATE, RESULT)) { (STATE)->error = "Expected number"; return false; } } while(0)
+	// clang-format on
 
 	// Skip whitespace
-	parse_ws(&state);
+	parse_ws(state);
 
 	// Skip leading SRID, we dont support it
 	// TODO: Parse this and stuff it into the result
-	if(match_token(&state, "SRID")) {
-		while(state.ptr < state.end && *state.ptr != ';') {
-			state.ptr++;
+	if (match_token(state, "SRID")) {
+
+		while (state->pos < state->end && *state->pos != ';') {
+			state->pos++;
 		}
-		expect_char(&state, ';');
+		expect_char(state, ';');
 	}
 
 	// Main loop
-	while(true) {
+	while (true) {
 		// Now we should have a geometry type
-		if(match_token(&state, "POINT")) {
+		if (match_token(state, "POINT")) {
 			geom->set_type(geometry_type::POINT);
-		}
-		else if(match_token(&state, "LINESTRING")) {
+		} else if (match_token(state, "LINESTRING")) {
 			geom->set_type(geometry_type::LINESTRING);
-		}
-		else if(match_token(&state, "POLYGON")) {
+		} else if (match_token(state, "POLYGON")) {
 			geom->set_type(geometry_type::POLYGON);
-		}
-		else if(match_token(&state, "MULTIPOINT")) {
+		} else if (match_token(state, "MULTIPOINT")) {
 			geom->set_type(geometry_type::MULTI_POINT);
-		}
-		else if(match_token(&state, "MULTILINESTRING")) {
+		} else if (match_token(state, "MULTILINESTRING")) {
 			geom->set_type(geometry_type::MULTI_LINESTRING);
-		}
-		else if(match_token(&state, "MULTIPOLYGON")) {
+		} else if (match_token(state, "MULTIPOLYGON")) {
 			geom->set_type(geometry_type::MULTI_POLYGON);
-		}
-		else if(match_token(&state, "GEOMETRYCOLLECTION")) {
+		} else if (match_token(state, "GEOMETRYCOLLECTION")) {
 			geom->set_type(geometry_type::MULTI_GEOMETRY);
 		} else {
-			state.error = true;
-			state.error_msg = "Expected geometry type";
-			return result;
+			state->error = "Expected geometry type";
+			return false;
 		}
 
 		// Match Z and M
-
-		if(match_char(&state, 'z')) {
+		if (match_char(state, 'z')) {
 			geom->set_z(true);
 		}
-		if(match_char(&state, 'm')) {
+		if (match_char(state, 'm')) {
 			geom->set_m(true);
 		}
 
 		// TODO: make this check configurable
-		if((geom->has_m() != result.has_m()) || (geom->has_z() != result.has_z())) {
-			state.error = true;
-			state.error_msg = "Mixed Z and M values are not supported";
-			return result;
+		if ((geom->has_m() != root->has_m()) || (geom->has_z() != root->has_z())) {
+			state->error = "Mixed Z and M values are not supported";
+			return false;
 		}
 
+		const auto vertex_stride = 2 + geom->has_z() + geom->has_m();
+
 		// Parse EMPTY
-		if(!match_token(&state ,"EMPTY")) {
-			switch(geom->get_type()) {
+		if (!match_token(state, "EMPTY")) {
+			switch (geom->get_type()) {
 			case geometry_type::POINT: {
-				parse_vertex(&state, geom);
-				if(state.error) {
-					return result;
+				expect_char(state, '(');
+
+				vertex_buffer verts(alloc, vertex_stride);
+				double vert[4] = {0, 0, 0, 0};
+				for (size_t i = 0; i < vertex_stride; i++) {
+					expect_number(state, &vert[i]);
 				}
+				verts.push_back(vert);
+				verts.assign(geom);
+
+				expect_char(state, ')');
 			} break;
 			case geometry_type::LINESTRING: {
-				parse_vertices(&state, geom);
-				if(state.error) {
-					return result;
-				}
+				expect_char(state, '(');
+
+				vertex_buffer verts(alloc, vertex_stride);
+				do {
+					double vert[4] = {0, 0, 0, 0};
+					for (size_t i = 0; i < vertex_stride; i++) {
+						expect_number(state, &vert[i]);
+					}
+					verts.push_back(vert);
+				} while (match_char(state, ','));
+
+				verts.assign(geom);
+
+				expect_char(state, ')');
 			} break;
 			case geometry_type::POLYGON: {
-				expect_char(&state, '(');
+				expect_char(state, '(');
 				do {
-					auto ring = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+					auto ring = static_cast<geometry *>(alloc->alloc(sizeof(geometry)));
 					new (ring) geometry(geometry_type::LINESTRING, geom->has_z(), geom->has_m());
-					if(!match_token(&state, "EMPTY")) {
-						parse_vertices(&state, ring);
-						if(state.error) {
-							return result;
-						}
+					if (!match_token(state, "EMPTY")) {
+						expect_char(state, '(');
+
+						vertex_buffer verts(alloc, vertex_stride);
+						do {
+							double vert[4] = {0, 0, 0, 0};
+							for (size_t i = 0; i < vertex_stride; i++) {
+								expect_number(state, &vert[i]);
+							}
+							verts.push_back(vert);
+						} while (match_char(state, ','));
+
+						verts.assign(ring);
+
+						expect_char(state, ')');
 					}
 					geom->append_part(ring);
-				} while(match_char(&state, ','));
-				expect_char(&state, ')');
+				} while (match_char(state, ','));
+				expect_char(state, ')');
 			} break;
 			case geometry_type::MULTI_POINT: {
-				expect_char(&state, '(');
+				expect_char(state, '(');
 				// Multipoints are special in that parens around each point is optional.
 				do {
 					bool has_paren = false;
-					if(match_char(&state, '(')) {
+					if (match_char(state, '(')) {
 						has_paren = true;
 					}
-					auto point = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+					auto point = static_cast<geometry *>(alloc->alloc(sizeof(geometry)));
 					new (point) geometry(geometry_type::POINT, geom->has_z(), geom->has_m());
-					if(!match_token(&state, "EMPTY")) {
-						parse_vertex(&state, point);
-						if(state.error) {
-							return result;
+					if (!match_token(state, "EMPTY")) {
+						expect_char(state, '(');
+
+						vertex_buffer verts(alloc, vertex_stride);
+						double vert[4] = {0, 0, 0, 0};
+						for (size_t i = 0; i < vertex_stride; i++) {
+							expect_number(state, &vert[i]);
 						}
+						verts.push_back(vert);
+						verts.assign(geom);
+
+						expect_char(state, ')');
 					}
-					if(has_paren) {
-						expect_char(&state, ')');
+					if (has_paren) {
+						expect_char(state, ')');
 					}
 					geom->append_part(point);
-				} while(match_char(&state, ','));
-				expect_char(&state, ')');
+				} while (match_char(state, ','));
+				expect_char(state, ')');
 			} break;
 			case geometry_type::MULTI_LINESTRING: {
-				expect_char(&state, '(');
+				expect_char(state, '(');
 				do {
-					auto line = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+					auto line = static_cast<geometry *>(alloc->alloc(sizeof(geometry)));
 					new (line) geometry(geometry_type::LINESTRING, geom->has_z(), geom->has_m());
-					if(!match_token(&state, "EMPTY")) {
-						parse_vertices(&state, line);
-						if(state.error) {
-							return result;
-						}
+					if (!match_token(state, "EMPTY")) {
+						expect_char(state, '(');
+
+						vertex_buffer verts(alloc, vertex_stride);
+						do {
+							double vert[4] = {0, 0, 0, 0};
+							for (size_t i = 0; i < vertex_stride; i++) {
+								expect_number(state, &vert[i]);
+							}
+							verts.push_back(vert);
+						} while (match_char(state, ','));
+
+						verts.assign(geom);
+
+						expect_char(state, ')');
 					}
 					geom->append_part(line);
-				} while(match_char(&state, ','));
-				expect_char(&state, ')');
+				} while (match_char(state, ','));
+				expect_char(state, ')');
 			} break;
 			case geometry_type::MULTI_POLYGON: {
-				expect_char(&state, '(');
+				expect_char(state, '(');
 				do {
-					auto poly = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+					auto poly = static_cast<geometry *>(alloc->alloc(sizeof(geometry)));
 					new (poly) geometry(geometry_type::POLYGON, geom->has_z(), geom->has_m());
-					if(!match_token(&state, "EMPTY")) {
-						expect_char(&state, '(');
+					if (!match_token(state, "EMPTY")) {
+						expect_char(state, '(');
 						do {
-							auto ring = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+							auto ring = static_cast<geometry *>(alloc->alloc(sizeof(geometry)));
 							new (ring) geometry(geometry_type::LINESTRING, geom->has_z(), geom->has_m());
-							if(!match_token(&state, "EMPTY")) {
-								parse_vertices(&state, ring);
-								if(state.error) {
-									return result;
-								}
+							if (!match_token(state, "EMPTY")) {
+								expect_char(state, '(');
+
+								vertex_buffer verts(alloc, vertex_stride);
+								do {
+									double vert[4] = {0, 0, 0, 0};
+									for (size_t i = 0; i < vertex_stride; i++) {
+										expect_number(state, &vert[i]);
+									}
+									verts.push_back(vert);
+								} while (match_char(state, ','));
+
+								verts.assign(ring);
+
+								expect_char(state, ')');
 							}
 							poly->append_part(ring);
-						} while(match_char(&state, ','));
-						expect_char(&state, ')');
+						} while (match_char(state, ','));
+						expect_char(state, ')');
 					}
 					geom->append_part(poly);
-				} while(match_char(&state, ','));
-				expect_char(&state, ')');
+				} while (match_char(state, ','));
+				expect_char(state, ')');
 			} break;
 			case geometry_type::MULTI_GEOMETRY: {
-				expect_char(&state, '(');
+				expect_char(state, '(');
 
 				// add another child
-				auto new_geom = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+				auto new_geom = static_cast<geometry *>(alloc->alloc(sizeof(geometry)));
 				new (new_geom) geometry(geometry_type::INVALID);
 
 				geom->append_part(new_geom);
 				geom = new_geom;
-
-			} continue; // This continue moves us to the next iteration
+			}
+				continue; // This continue moves us to the next iteration
 			default:
 				SGL_ASSERT(false);
-				state.error = true;
-				state.error_msg = "Invalid geometry type";
-				return result;
+				state->error = "Invalid geometry type";
+				return false;
 			}
 		}
 
-		while(true) {
+		while (true) {
 			const auto parent = geom->get_parent();
-			if(!parent) {
+			if (!parent) {
 				// Done!
-				return result;
+				return true;
 			}
 
 			SGL_ASSERT(parent->get_type() == geometry_type::MULTI_GEOMETRY);
 
-			if(match_char(&state, ',')) {
+			if (match_char(state, ',')) {
 				// The geometry collection is not done yet, add another sibling
-				auto new_geom = static_cast<geometry*>(alloc->alloc(sizeof(geometry)));
+				auto new_geom = static_cast<geometry *>(alloc->alloc(sizeof(geometry)));
 				new (new_geom) geometry(geometry_type::INVALID);
 
 				parent->append_part(new_geom);
 				geom = new_geom;
 
-				//goto begin;
+				// goto begin;
 				break;
 			}
 
-			expect_char(&state, ')');
+			expect_char(state, ')');
 			// The geometry collection is done, go up
 			geom = parent;
 		}
 	}
+
+#undef expect_char
+#undef expect_number
+}
+
+std::string wkt_reader_get_error_context(const wkt_reader *result) {
+	// Return a string of the current position in the input string
+	const auto len = 32;
+	const auto msg_start = std::max(result->pos - len, result->buf);
+	const auto msg_end = std::min(result->pos + 1, result->end);
+	auto msg = std::string(msg_start, msg_end);
+	if (msg_start != result->buf) {
+		msg = "..." + msg;
+	}
+	// Add an arrow to indicate the position
+	msg = "at position " + std::to_string(result->pos - result->buf) + " near: '" + msg + "'|<---";
+	return msg;
 }
 
 } // namespace ops
