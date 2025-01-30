@@ -11,7 +11,7 @@
 #include "spatial/core/geometry/wkb_writer.hpp"
 #include "yyjson.h"
 
-#include <duckdb/planner/expression/bound_function_expression.hpp>
+#include "duckdb/planner/expression/bound_function_expression.hpp"
 
 namespace spatial {
 namespace core {
@@ -285,7 +285,7 @@ static void SerializeRecursive(BinaryWriter &cursor, const sgl::geometry *geom, 
 		do {
 			ring = ring->get_next();
 			ring_cursor.Write<uint32_t>(ring->get_count());
-			SerializeVertices(ring_cursor, ring, ring->get_count(), has_z, has_m, has_bbox, vsize, bbox);
+			SerializeVertices(cursor, ring, ring->get_count(), has_z, has_m, has_bbox, vsize, bbox);
 		} while (ring != tail);
 
 	} break;
@@ -324,7 +324,13 @@ void Serde::Serialize(const sgl::geometry &geom, char *buffer, size_t buffer_siz
 
 	BinaryWriter cursor(buffer, buffer_size);
 
-	cursor.Write<uint8_t>(static_cast<uint8_t>(type));
+	if(type == sgl::geometry_type::INVALID) {
+		throw InvalidInputException("Cannot serialize geometry of type INVALID");
+	}
+
+	// The GeometryType enum used to start with POINT = 0
+	// but now it starts with INVALID = 0, so we need to subtract 1
+	cursor.Write<uint8_t>(static_cast<uint8_t>(type) - 1);
 	cursor.Write<uint8_t>(flags);
 	cursor.Write<uint16_t>(0); // unused for now
 	cursor.Write<uint32_t>(0); // padding

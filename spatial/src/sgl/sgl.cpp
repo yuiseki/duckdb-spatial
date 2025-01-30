@@ -890,7 +890,7 @@ bool wkt_reader_try_parse(wkt_reader *state, geometry *out) {
 					auto point = static_cast<geometry *>(alloc->alloc(sizeof(geometry)));
 					new (point) geometry(geometry_type::POINT, geom->has_z(), geom->has_m());
 					if (!match_token(state, "EMPTY")) {
-						expect_char(state, '(');
+						// TODO: Do we need to have optional parens to accept EMPTY?
 
 						vertex_buffer verts(alloc, vertex_stride);
 						double vert[4] = {0, 0, 0, 0};
@@ -898,9 +898,7 @@ bool wkt_reader_try_parse(wkt_reader *state, geometry *out) {
 							expect_number(state, &vert[i]);
 						}
 						verts.push_back(vert);
-						verts.assign(geom);
-
-						expect_char(state, ')');
+						verts.assign(point);
 					}
 					if (has_paren) {
 						expect_char(state, ')');
@@ -926,7 +924,7 @@ bool wkt_reader_try_parse(wkt_reader *state, geometry *out) {
 							verts.push_back(vert);
 						} while (match_char(state, ','));
 
-						verts.assign(geom);
+						verts.assign(line);
 
 						expect_char(state, ')');
 					}
