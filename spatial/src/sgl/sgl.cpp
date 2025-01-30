@@ -598,7 +598,6 @@ error:
 
 }
 
-
 //------------------------------------------------------------------------------
 // WKT Parsing
 //------------------------------------------------------------------------------
@@ -609,87 +608,130 @@ struct wkt_reader {
 	const char* end = nullptr;
 	allocator* alloc = nullptr;
 	bool error = false;
+	const char* error_msg = nullptr;
 };
 
-static void parse_ws(wkt_reader* reader) {
-	while(reader->ptr < reader->end && std::isspace(*reader->ptr)) {
-		reader->ptr++;
+static void parse_ws(wkt_reader* state) {
+	while(state->ptr < state->end && std::isspace(*state->ptr)) {
+		state->ptr++;
 	}
 }
 
-static bool match_token(wkt_reader *reader, const char* token) {
+static bool match_token(wkt_reader *state, const char* token) {
 	// case insensitive match
-	auto ptr = reader->ptr;
-	while(*token) {
+	auto ptr = state->ptr;
+	while(ptr < state->end) {
 		if(std::tolower(*token) != std::tolower(*ptr)) {
 			return false;
 		}
 		token++;
 		ptr++;
 	}
-	reader->ptr = ptr;
-	parse_ws(reader);
+	state->ptr = ptr;
+	parse_ws(state);
 	return true;
 }
 
-static bool match_char(wkt_reader *reader, char c) {
-	if(std::tolower(*reader->ptr) == std::tolower(c)) {
-		reader->ptr++;
-		parse_ws(reader);
+static bool match_char(wkt_reader *state, char c) {
+	if(state->ptr < state->end && std::tolower(*state->ptr) == std::tolower(c)) {
+		state->ptr++;
+		parse_ws(state);
 		return true;
 	}
 	return false;
 }
 
-static void expect_char(wkt_reader *reader, char c) {
-	if(!match_char(reader, c)) {
-		reader->error = true;
-	}
-}
+static bool match_double(wkt_reader *state, double *result) {
+	// Because we care about the length, we cant just use std::strtod straight away without risking
+	// out-of-bounds reads. Instead, we will manually parse the number and then use std::strtod to
+	// convert the value.
 
-static double expect_double(wkt_reader *reader) {
+	auto ptr = state->ptr;
+
+	// Match sign
+	if(ptr < state->end && (*ptr == '+' || *ptr == '-')) {
+		ptr++;
+	}
+
+	// Match number part
+	while(ptr < state->end && std::isdigit(*ptr)) {
+		ptr++;
+	}
+
+	// Match decimal part
+	if(ptr < state->end && *ptr == '.') {
+		ptr++;
+		while(ptr < state->end && std::isdigit(*ptr)) {
+			ptr++;
+		}
+	}
+
+	// Match exponent part
+	if(ptr < state->end && (*ptr == 'e' || *ptr == 'E')) {
+		ptr++;
+		if(ptr < state->end && (*ptr == '+' || *ptr == '-')) {
+			ptr++;
+		}
+
+		while(ptr < state->end && std::isdigit(*ptr)) {
+			ptr++;
+		}
+	}
+
+	// Did we manage to parse anything?
+	if(ptr == state->ptr) {
+		return false;
+	}
+
+	// If we got here, we know there is something resembling a  number within the bounds of the buffer
+	// We can now use std::strtod to actually parse the number
 	char* end;
-	const auto d = std::strtod(reader->ptr, &end);
-	if(reader->ptr == end) {
-		reader->error = true;
+	*result = std::strtod(state->ptr, &end);
+	if(state->ptr == end) {
+		return false;
 	}
-	reader->ptr = end;
-	parse_ws(reader);
-	return d;
+	state->ptr = end;
+	parse_ws(state);
+	return true;
 }
 
-static void parse_vertex(wkt_reader *reader, geometry *geom) {
-	expect_char(reader, '(');
-	if(reader->error) {
+static void parse_vertex(wkt_reader *state, geometry *geom) {
+
+	if(!match_char(state, '(')) {
+		state->error = true;
+		// Empty
 		return;
 	}
 
 	double buf[4] = {0, 0, 0, 0};
 	const auto vertex_stride = 2 + geom->has_z() + geom->has_m();
+
 	for(size_t i = 0; i < vertex_stride; i++) {
-		buf[i] = expect_double(reader);
-		if(reader->error) {
+		// Parse doubles
+		if(!match_double(state, &buf[i])) {
+			state->error = true;
 			return;
 		}
 	}
 
-	expect_char(reader, ')');
-	if(reader->error) {
+	if(!match_char(state, ')')) {
+		state->error = true;
 		return;
 	}
 
 	// Allocate the vertex data in the allocator
-	const auto ptr = static_cast<double*>(reader->alloc->alloc(sizeof(double) * vertex_stride));
+	const auto ptr = static_cast<double*>(state->alloc->alloc(sizeof(double) * vertex_stride));
 	memcpy(ptr, buf, sizeof(double) * vertex_stride);
 
 	// Set the vertex data
 	geom->set_vertex_data(reinterpret_cast<const char*>(ptr), 1);
 }
 
-static void parse_vertices(wkt_reader *reader, geometry *geom) {
+static void parse_vertices(wkt_reader *state, geometry *geom) {
 
-	expect_char(reader, '(');
-	if(reader->error) {
+	if(!match_char(state, '(')) {
+		state->error = true;
+		// Empty
 		return;
 	}
 
@@ -701,7 +743,7 @@ static void parse_vertices(wkt_reader *reader, geometry *geom) {
 	uint32_t vertex_data_cap = 1;
 	uint32_t vertex_data_len = 0;
 
-	auto vertex_data = static_cast<double*>(reader->alloc->alloc(sizeof(double) * vertex_stride * vertex_data_cap));
+	auto vertex_data = static_cast<double*>(state->alloc->alloc(sizeof(double) * vertex_stride * vertex_data_cap));
 
 	do {
 		if(vertex_data_len == vertex_data_cap) {
@@ -710,33 +752,33 @@ static void parse_vertices(wkt_reader *reader, geometry *geom) {
 			const auto old_size = sizeof(double) * vertex_stride * vertex_data_cap;
 			const auto new_size = sizeof(double) * vertex_stride * new_cap;
 
-			vertex_data = static_cast<double*>(reader->alloc->realloc(vertex_data, old_size, new_size));
+			vertex_data = static_cast<double*>(state->alloc->realloc(vertex_data, old_size, new_size));
 			vertex_data_cap = new_cap;
 		}
 
 		const auto v_ptr = vertex_data + vertex_data_len * vertex_stride;
 
 		for(size_t i = 0; i < vertex_stride; i++) {
-			v_ptr[i] = expect_double(reader);
-			if(reader->error) {
+			if(!match_double(state, &v_ptr[i])) {
+				state->error = true;
 				return;
 			}
 		}
 
 		vertex_data_len++;
 
-	} while (match_char(reader, ','));
+	} while (match_char(state, ','));
 
 	// Shrink to the correct size
 	if(vertex_data_len != vertex_data_cap) {
 		const auto old_size = sizeof(double) * vertex_stride * vertex_data_cap;
 		const auto new_size = sizeof(double) * vertex_stride * vertex_data_len;
 
-		vertex_data = static_cast<double*>(reader->alloc->realloc(vertex_data, old_size, new_size));
+		vertex_data = static_cast<double*>(state->alloc->realloc(vertex_data, old_size, new_size));
 	}
 
-	expect_char(reader, ')');
-	if(reader->error) {
+	if(!match_char(state, ')')) {
+		state->error = true;
 		return;
 	}
 
@@ -754,14 +796,16 @@ geometry from_wkt(allocator *alloc, const char *buffer, size_t size) {
 	state.alloc = alloc;
 	state.error = false;
 
-	geometry root;
-	geometry *geom = &root;
+	geometry result;
+	geometry *geom = &result;
+
+#define expect_char(STATE, C) do { if(!match_char(STATE, C)) { (STATE)->error = true; (STATE)->error_msg = "Expected character: '" #C "'"; return result; } } while(0)
 
 	// Skip whitespace
 	parse_ws(&state);
 
 	// Skip leading SRID, we dont support it
-	// TODO: Parse this and stuff it into the reader state
+	// TODO: Parse this and stuff it into the result
 	if(match_token(&state, "SRID")) {
 		while(state.ptr < state.end && *state.ptr != ';') {
 			state.ptr++;
@@ -793,7 +837,9 @@ geometry from_wkt(allocator *alloc, const char *buffer, size_t size) {
 		else if(match_token(&state, "GEOMETRYCOLLECTION")) {
 			geom->set_type(geometry_type::MULTI_GEOMETRY);
 		} else {
-			goto error;
+			state.error = true;
+			state.error_msg = "Expected geometry type";
+			return result;
 		}
 
 		// Match Z and M
@@ -805,16 +851,27 @@ geometry from_wkt(allocator *alloc, const char *buffer, size_t size) {
 			geom->set_m(true);
 		}
 
-		// TODO: compare with root z/m
+		// TODO: make this check configurable
+		if((geom->has_m() != result.has_m()) || (geom->has_z() != result.has_z())) {
+			state.error = true;
+			state.error_msg = "Mixed Z and M values are not supported";
+			return result;
+		}
 
 		// Parse EMPTY
 		if(!match_token(&state ,"EMPTY")) {
 			switch(geom->get_type()) {
 			case geometry_type::POINT: {
 				parse_vertex(&state, geom);
+				if(state.error) {
+					return result;
+				}
 			} break;
 			case geometry_type::LINESTRING: {
 				parse_vertices(&state, geom);
+				if(state.error) {
+					return result;
+				}
 			} break;
 			case geometry_type::POLYGON: {
 				expect_char(&state, '(');
@@ -823,6 +880,9 @@ geometry from_wkt(allocator *alloc, const char *buffer, size_t size) {
 					new (ring) geometry(geometry_type::LINESTRING, geom->has_z(), geom->has_m());
 					if(!match_token(&state, "EMPTY")) {
 						parse_vertices(&state, ring);
+						if(state.error) {
+							return result;
+						}
 					}
 					geom->append_part(ring);
 				} while(match_char(&state, ','));
@@ -840,6 +900,9 @@ geometry from_wkt(allocator *alloc, const char *buffer, size_t size) {
 					new (point) geometry(geometry_type::POINT, geom->has_z(), geom->has_m());
 					if(!match_token(&state, "EMPTY")) {
 						parse_vertex(&state, point);
+						if(state.error) {
+							return result;
+						}
 					}
 					if(has_paren) {
 						expect_char(&state, ')');
@@ -855,6 +918,9 @@ geometry from_wkt(allocator *alloc, const char *buffer, size_t size) {
 					new (line) geometry(geometry_type::LINESTRING, geom->has_z(), geom->has_m());
 					if(!match_token(&state, "EMPTY")) {
 						parse_vertices(&state, line);
+						if(state.error) {
+							return result;
+						}
 					}
 					geom->append_part(line);
 				} while(match_char(&state, ','));
@@ -872,6 +938,9 @@ geometry from_wkt(allocator *alloc, const char *buffer, size_t size) {
 							new (ring) geometry(geometry_type::LINESTRING, geom->has_z(), geom->has_m());
 							if(!match_token(&state, "EMPTY")) {
 								parse_vertices(&state, ring);
+								if(state.error) {
+									return result;
+								}
 							}
 							poly->append_part(ring);
 						} while(match_char(&state, ','));
@@ -894,7 +963,9 @@ geometry from_wkt(allocator *alloc, const char *buffer, size_t size) {
 			} continue; // This continue moves us to the next iteration
 			default:
 				SGL_ASSERT(false);
-				goto error;
+				state.error = true;
+				state.error_msg = "Invalid geometry type";
+				return result;
 			}
 		}
 
@@ -902,7 +973,7 @@ geometry from_wkt(allocator *alloc, const char *buffer, size_t size) {
 			const auto parent = geom->get_parent();
 			if(!parent) {
 				// Done!
-				return root;
+				return result;
 			}
 
 			SGL_ASSERT(parent->get_type() == geometry_type::MULTI_GEOMETRY);
@@ -924,11 +995,6 @@ geometry from_wkt(allocator *alloc, const char *buffer, size_t size) {
 			geom = parent;
 		}
 	}
-
-error:
-	// error!
-	return geometry(geometry_type::INVALID);
-
 }
 
 } // namespace ops
