@@ -3654,7 +3654,6 @@ struct ST_GeomFromGeoJSON {
 
 		// Polygon
 		sgl::geometry polygon(sgl::geometry_type::POLYGON, has_z, false);
-		// auto polygon = Polygon::Create(arena, num_rings, has_z, false);
 		size_t idx, max;
 		yyjson_val *ring_val;
 		yyjson_arr_foreach(coord_array, idx, max, ring_val) {
@@ -5685,11 +5684,15 @@ struct ST_MakePolygon {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_Multi
-//----------------------------------------------------------------------------------------------------------------------
-// TODO: Implement
+//======================================================================================================================
+
 struct ST_Multi {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
@@ -5720,6 +5723,32 @@ struct ST_Multi {
 		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Turns a single geometry into a multi geometry.
+
+		If the geometry is already a multi geometry, it is returned as is.
+	)";
+
+	static constexpr auto EXAMPLE = R"(
+		SELECT ST_Multi(ST_GeomFromText('POINT(1 2)'));
+		----
+		MULTIPOINT (1 2)
+
+		SELECT ST_Multi(ST_GeomFromText('LINESTRING(1 1, 2 2)'));
+		----
+		MULTILINESTRING ((1 1, 2 2))
+
+		SELECT ST_Multi(ST_GeomFromText('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'));
+		----
+		MULTIPOLYGON (((0 0, 0 1, 1 1, 1 0, 0 0)))
+	)";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Multi", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -5728,36 +5757,65 @@ struct ST_Multi {
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
-
-				variant.SetDescription("Convert a geometry to a MULTI* geometry");
-				// TODO: Set example
 			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
 		});
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_NGeometries / ST_NumGeometries
-//----------------------------------------------------------------------------------------------------------------------
-// TODO: Implement
+//======================================================================================================================
+
 struct ST_NGeometries {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
+		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(),
+			[&](const string_t &blob) {
 			const auto geom = lstate.Deserialize(blob);
-			if (geom.is_single_part()) {
-				return geom.is_empty() ? 0 : 1;
+			switch(geom.get_type()) {
+				case sgl::geometry_type::POINT:
+				case sgl::geometry_type::LINESTRING:
+				case sgl::geometry_type::POLYGON:
+					return geom.is_empty() ? 0 : 1;
+				case sgl::geometry_type::MULTI_POINT:
+				case sgl::geometry_type::MULTI_LINESTRING:
+				case sgl::geometry_type::MULTI_POLYGON:
+				case sgl::geometry_type::MULTI_GEOMETRY:
+					return static_cast<int32_t>(geom.get_count());
+				default:
+					D_ASSERT(false);
+					return 0;
 			}
-			if (geom.is_multi_part()) {
-				return static_cast<int32_t>(geom.get_count());
-			}
-			return 0;
 		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Returns the number of component geometries in a collection geometry.
+	    If the input geometry is not a collection, this function returns 0 or 1 depending on if the geometry is empty or not.
+	)";
+
+	// TODO: add example
+	static constexpr auto EXAMPLE = R"(
+
+	)";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		// TODO: Maybe make a macro for the aliases
 		for (auto &alias : {"ST_NumGeometries", "ST_NGeometries"}) {
@@ -5768,10 +5826,11 @@ struct ST_NGeometries {
 
 					variant.SetInit(LocalState::Init);
 					variant.SetFunction(Execute);
-
-					variant.SetDescription("Returns the number of geometries in a geometry collection");
-					// todo: Set example
 				});
+
+				func.SetDescription(DESCRIPTION);
+				func.SetExample(EXAMPLE);
+
 				func.SetTag("ext", "spatial");
 				func.SetTag("category", "property");
 			});
@@ -5822,12 +5881,70 @@ struct ST_NInteriorRings {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_NPoints
-//----------------------------------------------------------------------------------------------------------------------
-// TODO: Implement
+//======================================================================================================================
+
 struct ST_NPoints {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (POINT_2D)
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecutePoint(DataChunk &args, ExpressionState &state, Vector &result) {
+		using POINT_TYPE = StructTypeBinary<double, double>;
+		using COUNT_TYPE = PrimitiveType<idx_t>;
+
+		GenericExecutor::ExecuteUnary<POINT_TYPE, COUNT_TYPE>(args.data[0], result, args.size(),
+															  [](POINT_TYPE) { return 1; });
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (LINESTRING_2D)
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteLineString(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto input = args.data[0];
+		UnaryExecutor::Execute<list_entry_t, idx_t>(input, result, args.size(),
+													[](list_entry_t input) { return input.length; });
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (POLYGON_2D)
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 1);
+
+		auto &input = args.data[0];
+		auto count = args.size();
+		auto &ring_vec = ListVector::GetEntry(input);
+		auto ring_entries = ListVector::GetData(ring_vec);
+
+		UnaryExecutor::Execute<list_entry_t, idx_t>(input, result, count, [&](list_entry_t polygon) {
+			auto polygon_offset = polygon.offset;
+			auto polygon_length = polygon.length;
+			idx_t npoints = 0;
+			for (idx_t ring_idx = polygon_offset; ring_idx < polygon_offset + polygon_length; ring_idx++) {
+				auto ring = ring_entries[ring_idx];
+				npoints += ring.length;
+			}
+			return npoints;
+		});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (BOX_2D)
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteBox(DataChunk &args, ExpressionState &state, Vector &result) {
+
+		using BOX_TYPE = StructTypeQuaternary<double, double, double, double>;
+		using COUNT_TYPE = PrimitiveType<idx_t>;
+
+		GenericExecutor::ExecuteUnary<BOX_TYPE, COUNT_TYPE>(args.data[0], result, args.size(), [](BOX_TYPE) { return 4; });
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (GEOMETRY)
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
@@ -5836,21 +5953,62 @@ struct ST_NPoints {
 		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Returns the number of vertices within a geometry
+	)";
+
+	// TODO: add example
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
-		FunctionBuilder::RegisterScalar(db, "ST_NPoints", [](ScalarFunctionBuilder &func) {
-			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-				variant.AddParameter("geom", GeoTypes::GEOMETRY());
-				variant.SetReturnType(LogicalType::INTEGER);
 
-				variant.SetInit(LocalState::Init);
-				variant.SetFunction(Execute);
+		for(const auto &alias : {"ST_NumPoints", "ST_NPoints"}) {
+			FunctionBuilder::RegisterScalar(db, alias, [](ScalarFunctionBuilder &func) {
+				func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+					variant.AddParameter("geom", GeoTypes::GEOMETRY());
+					variant.SetReturnType(LogicalType::UINTEGER);
 
-				variant.SetDescription("Returns the number of vertices in a geometry");
-				// todo: Set example
+					variant.SetInit(LocalState::Init);
+					variant.SetFunction(ExecuteGeometry);
+				});
+
+				func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+					variant.AddParameter("point", GeoTypes::POINT_2D());
+					variant.SetReturnType(LogicalType::UBIGINT);
+					variant.SetFunction(ExecutePoint);
+				});
+
+				func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+					variant.AddParameter("linestring", GeoTypes::LINESTRING_2D());
+					variant.SetReturnType(LogicalType::UBIGINT);
+					variant.SetFunction(ExecuteLineString);
+				});
+
+				func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+					variant.AddParameter("polygon", GeoTypes::POLYGON_2D());
+					variant.SetReturnType(LogicalType::UBIGINT);
+					variant.SetFunction(ExecutePolygon);
+				});
+
+				func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+					variant.AddParameter("box", GeoTypes::BOX_2D());
+					variant.SetReturnType(LogicalType::UBIGINT);
+					variant.SetFunction(ExecuteBox);
+				});
+
+				func.SetDescription(DESCRIPTION);
+				func.SetExample(EXAMPLE);
+
+				func.SetTag("ext", "spatial");
+				func.SetTag("category", "property");
 			});
-			func.SetTag("ext", "spatial");
-			func.SetTag("category", "property");
-		});
+		}
 	}
 };
 
