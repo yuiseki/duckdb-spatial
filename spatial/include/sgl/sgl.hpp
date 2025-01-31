@@ -174,6 +174,14 @@ public:
 
 	void append_part(geometry *part);
 
+	typedef bool (*select_func)(void *state, const geometry *part);
+	typedef void (*handle_func)(void *state, geometry *part);
+
+	void filter_parts(void *state, select_func select, handle_func handle);
+
+	// removes the first part and returns it. Returns nullptr if there are no parts.
+	geometry *pop_first_part();
+
 	const uint8_t *get_vertex_data() const;
 	uint8_t *get_vertex_data();
 	void set_vertex_data(const uint8_t *data, uint32_t size);
@@ -327,6 +335,82 @@ inline void geometry::append_part(geometry *part) {
 	part->prnt = this;
 	data = part;
 	size++;
+}
+
+// This needs testing
+inline void geometry::filter_parts(void *state, select_func select, handle_func handle) {
+	auto tail = get_last_part();
+
+	if (!tail) {
+		return;
+	}
+
+	auto prev = tail;
+	bool shrank = true;
+
+	while (size > 0 && (prev != tail || shrank)) {
+		shrank = false;
+		auto curr = prev->next;
+		auto next = curr->next;
+
+		if (select(state, curr)) {
+
+			// Unlink the current part
+			prev->next = next;
+			size--;
+			shrank = true;
+
+			if (curr == tail) {
+				// We removed the tail, update the tail pointer
+				tail = prev;
+				data = tail;
+			}
+
+			// Before passing this to the handle function,
+			// null the relationship pointers
+			curr->prnt = nullptr;
+			curr->next = nullptr;
+
+			// Pass on to the handle callback
+			handle(state, curr);
+
+		} else {
+			prev = curr;
+		}
+	}
+
+	if (size == 0) {
+		// We extracted everything. Reset the data pointer
+		data = nullptr;
+	}
+}
+
+inline geometry *geometry::pop_first_part() {
+	const auto tail = get_last_part();
+
+	if (tail == nullptr) {
+		// No parts
+		SGL_ASSERT(size == 0);
+		return nullptr;
+	}
+
+	const auto head = tail->next;
+	SGL_ASSERT(head != nullptr);
+
+	// Unlink the head
+	tail->next = head->next;
+	head->prnt = nullptr;
+	head->next = nullptr;
+
+	size--;
+
+	if (tail == head) {
+		// Special case: this was the last element, reset the data pointer
+		SGL_ASSERT(size == 0);
+		data = nullptr;
+	}
+
+	return head;
 }
 
 inline const uint8_t *geometry::get_vertex_data() const {
@@ -680,6 +764,10 @@ struct wkt_reader {
 
 bool wkt_reader_try_parse(wkt_reader *reader, geometry *out);
 std::string wkt_reader_get_error_context(const wkt_reader *reader);
+
+geometry extract_points(sgl::geometry *geom);
+geometry extract_linestrings(sgl::geometry *geom);
+geometry extract_polygons(sgl::geometry *geom);
 
 } // namespace ops
 

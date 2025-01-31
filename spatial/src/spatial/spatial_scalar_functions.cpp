@@ -1901,17 +1901,21 @@ struct ST_Collect {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_CollectionExtract
-//----------------------------------------------------------------------------------------------------------------------
-// TODO: Implement
+//======================================================================================================================
+
 struct ST_CollectionExtract {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (TYPED)
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteTyped(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		BinaryExecutor::Execute<string_t, int32_t, string_t>(
-		    args.data[0], args.data[2], result, args.size(), [&](const string_t &blob, int32_t requested_type) {
-			    const auto geom = lstate.Deserialize(blob);
+		    args.data[0], args.data[1], result, args.size(), [&](const string_t &blob, int32_t requested_type) {
+			    auto geom = lstate.Deserialize(blob);
 			    const auto type = geom.get_type();
 			    const auto is_empty = geom.is_empty();
 
@@ -1922,9 +1926,9 @@ struct ST_CollectionExtract {
 				    case sgl::geometry_type::POINT:
 					    return blob;
 				    case sgl::geometry_type::MULTI_GEOMETRY: {
-					    if (is_empty) {
-						    return lstate.Serialize(result, sgl::multi_point::make_empty());
-					    }
+					    // collect all points
+					    const auto points = sgl::ops::extract_points(&geom);
+					    return lstate.Serialize(result, points);
 				    }
 				    default:
 					    return lstate.Serialize(result, sgl::point::make_empty());
@@ -1936,9 +1940,9 @@ struct ST_CollectionExtract {
 				    case sgl::geometry_type::LINESTRING:
 					    return blob;
 				    case sgl::geometry_type::MULTI_GEOMETRY: {
-					    if (is_empty) {
-						    return lstate.Serialize(result, sgl::multi_linestring::make_empty());
-					    }
+					    // collect all lines
+					    const auto lines = sgl::ops::extract_linestrings(&geom);
+					    return lstate.Serialize(result, lines);
 				    }
 				    default:
 					    return lstate.Serialize(result, sgl::linestring::make_empty());
@@ -1950,9 +1954,9 @@ struct ST_CollectionExtract {
 				    case sgl::geometry_type::POLYGON:
 					    return blob;
 				    case sgl::geometry_type::MULTI_GEOMETRY: {
-					    if (is_empty) {
-						    return lstate.Serialize(result, sgl::multi_polygon::make_empty());
-					    }
+					    // collect all polygons
+					    const auto polygons = sgl::ops::extract_polygons(&geom);
+					    return lstate.Serialize(result, polygons);
 				    }
 				    default:
 					    return lstate.Serialize(result, sgl::polygon::make_empty());
@@ -1965,7 +1969,105 @@ struct ST_CollectionExtract {
 		    });
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (AUTO)
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteAuto(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &input) {
+			// TODO: Peek without deserialize
+			auto geom = lstate.Deserialize(input);
+
+			if (geom.get_type() != sgl::geometry_type::MULTI_GEOMETRY) {
+				return input;
+			}
+			if (geom.is_empty()) {
+				return input;
+			}
+
+			// Find the highest dimension of the geometries in the collection
+			// Empty geometries are ignored
+
+			const auto max_surface_dimension = sgl::ops::max_surface_dimension(&geom);
+			switch (max_surface_dimension) {
+			// Point case
+			case 0: {
+				const auto mpoint = sgl::ops::extract_points(&geom);
+				return lstate.Serialize(result, mpoint);
+			}
+			// LineString case
+			case 1: {
+				const auto mline = sgl::ops::extract_linestrings(&geom);
+				return lstate.Serialize(result, mline);
+			}
+			// Polygon case
+			case 2: {
+				const auto mpoly = sgl::ops::extract_polygons(&geom);
+				return lstate.Serialize(result, mpoly);
+			}
+			default: {
+				throw InternalException("Invalid dimension in collection extract");
+			}
+			}
+		});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Extracts geometries from a GeometryCollection into a typed multi geometry.
+
+		If the input geometry is a GeometryCollection, the function will return a multi geometry, determined by the `type` parameter.
+		- if `type` = 1, returns a MultiPoint containg all the Points in the collection
+		- if `type` = 2, returns a MultiLineString containg all the LineStrings in the collection
+		- if `type` = 3, returns a MultiPolygon containg all the Polygons in the collection
+
+		If no `type` parameters is provided, the function will return a multi geometry matching the highest "surface dimension"
+		of the contained geometries. E.g. if the collection contains only Points, a MultiPoint will be returned. But if the
+		collection contains both Points and LineStrings, a MultiLineString will be returned. Similarly, if the collection
+		contains Polygons, a MultiPolygon will be returned. Contained geometries of a lower surface dimension will be ignored.
+
+		If the input geometry contains nested GeometryCollections, their geometries will be extracted recursively and included
+		into the final multi geometry as well.
+
+		If the input geometry is not a GeometryCollection, the function will return the input geometry as is.
+	)";
+
+	static constexpr auto EXAMPLE = R"(
+		select st_collectionextract('MULTIPOINT(1 2,3 4)'::geometry, 1);
+		-- MULTIPOINT (1 2, 3 4)
+	)";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_CollectionExtract", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.AddParameter("type", LogicalType::INTEGER);
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteTyped);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteAuto);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
 	}
 };
 

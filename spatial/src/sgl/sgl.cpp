@@ -4,6 +4,8 @@
 
 #include "sgl/sgl.hpp"
 
+#include <vector>
+
 namespace sgl {
 
 namespace ops {
@@ -1027,6 +1029,113 @@ std::string wkt_reader_get_error_context(const wkt_reader *result) {
 	// Add an arrow to indicate the position
 	msg = "at position " + std::to_string(result->pos - result->buf) + " near: '" + msg + "'|<---";
 	return msg;
+}
+
+//------------------------------------------------------------------------------
+// Extract
+//------------------------------------------------------------------------------
+// TODO: Make these non-recursive
+
+static bool select_points(void *, const sgl::geometry *geom) {
+	switch (geom->get_type()) {
+	case sgl::geometry_type::POINT:
+	case sgl::geometry_type::MULTI_POINT:
+	case sgl::geometry_type::MULTI_GEOMETRY:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static void handle_points(void *state, sgl::geometry *geom) {
+	auto &points = *static_cast<sgl::geometry *>(state);
+
+	switch (geom->get_type()) {
+	case sgl::geometry_type::POINT:
+		points.append_part(geom);
+		break;
+	case sgl::geometry_type::MULTI_POINT:
+	case sgl::geometry_type::MULTI_GEOMETRY:
+		geom->filter_parts(state, select_points, handle_points);
+		break;
+	default:
+		SGL_ASSERT(false);
+		break;
+	}
+}
+
+static bool select_lines(void *state, const sgl::geometry *geom) {
+	switch (geom->get_type()) {
+	case sgl::geometry_type::LINESTRING:
+	case sgl::geometry_type::MULTI_LINESTRING:
+	case sgl::geometry_type::MULTI_GEOMETRY:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static void handle_lines(void *state, sgl::geometry *geom) {
+	auto &lines = *static_cast<sgl::geometry *>(state);
+
+	switch (geom->get_type()) {
+	case sgl::geometry_type::LINESTRING:
+		lines.append_part(geom);
+		break;
+	case sgl::geometry_type::MULTI_LINESTRING:
+	case sgl::geometry_type::MULTI_GEOMETRY:
+		geom->filter_parts(state, select_lines, handle_lines);
+		break;
+	default:
+		SGL_ASSERT(false);
+		break;
+	}
+}
+
+static bool select_polygons(void *state, const sgl::geometry *geom) {
+	switch (geom->get_type()) {
+	case sgl::geometry_type::POLYGON:
+	case sgl::geometry_type::MULTI_POLYGON:
+	case sgl::geometry_type::MULTI_GEOMETRY:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static void handle_polygons(void *state, sgl::geometry *geom) {
+	auto &polygons = *static_cast<sgl::geometry *>(state);
+
+	switch (geom->get_type()) {
+	case sgl::geometry_type::POLYGON:
+		polygons.append_part(geom);
+		break;
+	case sgl::geometry_type::MULTI_POLYGON:
+	case sgl::geometry_type::MULTI_GEOMETRY:
+		geom->filter_parts(state, select_polygons, handle_polygons);
+		break;
+	default:
+		SGL_ASSERT(false);
+		break;
+	}
+}
+
+geometry extract_points(sgl::geometry *geom) {
+	auto points = sgl::geometry(sgl::geometry_type::MULTI_POINT, geom->has_z(), geom->has_m());
+	geom->filter_parts(&points, select_points, handle_points);
+	return points;
+}
+
+geometry extract_linestrings(sgl::geometry *geom) {
+	auto lines = sgl::geometry(sgl::geometry_type::MULTI_LINESTRING, geom->has_z(), geom->has_m());
+	geom->filter_parts(&lines, select_lines, handle_lines);
+	return lines;
+}
+
+geometry extract_polygons(sgl::geometry *geom) {
+	auto polygons = sgl::geometry(sgl::geometry_type::MULTI_POLYGON, geom->has_z(), geom->has_m());
+	geom->filter_parts(&polygons, select_polygons, handle_polygons);
+	return polygons;
 }
 
 } // namespace ops
