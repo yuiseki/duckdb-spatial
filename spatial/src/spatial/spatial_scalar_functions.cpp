@@ -6012,11 +6012,72 @@ struct ST_NPoints {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_Perimeter
-//----------------------------------------------------------------------------------------------------------------------
-// TODO: Implement
+//======================================================================================================================
+
 struct ST_Perimeter {
+
+	//------------------------------------------------------------------------------
+	// Execute (POLYGON_2D)
+	//------------------------------------------------------------------------------
+	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 1);
+
+		auto &input = args.data[0];
+		auto count = args.size();
+
+		auto &ring_vec = ListVector::GetEntry(input);
+		auto ring_entries = ListVector::GetData(ring_vec);
+		auto &coord_vec = ListVector::GetEntry(ring_vec);
+		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
+		auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
+		auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+
+		UnaryExecutor::Execute<list_entry_t, double>(input, result, count, [&](list_entry_t polygon) {
+			auto polygon_offset = polygon.offset;
+			auto polygon_length = polygon.length;
+			double perimeter = 0;
+			for (idx_t ring_idx = polygon_offset; ring_idx < polygon_offset + polygon_length; ring_idx++) {
+				auto ring = ring_entries[ring_idx];
+				auto ring_offset = ring.offset;
+				auto ring_length = ring.length;
+
+				for (idx_t coord_idx = ring_offset; coord_idx < ring_offset + ring_length - 1; coord_idx++) {
+					auto x1 = x_data[coord_idx];
+					auto y1 = y_data[coord_idx];
+					auto x2 = x_data[coord_idx + 1];
+					auto y2 = y_data[coord_idx + 1];
+					perimeter += std::sqrt(std::pow(x1 - x2, 2) + std::pow(y1 - y2, 2));
+				}
+			}
+			return perimeter;
+		});
+
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------
+	// Execute (BOX_2D)
+	//------------------------------------------------------------------------------
+	static void ExecuteBox(DataChunk &args, ExpressionState &state, Vector &result) {
+		using BOX_TYPE = StructTypeQuaternary<double, double, double, double>;
+		using PERIMETER_TYPE = PrimitiveType<double>;
+
+		GenericExecutor::ExecuteUnary<BOX_TYPE, PERIMETER_TYPE>(args.data[0], result, args.size(), [&](BOX_TYPE &box) {
+			auto minx = box.a_val;
+			auto miny = box.b_val;
+			auto maxx = box.c_val;
+			auto maxy = box.d_val;
+			return 2 * (maxx - minx + maxy - miny);
+		});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (GEOMETRY)
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
@@ -6026,6 +6087,19 @@ struct ST_Perimeter {
 		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Returns the length of the perimeter of the geometry
+	)";
+
+	// TODO: Add example
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Perimeter", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -6034,10 +6108,20 @@ struct ST_Perimeter {
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
-
-				variant.SetDescription("Compute the perimeter of a geometry");
-				// TODO: Set example
 			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("polygon", GeoTypes::POLYGON_2D());
+				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetFunction(ExecutePolygon);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("box", GeoTypes::BOX_2D());
+				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetFunction(ExecuteBox);
+			});
+
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");
 		});
@@ -6103,41 +6187,142 @@ struct ST_Point {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_PointN
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_PointN {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (GEOMETRY)
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
-		/*
-		BinaryExecutor::ExecuteWithNulls<geometry_t, int32_t, geometry_t>(
-		    args.data[0], args.data[1], result, args.size(),
-		    [&](const string_t &blob, int32_t index, ValidityMask &mask, idx_t row_idx) {
+		BinaryExecutor::ExecuteWithNulls<string_t, int32_t, string_t>(
+			args.data[0], args.data[1], result, args.size(),
+			[&](const string_t &blob, const int32_t index, ValidityMask &mask, const idx_t row_idx) {
 
-		        // TODO: peek without deserialing
-		        if (input.GetType() != GeometryType::LINESTRING) {
-		            mask.SetInvalid(row_idx);
-		            return string_t {};
-		        }
+				// TODO: peek type without deserializing
+				const auto geom = lstate.Deserialize(blob);
 
-		        const auto line = lstate.Deserialize(blob);
-		        const auto point_count = line.get_count();;
+				if (geom.get_type() != sgl::geometry_type::LINESTRING) {
+					mask.SetInvalid(row_idx);
+					return string_t {};
+				}
 
-		        if (point_count == 0 || index == 0 || index < -static_cast<int64_t>(point_count) ||
-		            index > static_cast<int64_t>(point_count)) {
-		            mask.SetInvalid(row_idx);
-		            return geometry_t {};
-		        }
+				const auto point_count = geom.get_count();
 
-		        auto actual_index = index < 0 ? point_count + index : index - 1;
-		        auto point = LineString::GetPointAsReference(line, actual_index);
-		        return lstate.Serialize(result, point);
-		    });
-		    */
+				const auto is_empty = point_count == 0;
+				const auto is_under = index == 0 || index < -static_cast<int64_t>(point_count);
+				const auto is_above = index > static_cast<int64_t>(point_count);
+
+				if (is_empty || is_under || is_above) {
+					mask.SetInvalid(row_idx);
+					return string_t {};
+				}
+
+				const auto vertex_elem = index < 0 ? point_count + index : index - 1;
+				const auto vertex_size = geom.get_vertex_size();
+				const auto vertex_data = geom.get_vertex_data();
+
+				// Reference the existing vertex data
+				sgl::geometry point(sgl::geometry_type::POINT, geom.has_z(), geom.has_m());
+				point.set_vertex_data(vertex_data + vertex_elem * vertex_size, 1);
+
+				return lstate.Serialize(result, point);
+			});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (LINESTRING_2D)
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteLineString(DataChunk &args, ExpressionState &state, Vector &result) {
+
+		auto geom_vec = args.data[0];
+		auto index_vec = args.data[1];
+		auto count = args.size();
+		UnifiedVectorFormat geom_format;
+		geom_vec.ToUnifiedFormat(count, geom_format);
+		UnifiedVectorFormat index_format;
+		index_vec.ToUnifiedFormat(count, index_format);
+
+		auto line_vertex_entries = ListVector::GetData(geom_vec);
+		auto &line_vertex_vec = ListVector::GetEntry(geom_vec);
+		auto &line_vertex_vec_children = StructVector::GetEntries(line_vertex_vec);
+		auto line_x_data = FlatVector::GetData<double>(*line_vertex_vec_children[0]);
+		auto line_y_data = FlatVector::GetData<double>(*line_vertex_vec_children[1]);
+
+		auto &point_vertex_children = StructVector::GetEntries(result);
+		auto point_x_data = FlatVector::GetData<double>(*point_vertex_children[0]);
+		auto point_y_data = FlatVector::GetData<double>(*point_vertex_children[1]);
+
+		auto index_data = FlatVector::GetData<int32_t>(index_vec);
+
+		for (idx_t out_row_idx = 0; out_row_idx < count; out_row_idx++) {
+
+			auto in_row_idx = geom_format.sel->get_index(out_row_idx);
+			auto in_idx_idx = index_format.sel->get_index(out_row_idx);
+			if (geom_format.validity.RowIsValid(in_row_idx) && index_format.validity.RowIsValid(in_idx_idx)) {
+				auto line = line_vertex_entries[in_row_idx];
+				auto line_offset = line.offset;
+				auto line_length = line.length;
+				auto index = index_data[in_idx_idx];
+
+				if (line_length == 0 || index == 0 || index < -static_cast<int64_t>(line_length) ||
+				    index > static_cast<int64_t>(line_length)) {
+					FlatVector::SetNull(result, out_row_idx, true);
+					continue;
+				}
+				auto actual_index = index < 0 ? line_length + index : index - 1;
+				point_x_data[out_row_idx] = line_x_data[line_offset + actual_index];
+				point_y_data[out_row_idx] = line_y_data[line_offset + actual_index];
+			} else {
+				FlatVector::SetNull(result, out_row_idx, true);
+			}
+		}
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Returns the n'th vertex from the input geometry as a point geometry
+	)";
+
+	// TODO: add example
+	static constexpr auto EXAMPLe = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_PointN", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.AddParameter("index", LogicalType::INTEGER);
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("linestring", GeoTypes::LINESTRING_2D());
+				variant.AddParameter("index", LogicalType::INTEGER);
+				variant.SetReturnType(GeoTypes::POINT_2D());
+				variant.SetFunction(ExecuteLineString);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLe);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
 	}
 };
 
