@@ -5780,22 +5780,21 @@ struct ST_NGeometries {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(),
-			[&](const string_t &blob) {
+		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
 			const auto geom = lstate.Deserialize(blob);
-			switch(geom.get_type()) {
-				case sgl::geometry_type::POINT:
-				case sgl::geometry_type::LINESTRING:
-				case sgl::geometry_type::POLYGON:
-					return geom.is_empty() ? 0 : 1;
-				case sgl::geometry_type::MULTI_POINT:
-				case sgl::geometry_type::MULTI_LINESTRING:
-				case sgl::geometry_type::MULTI_POLYGON:
-				case sgl::geometry_type::MULTI_GEOMETRY:
-					return static_cast<int32_t>(geom.get_count());
-				default:
-					D_ASSERT(false);
-					return 0;
+			switch (geom.get_type()) {
+			case sgl::geometry_type::POINT:
+			case sgl::geometry_type::LINESTRING:
+			case sgl::geometry_type::POLYGON:
+				return geom.is_empty() ? 0 : 1;
+			case sgl::geometry_type::MULTI_POINT:
+			case sgl::geometry_type::MULTI_LINESTRING:
+			case sgl::geometry_type::MULTI_POLYGON:
+			case sgl::geometry_type::MULTI_GEOMETRY:
+				return static_cast<int32_t>(geom.get_count());
+			default:
+				D_ASSERT(false);
+				return 0;
 			}
 		});
 	}
@@ -5838,11 +5837,15 @@ struct ST_NGeometries {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
-// ST_NInteriorRings / ST_NumInteriorRings
-//----------------------------------------------------------------------------------------------------------------------
-// TODO: Implement
+//======================================================================================================================
+// ST_NumInteriorRings / ST_NInteriorRings
+//======================================================================================================================
+
 struct ST_NInteriorRings {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (GEOMETRY)
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
@@ -5860,8 +5863,32 @@ struct ST_NInteriorRings {
 		    });
 	}
 
+	//------------------------------------------------------------------------------
+	// Execute (POLYGON_2D)
+	//------------------------------------------------------------------------------
+	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
+		UnaryExecutor::Execute<list_entry_t, int32_t>(
+		    args.data[0], result, args.size(), [&](const list_entry_t &polygon) {
+			    const auto rings = polygon.length;
+			    return rings == 0 ? rings : static_cast<int32_t>(polygon.length) - 1; // -1 for the exterior ring
+		    });
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Returns the number if interior rings of a polygon
+	)";
+
+	// TODO: add example
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
-		// todo: maybe make a macro for the aliases
+		// TODO: maybe make a macro for the aliases
 		for (auto &alias : {"ST_NumInteriorRings", "ST_NInteriorRings"}) {
 			FunctionBuilder::RegisterScalar(db, alias, [](ScalarFunctionBuilder &func) {
 				func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -5870,10 +5897,18 @@ struct ST_NInteriorRings {
 
 					variant.SetInit(LocalState::Init);
 					variant.SetFunction(Execute);
-
-					variant.SetDescription("Returns the number of interior rings in a polygon");
-					// TODO: Set example
 				});
+
+				func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+					variant.AddParameter("polygon", GeoTypes::POLYGON_2D());
+					variant.SetReturnType(LogicalType::INTEGER);
+
+					variant.SetFunction(ExecutePolygon);
+				});
+
+				func.SetDescription(DESCRIPTION);
+				func.SetExample(EXAMPLE);
+
 				func.SetTag("ext", "spatial");
 				func.SetTag("category", "property");
 			});
@@ -5895,7 +5930,7 @@ struct ST_NPoints {
 		using COUNT_TYPE = PrimitiveType<idx_t>;
 
 		GenericExecutor::ExecuteUnary<POINT_TYPE, COUNT_TYPE>(args.data[0], result, args.size(),
-															  [](POINT_TYPE) { return 1; });
+		                                                      [](POINT_TYPE) { return 1; });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -5904,7 +5939,7 @@ struct ST_NPoints {
 	static void ExecuteLineString(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto input = args.data[0];
 		UnaryExecutor::Execute<list_entry_t, idx_t>(input, result, args.size(),
-													[](list_entry_t input) { return input.length; });
+		                                            [](list_entry_t input) { return input.length; });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -5938,7 +5973,8 @@ struct ST_NPoints {
 		using BOX_TYPE = StructTypeQuaternary<double, double, double, double>;
 		using COUNT_TYPE = PrimitiveType<idx_t>;
 
-		GenericExecutor::ExecuteUnary<BOX_TYPE, COUNT_TYPE>(args.data[0], result, args.size(), [](BOX_TYPE) { return 4; });
+		GenericExecutor::ExecuteUnary<BOX_TYPE, COUNT_TYPE>(args.data[0], result, args.size(),
+		                                                    [](BOX_TYPE) { return 4; });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -5968,7 +6004,7 @@ struct ST_NPoints {
 	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 
-		for(const auto &alias : {"ST_NumPoints", "ST_NPoints"}) {
+		for (const auto &alias : {"ST_NumPoints", "ST_NPoints"}) {
 			FunctionBuilder::RegisterScalar(db, alias, [](ScalarFunctionBuilder &func) {
 				func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 					variant.AddParameter("geom", GeoTypes::GEOMETRY());
@@ -6200,38 +6236,37 @@ struct ST_PointN {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		BinaryExecutor::ExecuteWithNulls<string_t, int32_t, string_t>(
-			args.data[0], args.data[1], result, args.size(),
-			[&](const string_t &blob, const int32_t index, ValidityMask &mask, const idx_t row_idx) {
+		    args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &blob, const int32_t index, ValidityMask &mask, const idx_t row_idx) {
+			    // TODO: peek type without deserializing
+			    const auto geom = lstate.Deserialize(blob);
 
-				// TODO: peek type without deserializing
-				const auto geom = lstate.Deserialize(blob);
+			    if (geom.get_type() != sgl::geometry_type::LINESTRING) {
+				    mask.SetInvalid(row_idx);
+				    return string_t {};
+			    }
 
-				if (geom.get_type() != sgl::geometry_type::LINESTRING) {
-					mask.SetInvalid(row_idx);
-					return string_t {};
-				}
+			    const auto point_count = geom.get_count();
 
-				const auto point_count = geom.get_count();
+			    const auto is_empty = point_count == 0;
+			    const auto is_under = index == 0 || index < -static_cast<int64_t>(point_count);
+			    const auto is_above = index > static_cast<int64_t>(point_count);
 
-				const auto is_empty = point_count == 0;
-				const auto is_under = index == 0 || index < -static_cast<int64_t>(point_count);
-				const auto is_above = index > static_cast<int64_t>(point_count);
+			    if (is_empty || is_under || is_above) {
+				    mask.SetInvalid(row_idx);
+				    return string_t {};
+			    }
 
-				if (is_empty || is_under || is_above) {
-					mask.SetInvalid(row_idx);
-					return string_t {};
-				}
+			    const auto vertex_elem = index < 0 ? point_count + index : index - 1;
+			    const auto vertex_size = geom.get_vertex_size();
+			    const auto vertex_data = geom.get_vertex_data();
 
-				const auto vertex_elem = index < 0 ? point_count + index : index - 1;
-				const auto vertex_size = geom.get_vertex_size();
-				const auto vertex_data = geom.get_vertex_data();
+			    // Reference the existing vertex data
+			    sgl::geometry point(sgl::geometry_type::POINT, geom.has_z(), geom.has_m());
+			    point.set_vertex_data(vertex_data + vertex_elem * vertex_size, 1);
 
-				// Reference the existing vertex data
-				sgl::geometry point(sgl::geometry_type::POINT, geom.has_z(), geom.has_m());
-				point.set_vertex_data(vertex_data + vertex_elem * vertex_size, 1);
-
-				return lstate.Serialize(result, point);
-			});
+			    return lstate.Serialize(result, point);
+		    });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -6326,10 +6361,15 @@ struct ST_PointN {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_Points
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_Points {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (GEOMETRY)
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
@@ -6359,6 +6399,26 @@ struct ST_Points {
 		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Collects all the vertices in the geometry into a MULTIPOINT
+	)";
+
+	static constexpr auto EXAMPLE = R"(
+		select st_points('LINESTRING(1 1, 2 2)'::geometry);
+		----
+		MULTIPOINT (1 1, 2 2)
+
+		select st_points('MULTIPOLYGON Z EMPTY'::geometry);
+		----
+		MULTIPOINT Z EMPTY
+	)";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Points", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -6367,21 +6427,26 @@ struct ST_Points {
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
-
-				variant.SetDescription("Returns a MULTIPOINT containing all the vertices of a geometry");
-				// TODO: Set example
 			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
 		});
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_QuadKey
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_QuadKey {
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Helpers
+	//------------------------------------------------------------------------------------------------------------------
 	static void GetQuadKey(double lon, double lat, int32_t level, char *buffer) {
 
 		lat = std::max(-85.05112878, std::min(85.05112878, lat));
@@ -6404,8 +6469,9 @@ struct ST_QuadKey {
 			buffer[level - i] = digit;
 		}
 	}
+
 	//------------------------------------------------------------------------------------------------------------------
-	// Geometry Function
+	// Execute (GEOMETRY)
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
@@ -6436,7 +6502,9 @@ struct ST_QuadKey {
 		    });
 	}
 
-	// Point Function  -------------------------------------------------------------------------------------------------
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (LON/LAT)
+	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteLonLat(DataChunk &args, ExpressionState &state, Vector &result) {
 
 		auto &lon_in = args.data[0];
@@ -6454,7 +6522,29 @@ struct ST_QuadKey {
 		    });
 	}
 
-	// Register --------------------------------------------------------------------------------------------------------
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Compute the [quadkey](https://learn.microsoft.com/en-us/bingmaps/articles/bing-maps-tile-system) for a given lon/lat point at a given level.
+		Note that the parameter order is __longitude__, __latitude__.
+
+		`level` has to be between 1 and 23, inclusive.
+
+		The input coordinates will be clamped to the lon/lat bounds of the earth (longitude between -180 and 180, latitude between -85.05112878 and 85.05112878).
+
+		The geometry overload throws an error if the input geometry is not a `POINT`
+	)";
+
+	static constexpr auto EXAMPLE = R"(
+		SELECT ST_QuadKey(st_point(11.08, 49.45), 10);
+		----
+		1333203202
+	)";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_QuadKey", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -6463,10 +6553,6 @@ struct ST_QuadKey {
 				variant.AddParameter("level", LogicalType::INTEGER);
 				variant.SetReturnType(LogicalType::VARCHAR);
 				variant.SetFunction(ExecuteLonLat);
-
-				// TODO: Set example
-				// variant.SetExample(DOC_EXAMPLE);
-				// variant.SetDescription(DOC_DESCRIPTION);
 			});
 
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -6475,14 +6561,13 @@ struct ST_QuadKey {
 				variant.SetReturnType(LogicalType::VARCHAR);
 				variant.SetFunction(ExecuteGeometry);
 				variant.SetInit(LocalState::Init);
-
-				// TODO: Set example
-				// variant.SetExample(DOC_EXAMPLE);
-				// variant.SetDescription(DOC_DESCRIPTION);
 			});
 
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
 		});
 	}
 };
