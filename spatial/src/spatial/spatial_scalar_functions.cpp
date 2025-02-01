@@ -5654,7 +5654,7 @@ struct ST_MakeLine {
 
 			    for (idx_t i = offset; i < offset + length; i++) {
 				    const auto mapped_idx = format.sel->get_index(i);
-				    if (format.validity.RowIsValid(mapped_idx)) {
+				    if (!format.validity.RowIsValid(mapped_idx)) {
 					    continue;
 				    }
 				    auto &blob = UnifiedVectorFormat::GetData<string_t>(format)[mapped_idx];
@@ -5686,7 +5686,7 @@ struct ST_MakeLine {
 				    D_ASSERT(vertex_idx < line_length);
 
 				    const auto mapped_idx = format.sel->get_index(i);
-				    if (format.validity.RowIsValid(mapped_idx)) {
+				    if (!format.validity.RowIsValid(mapped_idx)) {
 					    continue;
 				    }
 				    auto &blob = UnifiedVectorFormat::GetData<string_t>(format)[mapped_idx];
@@ -5857,8 +5857,8 @@ struct ST_MakePolygon {
 	static void ExecuteFromRings(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
-		auto &child_vec = ListVector::GetEntry(args.data[0]);
-		auto child_len = ListVector::GetListSize(args.data[0]);
+		auto &child_vec = ListVector::GetEntry(args.data[1]);
+		auto child_len = ListVector::GetListSize(args.data[1]);
 
 		UnifiedVectorFormat child_format;
 		child_vec.ToUnifiedFormat(child_len, child_format);
@@ -5894,7 +5894,7 @@ struct ST_MakePolygon {
 
 			    for (idx_t hole_idx = 0; hole_idx < holes_length; hole_idx++) {
 				    const auto mapped_idx = child_format.sel->get_index(holes_offset + hole_idx);
-				    if (child_format.validity.RowIsValid(mapped_idx)) {
+				    if (!child_format.validity.RowIsValid(mapped_idx)) {
 					    continue;
 				    }
 
@@ -5908,13 +5908,13 @@ struct ST_MakePolygon {
 				    *hole = lstate.Deserialize(hole_blob);
 
 				    if (hole->get_type() != sgl::geometry_type::LINESTRING) {
-					    throw InvalidInputException("ST_MakePolygon hole #%lu is not a LINESTRING", hole_idx + 1);
+					    throw InvalidInputException("ST_MakePolygon hole #%lu is not a LINESTRING geometry", hole_idx + 1);
 				    }
 				    if (hole->has_z() || hole->has_m()) {
 					    throw InvalidInputException("ST_MakePolygon hole #%lu has Z or M values", hole_idx + 1);
 				    }
 				    if (hole->get_count() < 4) {
-					    throw InvalidInputException("ST_MakePolygon hole requires at least 4 vertices");
+					    throw InvalidInputException("ST_MakePolygon hole #%lu requires at least 4 vertices", hole_idx + 1);
 				    }
 				    if (!sgl::linestring::is_closed(hole)) {
 					    throw InvalidInputException(

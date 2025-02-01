@@ -862,52 +862,101 @@ inline double length(const geometry *geom) {
 }
 
 inline size_t vertex_count(const geometry *geom) {
-	if (geom->is_single_part()) {
-		return geom->get_count();
-	} else {
-		const auto tail = geom->get_last_part();
-		if (!tail) {
-			return 0;
-		}
-		auto part = tail;
-		size_t count = 0;
-		do {
-			part = part->get_next();
-			count += part->get_count();
-		} while (part != tail);
-		return count;
+	if(!geom) {
+		return 0;
 	}
+
+	size_t count = 0;
+	const geometry *part = geom;
+	const geometry *root = part->get_parent();
+
+	while(true) {
+		switch(part->get_type()) {
+			case geometry_type::POINT:
+			case geometry_type::LINESTRING:
+				count += part->get_count();
+			break;
+			case geometry_type::POLYGON:
+			case geometry_type::MULTI_POINT:
+			case geometry_type::MULTI_LINESTRING:
+			case geometry_type::MULTI_POLYGON:
+			case geometry_type::MULTI_GEOMETRY:
+				if(!part->is_empty()) {
+					part = part->get_first_part();
+					continue;
+				}
+			break;
+			default:
+				SGL_ASSERT(false);
+				return 0;
+		}
+
+		while(true) {
+			const auto parent = part->get_parent();
+			if(parent == root) {
+				return count;
+			}
+
+			if(part != parent->get_last_part()) {
+				part = part->get_next();
+				break;
+			}
+
+			part = parent;
+		}
+	}
+	return count;
 }
 
+
 inline int32_t max_surface_dimension(const geometry *geom, bool ignore_empty) {
-	if (ignore_empty && geom->get_count() == 0) {
+	if(!geom) {
 		return 0;
 	}
-	switch (geom->get_type()) {
-	case geometry_type::POINT:
-	case geometry_type::MULTI_POINT:
-		return 0;
-	case geometry_type::LINESTRING:
-	case geometry_type::MULTI_LINESTRING:
-		return 1;
-	case geometry_type::POLYGON:
-	case geometry_type::MULTI_POLYGON:
-		return 2;
-	case geometry_type::MULTI_GEOMETRY: {
-		int32_t max_dim = 0;
-		const auto tail = geom->get_last_part();
-		if (!tail) {
-			return 0;
+
+	int32_t max_dim = 0;
+	const geometry *part = geom;
+	const geometry *root = part->get_parent();
+
+	while(true) {
+		if(!(part->is_empty() && ignore_empty)) {
+			switch(part->get_type()) {
+			case geometry_type::POINT:
+			case geometry_type::MULTI_POINT:
+				max_dim = std::max(max_dim, 0);
+			case geometry_type::LINESTRING:
+			case geometry_type::MULTI_LINESTRING:
+				max_dim = std::max(max_dim, 1);
+				break;
+			case geometry_type::POLYGON:
+			case geometry_type::MULTI_POLYGON:
+				max_dim = std::max(max_dim, 2);
+				break;
+			case geometry_type::MULTI_GEOMETRY:
+				if(!part->is_empty()) {
+					part = part->get_first_part();
+					continue;
+				}
+			break;
+			default:
+				SGL_ASSERT(false);
+				return 0;
+			}
 		}
-		auto part = tail;
-		do {
-			part = part->get_next();
-			max_dim = std::max(max_dim, max_surface_dimension(part, ignore_empty));
-		} while (part != tail);
-		return max_dim;
-	}
-	default:
-		return 0;
+
+		while(true) {
+			const auto parent = part->get_parent();
+			if(parent == root) {
+				return max_dim;
+			}
+
+			if(part != parent->get_last_part()) {
+				part = part->get_next();
+				break;
+			}
+
+			part = parent;
+		}
 	}
 }
 
