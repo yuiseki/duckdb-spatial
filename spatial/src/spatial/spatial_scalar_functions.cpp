@@ -1773,9 +1773,6 @@ struct ST_Collect {
 			    // First figure out if we have Z or M
 			    bool has_z = false;
 			    bool has_m = false;
-			    bool all_points = true;
-			    bool all_lines = true;
-			    bool all_polygons = true;
 
 			    // First pass, check if we have Z or M
 			    for (idx_t out_idx = offset; out_idx < offset + length; out_idx++) {
@@ -1783,6 +1780,7 @@ struct ST_Collect {
 				    if (!input_vdata.validity.RowIsValid(row_idx)) {
 					    continue;
 				    }
+
 				    auto &blob = UnifiedVectorFormat::GetData<string_t>(input_vdata)[row_idx];
 
 				    // TODO: Peek dont deserialize
@@ -1791,11 +1789,15 @@ struct ST_Collect {
 				    has_m = has_m || geom.has_m();
 			    }
 
+		    	bool all_points = true;
+				bool all_lines = true;
+				bool all_polygons = true;
+
 			    sgl::geometry collection(sgl::geometry_type::INVALID, has_z, has_m);
 
 			    for (idx_t out_idx = offset; out_idx < offset + length; out_idx++) {
 				    const auto row_idx = input_vdata.sel->get_index(out_idx);
-				    if (input_vdata.validity.RowIsValid(row_idx)) {
+				    if (!input_vdata.validity.RowIsValid(row_idx)) {
 					    continue;
 				    }
 
@@ -1803,10 +1805,10 @@ struct ST_Collect {
 				    // TODO: Deserialize to heap immediately
 				    auto geom = lstate.Deserialize(blob);
 
-				    // TODO: Peek dont deserialize
-				    if (geom.is_empty()) {
-					    continue;
-				    }
+			    	// TODO: Peek dont deserialize
+					if (geom.is_empty()) {
+						continue;
+					}
 
 				    all_points = all_points && geom.get_type() == sgl::geometry_type::POINT;
 				    all_lines = all_lines && geom.get_type() == sgl::geometry_type::LINESTRING;
@@ -1821,6 +1823,11 @@ struct ST_Collect {
 				    // Append to collection
 				    collection.append_part(part);
 			    }
+
+		    	if(collection.is_empty()) {
+		    		// NULL's and EMPTY do not contribute to the result.
+				    return lstate.Serialize(result, sgl::multi_geometry::make_empty());
+		    	}
 
 			    // Figure out the type of the collection
 			    if (all_points) {
