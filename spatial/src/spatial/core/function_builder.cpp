@@ -32,7 +32,7 @@ static string RemoveIndentAndTrailingWhitespace(const char *text) {
 			}
 			if (matched_indent) {
 				auto remaining_indent = indent_len;
-				while(*text && remaining_indent > 0) {
+				while (*text && remaining_indent > 0) {
 					text++;
 					remaining_indent--;
 				}

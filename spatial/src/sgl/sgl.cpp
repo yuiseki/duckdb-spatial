@@ -473,7 +473,7 @@ bool wkb_reader_try_parse(wkb_reader *state, geometry *out) {
 		const auto has_m = (flags == 2) || (flags == 3) || ((state->type_id & 0x40000000) != 0);
 		const auto has_srid = (state->type_id & 0x20000000) != 0;
 
-		if(has_srid) {
+		if (has_srid) {
 			// skip the SRID
 			const auto srid = read_u32(state);
 			(void)srid;

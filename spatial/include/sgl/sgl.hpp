@@ -862,7 +862,7 @@ inline double length(const geometry *geom) {
 }
 
 inline size_t vertex_count(const geometry *geom) {
-	if(!geom) {
+	if (!geom) {
 		return 0;
 	}
 
@@ -870,34 +870,34 @@ inline size_t vertex_count(const geometry *geom) {
 	const geometry *part = geom;
 	const geometry *root = part->get_parent();
 
-	while(true) {
-		switch(part->get_type()) {
-			case geometry_type::POINT:
-			case geometry_type::LINESTRING:
-				count += part->get_count();
+	while (true) {
+		switch (part->get_type()) {
+		case geometry_type::POINT:
+		case geometry_type::LINESTRING:
+			count += part->get_count();
 			break;
-			case geometry_type::POLYGON:
-			case geometry_type::MULTI_POINT:
-			case geometry_type::MULTI_LINESTRING:
-			case geometry_type::MULTI_POLYGON:
-			case geometry_type::MULTI_GEOMETRY:
-				if(!part->is_empty()) {
-					part = part->get_first_part();
-					continue;
-				}
+		case geometry_type::POLYGON:
+		case geometry_type::MULTI_POINT:
+		case geometry_type::MULTI_LINESTRING:
+		case geometry_type::MULTI_POLYGON:
+		case geometry_type::MULTI_GEOMETRY:
+			if (!part->is_empty()) {
+				part = part->get_first_part();
+				continue;
+			}
 			break;
-			default:
-				SGL_ASSERT(false);
-				return 0;
+		default:
+			SGL_ASSERT(false);
+			return 0;
 		}
 
-		while(true) {
+		while (true) {
 			const auto parent = part->get_parent();
-			if(parent == root) {
+			if (parent == root) {
 				return count;
 			}
 
-			if(part != parent->get_last_part()) {
+			if (part != parent->get_last_part()) {
 				part = part->get_next();
 				break;
 			}
@@ -908,9 +908,8 @@ inline size_t vertex_count(const geometry *geom) {
 	return count;
 }
 
-
 inline int32_t max_surface_dimension(const geometry *geom, bool ignore_empty) {
-	if(!geom) {
+	if (!geom) {
 		return 0;
 	}
 
@@ -918,12 +917,13 @@ inline int32_t max_surface_dimension(const geometry *geom, bool ignore_empty) {
 	const geometry *part = geom;
 	const geometry *root = part->get_parent();
 
-	while(true) {
-		if(!(part->is_empty() && ignore_empty)) {
-			switch(part->get_type()) {
+	while (true) {
+		if (!(part->is_empty() && ignore_empty)) {
+			switch (part->get_type()) {
 			case geometry_type::POINT:
 			case geometry_type::MULTI_POINT:
 				max_dim = std::max(max_dim, 0);
+				break;
 			case geometry_type::LINESTRING:
 			case geometry_type::MULTI_LINESTRING:
 				max_dim = std::max(max_dim, 1);
@@ -933,24 +933,24 @@ inline int32_t max_surface_dimension(const geometry *geom, bool ignore_empty) {
 				max_dim = std::max(max_dim, 2);
 				break;
 			case geometry_type::MULTI_GEOMETRY:
-				if(!part->is_empty()) {
+				if (!part->is_empty()) {
 					part = part->get_first_part();
 					continue;
 				}
-			break;
+				break;
 			default:
 				SGL_ASSERT(false);
 				return 0;
 			}
 		}
 
-		while(true) {
+		while (true) {
 			const auto parent = part->get_parent();
-			if(parent == root) {
+			if (parent == root) {
 				return max_dim;
 			}
 
-			if(part != parent->get_last_part()) {
+			if (part != parent->get_last_part()) {
 				part = part->get_next();
 				break;
 			}

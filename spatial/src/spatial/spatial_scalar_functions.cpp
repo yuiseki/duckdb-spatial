@@ -1789,9 +1789,9 @@ struct ST_Collect {
 				    has_m = has_m || geom.has_m();
 			    }
 
-		    	bool all_points = true;
-				bool all_lines = true;
-				bool all_polygons = true;
+			    bool all_points = true;
+			    bool all_lines = true;
+			    bool all_polygons = true;
 
 			    sgl::geometry collection(sgl::geometry_type::INVALID, has_z, has_m);
 
@@ -1805,10 +1805,10 @@ struct ST_Collect {
 				    // TODO: Deserialize to heap immediately
 				    auto geom = lstate.Deserialize(blob);
 
-			    	// TODO: Peek dont deserialize
-					if (geom.is_empty()) {
-						continue;
-					}
+				    // TODO: Peek dont deserialize
+				    if (geom.is_empty()) {
+					    continue;
+				    }
 
 				    all_points = all_points && geom.get_type() == sgl::geometry_type::POINT;
 				    all_lines = all_lines && geom.get_type() == sgl::geometry_type::LINESTRING;
@@ -1824,10 +1824,10 @@ struct ST_Collect {
 				    collection.append_part(part);
 			    }
 
-		    	if(collection.is_empty()) {
-		    		// NULL's and EMPTY do not contribute to the result.
+			    if (collection.is_empty()) {
+				    // NULL's and EMPTY do not contribute to the result.
 				    return lstate.Serialize(result, sgl::multi_geometry::make_empty());
-		    	}
+			    }
 
 			    // Figure out the type of the collection
 			    if (all_points) {
@@ -2751,7 +2751,7 @@ struct ST_ExteriorRing {
 			    }
 
 			    if (geom.is_empty()) {
-				    const auto empty = sgl::polygon::make_empty(geom.has_z(), geom.has_m());
+				    const auto empty = sgl::linestring::make_empty(geom.has_z(), geom.has_m());
 				    return lstate.Serialize(result, empty);
 			    }
 
@@ -5268,26 +5268,26 @@ struct ST_IntersectsExtent {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		BinaryExecutor::Execute<string_t, string_t, bool>(args.data[0], args.data[1], result, args.size(),
-	      [&](const string_t &lhs_blob, const string_t &rhs_blob) {
-	          // TODO: In the future we should store if the geom is
-	          // empty/vertex count in the blob
+		                                                  [&](const string_t &lhs_blob, const string_t &rhs_blob) {
+			                                                  // TODO: In the future we should store if the geom is
+			                                                  // empty/vertex count in the blob
 
-	          const auto lhs_geom = lstate.Deserialize(lhs_blob);
+			                                                  const auto lhs_geom = lstate.Deserialize(lhs_blob);
 
-	          sgl::box_xy lhs_ext = {};
-	          if (!sgl::ops::try_get_extent_xy(&lhs_geom, &lhs_ext)) {
-	              return false;
-	          }
+			                                                  sgl::box_xy lhs_ext = {};
+			                                                  if (!sgl::ops::try_get_extent_xy(&lhs_geom, &lhs_ext)) {
+				                                                  return false;
+			                                                  }
 
-	          const auto rhs_geom = lstate.Deserialize(rhs_blob);
+			                                                  const auto rhs_geom = lstate.Deserialize(rhs_blob);
 
-	          sgl::box_xy rhs_ext = {};
-	          if (!sgl::ops::try_get_extent_xy(&rhs_geom, &rhs_ext)) {
-	              return false;
-	          }
+			                                                  sgl::box_xy rhs_ext = {};
+			                                                  if (!sgl::ops::try_get_extent_xy(&rhs_geom, &rhs_ext)) {
+				                                                  return false;
+			                                                  }
 
-	          return lhs_ext.intersects(rhs_ext);
-	      });
+			                                                  return lhs_ext.intersects(rhs_ext);
+		                                                  });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -5644,11 +5644,6 @@ struct ST_MakeLine {
 			    const auto offset = entry.offset;
 			    const auto length = entry.length;
 
-			    if (length < 2) {
-				    // Early out if we don't have enough geometries
-				    throw InvalidInputException("ST_MakeLine requires at least 2 geometries");
-			    }
-
 			    uint32_t line_length = 0;
 			    // First pass, filter types, count non-null entries
 
@@ -5671,11 +5666,20 @@ struct ST_MakeLine {
 					        "ST_MakeLine from list does not accept POINT geometries with Z or M values");
 				    }
 
+				    if (geom.is_empty()) {
+					    continue;
+				    }
+
 				    line_length++;
 			    }
 
-			    if (line_length < 2) {
-				    throw InvalidInputException("ST_MakeLine requires at least 2 non-null geometries");
+			    if (line_length == 0) {
+				    // Empty line
+				    return lstate.Serialize(result, sgl::linestring::make_empty(false, false));
+			    }
+
+			    if (line_length == 1) {
+				    throw InvalidInputException("ST_MakeLine requires zero or two or more POINT geometries");
 			    }
 
 			    const auto line_data = lstate.GetArena().AllocateAligned(line_length * 2 * sizeof(double));
@@ -5722,8 +5726,12 @@ struct ST_MakeLine {
 				    throw InvalidInputException("ST_MakeLine only accepts POINT geometries");
 			    }
 
+			    if (l_geom.is_empty() && r_geom.is_empty()) {
+				    return lstate.Serialize(result, sgl::linestring::make_empty(false, false));
+			    }
+
 			    if (l_geom.is_empty() || r_geom.is_empty()) {
-				    throw InvalidInputException("ST_MakeLine does not accept empty POINT geometries");
+				    throw InvalidInputException("ST_MakeLine requires zero or two or more POINT geometries");
 			    }
 
 			    const auto has_z = l_geom.has_z() || r_geom.has_z();
@@ -5908,13 +5916,15 @@ struct ST_MakePolygon {
 				    *hole = lstate.Deserialize(hole_blob);
 
 				    if (hole->get_type() != sgl::geometry_type::LINESTRING) {
-					    throw InvalidInputException("ST_MakePolygon hole #%lu is not a LINESTRING geometry", hole_idx + 1);
+					    throw InvalidInputException("ST_MakePolygon hole #%lu is not a LINESTRING geometry",
+					                                hole_idx + 1);
 				    }
 				    if (hole->has_z() || hole->has_m()) {
 					    throw InvalidInputException("ST_MakePolygon hole #%lu has Z or M values", hole_idx + 1);
 				    }
 				    if (hole->get_count() < 4) {
-					    throw InvalidInputException("ST_MakePolygon hole #%lu requires at least 4 vertices", hole_idx + 1);
+					    throw InvalidInputException("ST_MakePolygon hole #%lu requires at least 4 vertices",
+					                                hole_idx + 1);
 				    }
 				    if (!sgl::linestring::is_closed(hole)) {
 					    throw InvalidInputException(
