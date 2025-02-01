@@ -1766,6 +1766,11 @@ struct ST_Collect {
 			    const auto offset = entry.offset;
 			    const auto length = entry.length;
 
+			    if (length == 0) {
+				    const auto empty = sgl::multi_geometry::make_empty();
+				    return lstate.Serialize(result, empty);
+			    }
+
 			    // First figure out if we have Z or M
 			    bool has_z = false;
 			    bool has_m = false;
@@ -1917,7 +1922,9 @@ struct ST_CollectionExtract {
 		    args.data[0], args.data[1], result, args.size(), [&](const string_t &blob, int32_t requested_type) {
 			    auto geom = lstate.Deserialize(blob);
 			    const auto type = geom.get_type();
-			    const auto is_empty = geom.is_empty();
+
+			    const auto has_z = geom.has_z();
+			    const auto has_m = geom.has_m();
 
 			    switch (requested_type) {
 			    case 1:
@@ -1930,8 +1937,11 @@ struct ST_CollectionExtract {
 					    const auto points = sgl::ops::extract_points(&geom);
 					    return lstate.Serialize(result, points);
 				    }
+				    case sgl::geometry_type::MULTI_LINESTRING:
+				    case sgl::geometry_type::MULTI_POLYGON:
+					    return lstate.Serialize(result, sgl::multi_point::make_empty(has_z, has_m));
 				    default:
-					    return lstate.Serialize(result, sgl::point::make_empty());
+					    return lstate.Serialize(result, sgl::point::make_empty(has_z, has_m));
 				    }
 				    break;
 			    case 2:
@@ -1944,8 +1954,11 @@ struct ST_CollectionExtract {
 					    const auto lines = sgl::ops::extract_linestrings(&geom);
 					    return lstate.Serialize(result, lines);
 				    }
+				    case sgl::geometry_type::MULTI_POINT:
+				    case sgl::geometry_type::MULTI_POLYGON:
+					    return lstate.Serialize(result, sgl::multi_linestring::make_empty(has_z, has_m));
 				    default:
-					    return lstate.Serialize(result, sgl::linestring::make_empty());
+					    return lstate.Serialize(result, sgl::linestring::make_empty(has_z, has_m));
 				    }
 				    break;
 			    case 3:
@@ -1958,8 +1971,11 @@ struct ST_CollectionExtract {
 					    const auto polygons = sgl::ops::extract_polygons(&geom);
 					    return lstate.Serialize(result, polygons);
 				    }
+				    case sgl::geometry_type::MULTI_POINT:
+				    case sgl::geometry_type::MULTI_LINESTRING:
+					    return lstate.Serialize(result, sgl::multi_polygon::make_empty(has_z, has_m));
 				    default:
-					    return lstate.Serialize(result, sgl::polygon::make_empty());
+					    return lstate.Serialize(result, sgl::polygon::make_empty(has_z, has_m));
 				    }
 				    break;
 			    default:
@@ -1988,9 +2004,8 @@ struct ST_CollectionExtract {
 
 			// Find the highest dimension of the geometries in the collection
 			// Empty geometries are ignored
-
-			const auto max_surface_dimension = sgl::ops::max_surface_dimension(&geom);
-			switch (max_surface_dimension) {
+			const auto dim = sgl::ops::max_surface_dimension(&geom, true);
+			switch (dim) {
 			// Point case
 			case 0: {
 				const auto mpoint = sgl::ops::extract_points(&geom);
@@ -2245,7 +2260,7 @@ struct ST_Dimension {
 
 		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
 			const auto geom = lstate.Deserialize(blob);
-			return sgl::ops::max_surface_dimension(&geom);
+			return sgl::ops::max_surface_dimension(&geom, false);
 		});
 	}
 
@@ -6259,6 +6274,9 @@ struct ST_Perimeter {
 				variant.SetReturnType(LogicalType::DOUBLE);
 				variant.SetFunction(ExecuteBox);
 			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
 
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");

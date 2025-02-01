@@ -741,7 +741,7 @@ double area(const geometry *geom);
 double perimeter(const geometry *geom);
 double length(const geometry *geom);
 size_t vertex_count(const geometry *geom);
-int32_t max_surface_dimension(const geometry *geom);
+int32_t max_surface_dimension(const geometry *geom, bool ignore_empty);
 
 box_xy extent_xy(const geometry *geom);
 void force_zm(allocator &alloc, geometry *geom, bool has_z, bool has_m, double default_z, double default_m);
@@ -845,7 +845,10 @@ inline size_t vertex_count(const geometry *geom) {
 	}
 }
 
-inline int32_t max_surface_dimension(const geometry *geom) {
+inline int32_t max_surface_dimension(const geometry *geom, bool ignore_empty) {
+	if (ignore_empty && geom->get_count() == 0) {
+		return 0;
+	}
 	switch (geom->get_type()) {
 	case geometry_type::POINT:
 	case geometry_type::MULTI_POINT:
@@ -865,7 +868,7 @@ inline int32_t max_surface_dimension(const geometry *geom) {
 		auto part = tail;
 		do {
 			part = part->get_next();
-			max_dim = std::max(max_dim, max_surface_dimension(part));
+			max_dim = std::max(max_dim, max_surface_dimension(part, ignore_empty));
 		} while (part != tail);
 		return max_dim;
 	}
