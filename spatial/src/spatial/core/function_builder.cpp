@@ -31,7 +31,11 @@ static string RemoveIndentAndTrailingWhitespace(const char *text) {
 				}
 			}
 			if (matched_indent) {
-				text += indent_len;
+				auto remaining_indent = indent_len;
+				while(*text && remaining_indent > 0) {
+					text++;
+					remaining_indent--;
+				}
 			}
 		}
 	}

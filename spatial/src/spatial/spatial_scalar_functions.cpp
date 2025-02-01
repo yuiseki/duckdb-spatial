@@ -3575,13 +3575,13 @@ struct ST_GeomFromHEXWKB {
 				blob_ptr[blob_idx++] = (byte_a << 4) + byte_b;
 			}
 
-			reader.buf = reinterpret_cast<char *>(blob_ptr);
+			reader.buf = reinterpret_cast<const char *>(blob_ptr);
 			reader.end = reader.buf + blob_size;
 
 			sgl::geometry geom(sgl::geometry_type::INVALID);
 
 			if (!sgl::ops::wkb_reader_try_parse(&reader, &geom)) {
-				const auto error = reader.error;
+				const auto error = sgl::ops::wkb_reader_get_error_message(&reader);
 				throw InvalidInputException("Could not parse HEX WKB string: %s", error);
 			}
 
