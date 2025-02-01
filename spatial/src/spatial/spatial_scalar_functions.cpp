@@ -3542,6 +3542,18 @@ struct ST_GeomFromHEXWKB {
 		auto &lstate = LocalState::ResetAndGet(state);
 		auto &alloc = lstate.GetAllocator();
 
+		constexpr auto MAX_STACK_DEPTH = 128;
+		uint32_t recursion_stack[MAX_STACK_DEPTH];
+
+		sgl::ops::wkb_reader reader = {};
+		reader.copy_vertices = false;
+		reader.alloc = &alloc;
+		reader.allow_mixed_zm = true;
+		reader.nan_as_empty = true;
+
+		reader.stack_buf = recursion_stack;
+		reader.stack_cap = MAX_STACK_DEPTH;
+
 		UnaryExecutor::Execute<string_t, string_t>(input, result, count, [&](const string_t &input_hex) {
 			const auto hex_size = input_hex.GetSize();
 			const auto hex_ptr = const_data_ptr_cast(input_hex.GetData());
@@ -3564,9 +3576,19 @@ struct ST_GeomFromHEXWKB {
 				blob_ptr[blob_idx++] = (byte_a << 4) + byte_b;
 			}
 
-			const auto geom = sgl::ops::from_wkb(&alloc, blob_ptr, blob_size);
-			if (geom.get_type() == sgl::geometry_type::INVALID) {
-				throw InvalidInputException("Invalid WKB data");
+			reader.buf = reinterpret_cast<char *>(blob_ptr);
+			reader.end = reader.buf + blob_size;
+
+			sgl::geometry geom(sgl::geometry_type::INVALID);
+
+			if (!sgl::ops::wkb_reader_try_parse(&reader, &geom)) {
+				const auto error = reader.error;
+				throw InvalidInputException("Could not parse HEX WKB string: %s", error);
+			}
+
+			// Enforce that we have a cohesive ZM layout
+			if (reader.has_mixed_zm) {
+				sgl::ops::force_zm(alloc, &geom, reader.has_any_z, reader.has_any_m, 0, 0);
 			}
 
 			return lstate.Serialize(result, geom);
@@ -4108,8 +4130,8 @@ struct ST_GeomFromText {
 					    return string_t {};
 				    }
 
-				    const auto error_ctx = sgl::ops::wkt_reader_get_error_context(&reader);
-				    throw InvalidInputException("%s %s", reader.error, error_ctx);
+				    const auto error = sgl::ops::wkt_reader_get_error_message(&reader);
+				    throw InvalidInputException(error);
 			    }
 
 			    return lstate.Serialize(result, geom);
@@ -4171,14 +4193,27 @@ struct ST_GeomFromWKB {
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 		auto &alloc = lstate.GetAllocator();
+
+		constexpr auto MAX_STACK_DEPTH = 128;
+		uint32_t recursion_stack[MAX_STACK_DEPTH];
+
+		sgl::ops::wkb_reader reader = {};
+		reader.copy_vertices = false;
+		reader.alloc = &alloc;
+		reader.allow_mixed_zm = true;
+		reader.nan_as_empty = true;
+
+		reader.stack_buf = recursion_stack;
+		reader.stack_cap = MAX_STACK_DEPTH;
+
 		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &wkb) {
-			const auto geom = sgl::ops::from_wkb(&alloc, const_data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
+			reader.buf = wkb.GetDataUnsafe();
+			reader.end = reader.buf + wkb.GetSize();
 
-			// TODO: Better error messages.
-			// We should be able to provide the actual name of the geometry type
-
-			if (geom.get_type() == sgl::geometry_type::INVALID) {
-				throw InvalidInputException("Invalid WKB data");
+			sgl::geometry geom(sgl::geometry_type::INVALID);
+			if (!sgl::ops::wkb_reader_try_parse(&reader, &geom)) {
+				const auto error = sgl::ops::wkb_reader_get_error_message(&reader);
+				throw InvalidInputException("Could not parse WKB input: %s", error);
 			}
 
 			return lstate.Serialize(result, geom);
@@ -4201,10 +4236,28 @@ struct ST_GeomFromWKB {
 		const auto x_data = FlatVector::GetData<double>(*point_children[0]);
 		const auto y_data = FlatVector::GetData<double>(*point_children[1]);
 
+		sgl::ops::wkb_reader reader = {};
+		reader.copy_vertices = false;
+		reader.alloc = &alloc;
+		reader.allow_mixed_zm = true;
+		reader.nan_as_empty = true;
+
+		// No recursion allowed!
+		reader.stack_buf = nullptr;
+		reader.stack_cap = 0;
+
 		for (idx_t i = 0; i < count; i++) {
 			const auto &wkb = FlatVector::GetData<string_t>(input)[i];
 
-			const auto geom = sgl::ops::from_wkb(&alloc, const_data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
+			reader.buf = wkb.GetDataUnsafe();
+			reader.end = reader.buf + wkb.GetSize();
+
+			sgl::geometry geom(sgl::geometry_type::INVALID);
+			if (!sgl::ops::wkb_reader_try_parse(&reader, &geom)) {
+				const auto error = sgl::ops::wkb_reader_get_error_message(&reader);
+				throw InvalidInputException("Could not parse WKB input: %s", error);
+			}
+
 			if (geom.get_type() != sgl::geometry_type::POINT) {
 				throw InvalidInputException("ST_Point2DFromWKB: WKB is not a POINT");
 			}
@@ -4238,10 +4291,28 @@ struct ST_GeomFromWKB {
 
 		idx_t total_size = 0;
 
+		sgl::ops::wkb_reader reader = {};
+		reader.copy_vertices = false;
+		reader.alloc = &alloc;
+		reader.allow_mixed_zm = true;
+		reader.nan_as_empty = true;
+
+		// No recursion allowed!
+		reader.stack_buf = nullptr;
+		reader.stack_cap = 0;
+
 		for (idx_t i = 0; i < count; i++) {
 			auto wkb = wkb_data[i];
 
-			const auto geom = sgl::ops::from_wkb(&alloc, const_data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
+			reader.buf = wkb.GetDataUnsafe();
+			reader.end = reader.buf + wkb.GetSize();
+
+			sgl::geometry geom(sgl::geometry_type::INVALID);
+			if (!sgl::ops::wkb_reader_try_parse(&reader, &geom)) {
+				const auto error = sgl::ops::wkb_reader_get_error_message(&reader);
+				throw InvalidInputException("Could not parse WKB input: %s", error);
+			}
+
 			if (geom.get_type() != sgl::geometry_type::LINESTRING) {
 				throw InvalidInputException("ST_LineString2DFromWKB: WKB is not a LINESTRING");
 			}
@@ -4298,10 +4369,28 @@ struct ST_GeomFromWKB {
 		idx_t total_ring_count = 0;
 		idx_t total_point_count = 0;
 
+		sgl::ops::wkb_reader reader = {};
+		reader.copy_vertices = false;
+		reader.alloc = &alloc;
+		reader.allow_mixed_zm = true;
+		reader.nan_as_empty = true;
+
+		// No recursion allowed!
+		reader.stack_buf = nullptr;
+		reader.stack_cap = 0;
+
 		for (idx_t i = 0; i < count; i++) {
 			auto wkb = wkb_data[i];
 
-			const auto geom = sgl::ops::from_wkb(&alloc, const_data_ptr_cast(wkb.GetDataUnsafe()), wkb.GetSize());
+			reader.buf = wkb.GetDataUnsafe();
+			reader.end = reader.buf + wkb.GetSize();
+
+			sgl::geometry geom(sgl::geometry_type::INVALID);
+			if (!sgl::ops::wkb_reader_try_parse(&reader, &geom)) {
+				const auto error = sgl::ops::wkb_reader_get_error_message(&reader);
+				throw InvalidInputException("Could not parse WKB input: %s", error);
+			}
+
 			if (geom.get_type() != sgl::geometry_type::POLYGON) {
 				throw InvalidInputException("ST_Polygon2DFromWKB: WKB is not a POLYGON");
 			}

@@ -749,7 +749,41 @@ void force_zm(allocator &alloc, geometry *geom, bool has_z, bool has_m, double d
 size_t to_wkb_size(const geometry *geom);
 size_t to_wkb(const geometry *geom, uint8_t *buffer, size_t size);
 
-geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size);
+enum SGL_WKB_READER_ERROR {
+	SGL_WKB_READER_OK = 0,
+	SGL_WKB_READER_UNSUPPORTED_TYPE = 1,
+	SGL_WKB_READER_OUT_OF_BOUNDS = 2,
+	SGL_WKB_READER_RECURSION_LIMIT = 3,
+	SGL_WKB_READER_MIXED_ZM = 4,
+	SGL_WKB_INVALID_CHILD_TYPE = 5,
+};
+
+struct wkb_reader {
+	// Set by the user
+	allocator *alloc;
+	const char *buf;
+	const char *end;
+	bool copy_vertices;
+	bool allow_mixed_zm;
+	bool nan_as_empty;
+
+	uint32_t *stack_buf;
+	uint32_t stack_cap;
+
+	// Set by the parser
+	const char *pos;
+	size_t depth;
+	SGL_WKB_READER_ERROR error;
+
+	uint32_t type_id;
+	bool le;
+	bool has_mixed_zm;
+	bool has_any_z;
+	bool has_any_m;
+};
+
+bool wkb_reader_try_parse(wkb_reader *state, geometry *out);
+std::string wkb_reader_get_error_message(const wkb_reader *state);
 
 struct wkt_reader {
 	// Set by the user
@@ -762,8 +796,8 @@ struct wkt_reader {
 	const char *error;
 };
 
-bool wkt_reader_try_parse(wkt_reader *reader, geometry *out);
-std::string wkt_reader_get_error_context(const wkt_reader *reader);
+bool wkt_reader_try_parse(wkt_reader *state, geometry *out);
+std::string wkt_reader_get_error_message(const wkt_reader *state);
 
 geometry extract_points(sgl::geometry *geom);
 geometry extract_linestrings(sgl::geometry *geom);

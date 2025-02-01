@@ -291,60 +291,441 @@ void force_zm(allocator &alloc, geometry *geom, bool set_z, bool set_m, double d
 	}
 }
 
-// TODO: Make non-recursive
-size_t to_wkb_size(const geometry *geom) {
-	switch (geom->get_type()) {
-	case geometry_type::POINT: {
-		// order (1)
-		// type (4)
-		// point (1 * vsize)
-		return 1 + 4 + geom->get_vertex_size();
-	}
-	case geometry_type::LINESTRING: {
-		// order (1)
-		// type (4)
-		// count (4)
-		// points (count * vsize)
-		return 1 + 4 + 4 + geom->get_vertex_size() * geom->get_count();
-	}
-	case geometry_type::POLYGON: {
-		// order (1)
-		// type (4)
-		// ring count (4)
-		size_t size = 1 + 4 + 4;
-		const auto tail = geom->get_last_part();
-		auto head = tail;
-		if (head) {
-			do {
-				head = head->get_next();
-				// count (4)
-				// points (count * vsize)
-				size += 4 + head->get_count() * head->get_vertex_size();
-			} while (head != tail);
-		}
-		return size;
-	}
-	case geometry_type::MULTI_POINT:
-	case geometry_type::MULTI_LINESTRING:
-	case geometry_type::MULTI_POLYGON:
-	case geometry_type::MULTI_GEOMETRY: {
-		// order (1)
-		// type (4)
-		// geometry count (4)
-		size_t size = 1 + 4 + 4;
-		const auto tail = geom->get_last_part();
-		auto head = tail;
-		if (head) {
-			do {
-				head = head->get_next();
-				size += to_wkb_size(head);
-			} while (head != tail);
-		}
-		return size;
-	}
-	default:
-		SGL_ASSERT(false);
+//------------------------------------------------------------------------------
+// WKB Parsing
+//------------------------------------------------------------------------------
+
+static uint8_t wkb_reader_read_u8(wkb_reader *state) {
+	if (state->pos + sizeof(uint8_t) > state->end) {
+		state->error = SGL_WKB_READER_OUT_OF_BOUNDS;
 		return 0;
+	}
+
+	const auto val = *state->pos;
+	state->pos += sizeof(uint8_t);
+	return val;
+}
+
+static uint32_t wkb_reader_read_u32(wkb_reader *state) {
+	if (state->pos + sizeof(uint32_t) > state->end) {
+		state->error = SGL_WKB_READER_OUT_OF_BOUNDS;
+		return 0;
+	}
+
+	uint32_t val;
+
+	if (state->le) {
+		memcpy(&val, state->pos, sizeof(uint32_t));
+	} else {
+		char ibuf[sizeof(uint32_t)];
+		char obuf[sizeof(uint32_t)];
+		memcpy(ibuf, state->pos, sizeof(uint32_t));
+		for (size_t i = 0; i < sizeof(uint32_t); i++) {
+			obuf[i] = ibuf[sizeof(uint32_t) - i - 1];
+		}
+		memcpy(&val, obuf, sizeof(uint32_t));
+	}
+
+	state->pos += sizeof(uint32_t);
+
+	return val;
+}
+
+static double wkb_reader_read_f64(wkb_reader *state) {
+	if (state->pos + sizeof(double) > state->end) {
+		state->error = SGL_WKB_READER_OUT_OF_BOUNDS;
+		return 0;
+	}
+
+	double val;
+
+	if (state->le) {
+		memcpy(&val, state->pos, sizeof(double));
+	} else {
+		char ibuf[sizeof(double)];
+		char obuf[sizeof(double)];
+		memcpy(ibuf, state->pos, sizeof(double));
+		for (size_t i = 0; i < sizeof(double); i++) {
+			obuf[i] = ibuf[sizeof(double) - i - 1];
+		}
+		memcpy(&val, obuf, sizeof(double));
+	}
+
+	state->pos += sizeof(double);
+
+	return val;
+}
+
+static bool wkb_reader_read_point(wkb_reader *state, geometry *geom) {
+	const auto dims = 2 + geom->has_z() + geom->has_m();
+
+	bool all_nan = true;
+	double coords[4];
+
+	const auto ptr = state->pos;
+	for (size_t i = 0; i < dims; i++) {
+		coords[i] = wkb_reader_read_f64(state);
+		if (state->error) {
+			return false;
+		}
+		if (!std::isnan(coords[i])) {
+			all_nan = false;
+		}
+	}
+
+	if (state->nan_as_empty && all_nan) {
+		geom->set_vertex_data(static_cast<char *>(nullptr), 0);
+		return true;
+	}
+	if (state->le && !state->copy_vertices) {
+		geom->set_vertex_data(ptr, 1);
+		return true;
+	}
+
+	const auto data = static_cast<char *>(state->alloc->alloc(sizeof(double) * dims));
+	memcpy(data, coords, sizeof(double) * dims);
+	geom->set_vertex_data(data, 1);
+	return true;
+}
+
+static bool wkb_reader_read_line(wkb_reader *state, geometry *geom) {
+	const auto vertex_count = wkb_reader_read_u32(state);
+	if (state->error) {
+		return false;
+	}
+
+	const auto vertex_size = geom->get_vertex_size();
+	const auto byte_size = vertex_count * vertex_size;
+
+	if (state->pos + byte_size > state->end) {
+		state->error = SGL_WKB_READER_OUT_OF_BOUNDS;
+		return false;
+	}
+
+	const auto ptr = state->pos;
+	state->pos += byte_size;
+
+	// If this is LE encoded, and we dont want to copy the vertices, we can just return the pointer
+	if (state->le) {
+		if (state->copy_vertices) {
+			const auto mem = static_cast<char *>(state->alloc->alloc(byte_size));
+			memcpy(mem, ptr, byte_size);
+			geom->set_vertex_data(mem, vertex_count);
+		} else {
+			geom->set_vertex_data(ptr, vertex_count);
+		}
+	} else {
+		// Otherwise, we need to allocate and swap the bytes
+		const auto mem = static_cast<char *>(state->alloc->alloc(byte_size));
+		for (size_t i = 0; i < vertex_count; i++) {
+			const auto src = ptr + i * vertex_size;
+			const auto dst = mem + i * vertex_size;
+
+			// Swap doubles within the vertex
+			for (size_t j = 0; j < vertex_size; j += sizeof(double)) {
+				for (size_t k = 0; k < sizeof(double); k++) {
+					dst[j + k] = src[j + sizeof(double) - k - 1];
+				}
+			}
+		}
+
+		geom->set_vertex_data(mem, vertex_count);
+	}
+	return true;
+}
+
+// TODO: Also collect stats?
+bool wkb_reader_try_parse(wkb_reader *state, geometry *out) {
+
+// clang-format off
+#define read_u8(state) wkb_reader_read_u8(state); if (state->error) { return false; }
+#define read_u32(state) wkb_reader_read_u32(state); if (state->error) { return false; }
+#define read_u64(state) wkb_reader_read_u64(state); if (state->error) { return false; }
+#define read_verts(state, vcount, vsize) wkb_reader_read_vertices(state, vcount, vsize); if (state->error) { return false; }
+	// clang-format on
+
+	SGL_ASSERT(state);
+	SGL_ASSERT(out);
+	SGL_ASSERT(state->buf);
+	SGL_ASSERT(state->end);
+	SGL_ASSERT(state->alloc);
+	SGL_ASSERT(state->stack_buf);
+	SGL_ASSERT(state->stack_cap > 0);
+
+	// Setup state
+	state->pos = state->buf;
+	state->error = SGL_WKB_READER_OK;
+	state->depth = 0;
+	state->le = false;
+	state->type_id = 0;
+	state->has_any_m = false;
+	state->has_any_z = false;
+
+	geometry *geom = out;
+
+	while (true) {
+		state->le = read_u8(state);
+		state->type_id = read_u32(state);
+
+		const auto type = static_cast<sgl::geometry_type>((state->type_id & 0xffff) % 1000);
+		const auto flags = (state->type_id & 0xffff) / 1000;
+		const auto has_z = (flags == 1) || (flags == 3) || ((state->type_id & 0x80000000) != 0);
+		const auto has_m = (flags == 2) || (flags == 3) || ((state->type_id & 0x40000000) != 0);
+
+		geom->set_type(type);
+		geom->set_z(has_z);
+		geom->set_m(has_m);
+
+		// Compare with root
+		if (!state->has_mixed_zm && (out->has_m() != has_m || out->has_z() != has_z)) {
+			state->has_any_z |= has_z;
+			state->has_any_m |= has_m;
+			state->has_mixed_zm = true;
+			if (!state->allow_mixed_zm) {
+				// Error out!
+				state->error = SGL_WKB_READER_MIXED_ZM;
+				return false;
+			}
+		}
+
+		switch (geom->get_type()) {
+		case geometry_type::POINT: {
+			// Read the point data
+			if (!wkb_reader_read_point(state, geom)) {
+				return false;
+			}
+		} break;
+		case geometry_type::LINESTRING: {
+			if (!wkb_reader_read_line(state, geom)) {
+				return false;
+			}
+		} break;
+		case geometry_type::POLYGON: {
+			// Read the ring count
+			const auto ring_count = read_u32(state);
+
+			// Read the point data;
+			for (size_t i = 0; i < ring_count; i++) {
+				const auto ring = static_cast<geometry *>(state->alloc->alloc(sizeof(geometry)));
+				new (ring) geometry(geometry_type::LINESTRING, has_z, has_m);
+				if (!wkb_reader_read_line(state, ring)) {
+					return false;
+				}
+				geom->append_part(ring);
+			}
+		} break;
+		case geometry_type::MULTI_POINT:
+		case geometry_type::MULTI_LINESTRING:
+		case geometry_type::MULTI_POLYGON:
+		case geometry_type::MULTI_GEOMETRY: {
+
+			// Check stack depth
+			if (state->depth >= state->stack_cap) {
+				state->error = SGL_WKB_READER_RECURSION_LIMIT;
+				return false;
+			}
+
+			// Read the count
+			const auto count = read_u32(state);
+			if (count == 0) {
+				break;
+			}
+
+			state->stack_buf[state->depth++] = count;
+
+			// Make a new child
+			auto part = static_cast<geometry *>(state->alloc->alloc(sizeof(geometry)));
+			new (part) geometry(geometry_type::INVALID, has_z, has_m);
+			geom->append_part(part);
+
+			// Set the new child as the current geometry
+			geom = part;
+
+			// Continue to the next iteration in the outer loop
+			continue;
+		}
+		default:
+			state->error = SGL_WKB_READER_UNSUPPORTED_TYPE;
+			return false;
+		}
+
+		// Inner loop
+		while (true) {
+			const auto parent = geom->get_parent();
+
+			if (state->depth == 0) {
+				SGL_ASSERT(parent == nullptr);
+				// Done!
+				return true;
+			}
+
+			SGL_ASSERT(parent != nullptr);
+
+			// Check that we are of the right type
+			const auto ptype = parent->get_type();
+			const auto ctype = geom->get_type();
+
+			if (ptype == geometry_type::MULTI_POINT && ctype != geometry_type::POINT) {
+				state->error = SGL_WKB_INVALID_CHILD_TYPE;
+				return false;
+			}
+			if (ptype == geometry_type::MULTI_LINESTRING && ctype != geometry_type::LINESTRING) {
+				state->error = SGL_WKB_INVALID_CHILD_TYPE;
+				return false;
+			}
+			if (ptype == geometry_type::MULTI_POLYGON && ctype != geometry_type::POLYGON) {
+				state->error = SGL_WKB_INVALID_CHILD_TYPE;
+				return false;
+			}
+
+			// Check if we are done with the current part
+			state->stack_buf[state->depth - 1]--;
+
+			if (state->stack_buf[state->depth - 1] > 0) {
+				// There are still more parts to read
+				// Create a new part and append it to the parent
+				auto part = static_cast<geometry *>(state->alloc->alloc(sizeof(geometry)));
+				new (part) geometry(geometry_type::INVALID, has_z, has_m);
+				parent->append_part(part);
+
+				// Go "sideways" to the new part
+				geom = part;
+				break;
+			}
+
+			// Go upwards
+			geom = parent;
+			state->depth--;
+		}
+	}
+
+#undef read_u8
+#undef read_u32
+#undef read_u64
+#undef read_verts
+}
+
+std::string wkb_reader_get_error_message(const wkb_reader *state) {
+	if (!state || state->error == SGL_WKB_READER_OK) {
+		return "";
+	}
+
+	switch (state->error) {
+	case SGL_WKB_READER_OUT_OF_BOUNDS: {
+		return "Out of bounds read (is the WKB corrupt?)";
+	}
+	case SGL_WKB_READER_MIXED_ZM: {
+		return "Mixed Z and M values are not allowed";
+	}
+	case SGL_WKB_READER_RECURSION_LIMIT: {
+		return "Recursion limit '" + std::to_string(state->stack_cap) + "' reached";
+	}
+	case SGL_WKB_READER_UNSUPPORTED_TYPE: {
+		// Try to fish out the type anyway
+		return "Unsupported geometry type";
+	}
+	case SGL_WKB_INVALID_CHILD_TYPE: {
+		return "Invalid child type";
+	}
+	default: {
+		return "Unknown error";
+	}
+	}
+}
+
+size_t to_wkb_size(const geometry *geom) {
+	if (!geom) {
+		return 0;
+	}
+
+	const auto root = geom->get_parent();
+
+	size_t size = 0;
+	const geometry *curr = geom;
+
+	// Main loop
+	while (true) {
+		switch (curr->get_type()) {
+		case geometry_type::POINT: {
+			size += 1 + 4 + curr->get_vertex_size();
+		} break;
+		case geometry_type::LINESTRING: {
+			size += 1 + 4 + 4 + curr->get_count() * curr->get_vertex_size();
+		} break;
+		case geometry_type::POLYGON: {
+			size += 1 + 4 + 4;
+			const auto tail = curr->get_last_part();
+			auto head = tail;
+			if (head) {
+				do {
+					head = head->get_next();
+					size += 4 + head->get_count() * head->get_vertex_size();
+				} while (head != tail);
+			}
+		} break;
+		case geometry_type::MULTI_POINT: {
+			size += 1 + 4 + 4 + curr->get_count() * (1 + 4 + curr->get_vertex_size());
+		} break;
+		case geometry_type::MULTI_LINESTRING: {
+			size += 1 + 4 + 4;
+			const auto tail = curr->get_last_part();
+			auto head = tail;
+			if (head) {
+				do {
+					head = head->get_next();
+					size += 1 + 4 + 4 + head->get_count() * head->get_vertex_size();
+				} while (head != tail);
+			}
+		} break;
+		case geometry_type::MULTI_POLYGON: {
+			size += 1 + 4 + 4;
+			const auto tail = curr->get_last_part();
+			auto head = tail;
+			if (head) {
+				do {
+					head = head->get_next();
+					size += 1 + 4 + 4;
+					const auto rtail = head->get_last_part();
+					auto rhead = rtail;
+					if (rhead) {
+						do {
+							rhead = rhead->get_next();
+							size += 4 + rhead->get_count() * rhead->get_vertex_size();
+						} while (rhead != rtail);
+					}
+				} while (head != tail);
+			}
+		} break;
+		case geometry_type::MULTI_GEOMETRY: {
+			size += 1 + 4 + 4;
+			if (!curr->is_empty()) {
+				curr = curr->get_first_part();
+				continue;
+			}
+		} break;
+		default: {
+			SGL_ASSERT(false);
+			return 0;
+		}
+		}
+
+		// Inner loop
+		while (true) {
+			const auto parent = curr->get_parent();
+			if (parent == root) {
+				// Done!
+				return size;
+			}
+
+			if (curr != parent->get_last_part()) {
+				// Go sideways
+				curr = curr->get_next();
+				break;
+			}
+
+			// Go upwards
+			curr = parent;
+		}
 	}
 }
 
@@ -434,190 +815,6 @@ size_t to_wkb(const geometry *geom, uint8_t *buffer, size_t size) {
 #undef WKB_WRITE_U32
 #undef WKB_WRITE_DOUBLE
 #undef WKB_WRITE_DATA
-}
-
-//------------------------------------------------------------------------------
-// WKB Parsing
-//------------------------------------------------------------------------------
-
-struct wkb_reader {
-	const uint8_t *beg = nullptr;
-	const uint8_t *ptr = nullptr;
-	const uint8_t *end = nullptr;
-	bool le = false;
-	bool error = false;
-};
-
-uint8_t wkb_reader_read_u8(wkb_reader *reader) {
-	if (reader->ptr + sizeof(uint8_t) > reader->end) {
-		reader->error = true;
-		return 0;
-	}
-
-	const auto val = *reader->ptr;
-	reader->ptr += sizeof(uint8_t);
-	return val;
-}
-
-uint32_t wkb_reader_read_u32(wkb_reader *reader) {
-	if (reader->ptr + sizeof(uint32_t) > reader->end) {
-		reader->error = true;
-		return 0;
-	}
-
-	uint32_t val;
-	memcpy(&val, reader->ptr, sizeof(uint32_t));
-	reader->ptr += sizeof(uint32_t);
-	return val;
-}
-
-double wkb_reader_read_f64(wkb_reader *reader) {
-	if (reader->ptr + sizeof(double) > reader->end) {
-		reader->error = true;
-		return 0;
-	}
-
-	double val;
-	memcpy(&val, reader->ptr, sizeof(double));
-	reader->ptr += sizeof(double);
-	return val;
-}
-
-const uint8_t *wkb_reader_read_data(wkb_reader *reader, size_t size) {
-	if (reader->ptr + size > reader->end) {
-		reader->error = true;
-		return nullptr;
-	}
-
-	const auto val = reader->ptr;
-	reader->ptr += size;
-	return val;
-}
-
-geometry from_wkb(allocator *alloc, const uint8_t *buffer, size_t size) {
-
-	// Setup state
-	wkb_reader state;
-	state.beg = buffer;
-	state.ptr = buffer;
-	state.end = buffer + size;
-	state.le = false;
-	state.error = false;
-
-	static constexpr auto MAX_RECURSION_DEPTH = 256;
-	uint32_t stack[MAX_RECURSION_DEPTH];
-	uint32_t depth = 0;
-
-	geometry root;
-	geometry *geom = &root;
-
-// clang-format off
-#define WKB_READ_U8 wkb_reader_read_u8(&state); if (state.error) { goto error; }
-#define WKB_READ_U32 wkb_reader_read_u32(&state); if (state.error) { goto error; }
-#define WKB_READ_F64 wkb_reader_read_f64(&state); if (state.error) { goto error; }
-#define WKB_READ_DATA(SIZE) wkb_reader_read_data(&state, SIZE); if (state.error) { goto error; }
-	// clang-format on
-
-	while (true) {
-		const auto le = WKB_READ_U8;
-		const auto type_id = WKB_READ_U32;
-
-		const auto type = static_cast<sgl::geometry_type>((type_id & 0xffff) % 1000);
-		const auto flags = (type_id & 0xffff) / 1000;
-		const auto has_z = (flags == 1) || (flags == 3) || ((type_id & 0x80000000) != 0);
-		const auto has_m = (flags == 2) || (flags == 3) || ((type_id & 0x40000000) != 0);
-
-		geom->set_type(type);
-		geom->set_z(has_z);
-		geom->set_m(has_m);
-
-		switch (geom->get_type()) {
-		case geometry_type::POINT: {
-			// Read the point data;
-			const auto data = WKB_READ_DATA(geom->get_vertex_size());
-			geom->set_vertex_data(data, 1);
-		} break;
-		case geometry_type::LINESTRING: {
-			// Read the point count
-			const auto count = WKB_READ_U32;
-			// Read the point data;
-			const auto data = WKB_READ_DATA(geom->get_vertex_size() * count);
-			geom->set_vertex_data(data, count);
-		} break;
-		case geometry_type::POLYGON: {
-			// Read the ring count
-			const auto count = WKB_READ_U32;
-
-			// Read the point data;
-			for (size_t i = 0; i < count; i++) {
-				const auto ring_count = WKB_READ_U32;
-				const auto data = WKB_READ_DATA(geom->get_vertex_size() * ring_count);
-
-				// create a new ring
-				const auto ring = static_cast<geometry *>(alloc->alloc(sizeof(geometry)));
-				ring->set_type(geometry_type::LINESTRING);
-				ring->set_z(has_z);
-				ring->set_m(has_m);
-				ring->set_vertex_data(data, ring_count);
-
-				geom->append_part(ring);
-			}
-		} break;
-		case geometry_type::MULTI_POINT:
-		case geometry_type::MULTI_LINESTRING:
-		case geometry_type::MULTI_POLYGON:
-		case geometry_type::MULTI_GEOMETRY: {
-			// Check stack depth
-
-			if (depth == MAX_RECURSION_DEPTH) {
-				// TODO: Better error handling
-				goto error;
-			}
-
-			// read the count
-			const auto count = WKB_READ_U32;
-			stack[depth++] = count;
-
-			// make a new child
-			auto new_geom = static_cast<geometry *>(alloc->alloc(sizeof(geometry)));
-			geom->append_part(new_geom);
-			geom = new_geom;
-		}
-			continue; // This continue is important, as we dont want to go up the stack yet
-		default:
-			SGL_ASSERT(false);
-			goto error;
-		}
-
-		while (true) {
-			if (depth == 0) {
-				return root;
-			}
-
-			const auto remaining = stack[depth - 1];
-
-			if (remaining != 0) {
-				auto new_geom = static_cast<geometry *>(alloc->alloc(sizeof(geometry)));
-				auto parent = geom->get_parent();
-				parent->append_part(new_geom);
-				geom = new_geom;
-
-				stack[depth - 1]--;
-				break;
-			}
-
-			depth--;
-			geom = geom->get_parent();
-		}
-	}
-
-error:
-	return geometry(geometry_type::INVALID);
-
-#undef WKB_READ_U8
-#undef WKB_READ_U32
-#undef WKB_READ_F64
-#undef WKB_READ_DATA
 }
 
 //------------------------------------------------------------------------------
@@ -1017,17 +1214,25 @@ bool wkt_reader_try_parse(wkt_reader *state, geometry *out) {
 #undef expect_number
 }
 
-std::string wkt_reader_get_error_context(const wkt_reader *result) {
+std::string wkt_reader_get_error_message(const wkt_reader *state) {
+	if (!state || !state->error) {
+		return "";
+	}
+
 	// Return a string of the current position in the input string
 	const auto len = 32;
-	const auto msg_start = std::max(result->pos - len, result->buf);
-	const auto msg_end = std::min(result->pos + 1, result->end);
-	auto msg = std::string(msg_start, msg_end);
-	if (msg_start != result->buf) {
-		msg = "..." + msg;
+	const auto range_beg = std::max(state->pos - len, state->buf);
+	const auto range_End = std::min(state->pos + 1, state->end);
+	auto range = std::string(range_beg, range_End);
+	if (range_beg != state->buf) {
+		range = "..." + range;
 	}
+
 	// Add an arrow to indicate the position
-	msg = "at position " + std::to_string(result->pos - result->buf) + " near: '" + msg + "'|<---";
+	const auto err = std::string(state->error);
+	const auto pos = std::to_string(state->pos - state->buf);
+	const auto msg = err + " at position '" + pos + "' near: '" + range + "'|<---";
+
 	return msg;
 }
 
