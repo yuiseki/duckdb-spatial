@@ -2503,6 +2503,9 @@ struct ST_Dump {
 		idx_t total_geom_count = 0;
 		idx_t total_path_count = 0;
 
+		vector<std::tuple<const sgl::geometry *, vector<int32_t>>> items;
+		vector<int32_t> path;
+
 		for (idx_t out_row_idx = 0; out_row_idx < count; out_row_idx++) {
 			auto in_row_idx = geom_format.sel->get_index(out_row_idx);
 
@@ -2514,39 +2517,55 @@ struct ST_Dump {
 			auto &blob = UnifiedVectorFormat::GetData<string_t>(geom_format)[in_row_idx];
 			auto geom = lstate.Deserialize(blob);
 
-			vector<std::tuple<sgl::geometry *, vector<int32_t>>> stack;
-			vector<std::tuple<sgl::geometry *, vector<int32_t>>> items;
+			// Traverse the geometries
+			// TODO: Move this to SGL
+			const sgl::geometry *part = &geom;
+			const sgl::geometry *root = part->get_parent();
 
-			stack.emplace_back(&geom, vector<int32_t>());
+			path.clear();
+			items.clear();
 
-			while (!stack.empty()) {
-				auto current = stack.back();
-				auto current_geom = std::get<0>(current);
-				auto current_path = std::get<1>(current);
-
-				stack.pop_back();
-				if (current_geom->is_collection()) {
-					// Push all children
-
-					auto head = current_geom->get_first_part();
-					if (!head) {
+			bool is_done = false;
+			while (!is_done) {
+				switch (part->get_type()) {
+				case sgl::geometry_type::POINT:
+				case sgl::geometry_type::LINESTRING:
+				case sgl::geometry_type::POLYGON: {
+					// Add the path
+					items.emplace_back(part, path);
+				} break;
+				case sgl::geometry_type::MULTI_POINT:
+				case sgl::geometry_type::MULTI_LINESTRING:
+				case sgl::geometry_type::MULTI_POLYGON:
+				case sgl::geometry_type::MULTI_GEOMETRY: {
+					if (!part->is_empty()) {
+						part = part->get_first_part();
+						path.push_back(1);
 						continue;
 					}
+				} break;
+				default: {
+					throw NotImplementedException("Unsupported geometry type in ST_Dump");
+				}
+				}
 
-					stack.emplace_back(head, current_path);
-
-					while (head != current_geom->get_last_part()) {
-						head = head->get_next();
-						stack.emplace_back(head, current_path);
+				while (true) {
+					auto parent = part->get_parent();
+					if (parent == root) {
+						is_done = true;
+						break;
 					}
 
-				} else {
-					items.push_back(current);
+					if (part != parent->get_last_part()) {
+						path.back()++;
+						part = part->get_next();
+						break;
+					}
+
+					part = parent;
+					path.pop_back();
 				}
 			}
-
-			// Finally reverse the results
-			std::reverse(items.begin(), items.end());
 
 			// Push to the result vector
 			auto result_entries = ListVector::GetData(result);
