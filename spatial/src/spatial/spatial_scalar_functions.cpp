@@ -722,7 +722,6 @@ struct ST_Area {
 			func.SetDescription(DESCRIPTION);
 			func.SetExample(EXAMPLE);
 
-			// TODO: Set Example
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");
 		});
@@ -5262,26 +5261,26 @@ struct ST_IntersectsExtent {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		BinaryExecutor::Execute<string_t, string_t, bool>(args.data[0], args.data[1], result, args.size(),
-		                                                  [&](const string_t &lhs_blob, const string_t &rhs_blob) {
-			                                                  // TODO: In the future we should store if the geom is
-			                                                  // empty/vertex count in the blob
+	      [&](const string_t &lhs_blob, const string_t &rhs_blob) {
+	          // TODO: In the future we should store if the geom is
+	          // empty/vertex count in the blob
 
-			                                                  const auto lhs_geom = lstate.Deserialize(lhs_blob);
+	          const auto lhs_geom = lstate.Deserialize(lhs_blob);
 
-			                                                  sgl::box_xy lhs_ext = {};
-			                                                  if (!sgl::ops::try_get_extent_xy(&lhs_geom, &lhs_ext)) {
-				                                                  return false;
-			                                                  }
+	          sgl::box_xy lhs_ext = {};
+	          if (!sgl::ops::try_get_extent_xy(&lhs_geom, &lhs_ext)) {
+	              return false;
+	          }
 
-			                                                  const auto rhs_geom = lstate.Deserialize(rhs_blob);
+	          const auto rhs_geom = lstate.Deserialize(rhs_blob);
 
-			                                                  sgl::box_xy rhs_ext = {};
-			                                                  if (!sgl::ops::try_get_extent_xy(&rhs_geom, &rhs_ext)) {
-				                                                  return false;
-			                                                  }
+	          sgl::box_xy rhs_ext = {};
+	          if (!sgl::ops::try_get_extent_xy(&rhs_geom, &rhs_ext)) {
+	              return false;
+	          }
 
-			                                                  return lhs_ext.intersects(rhs_ext);
-		                                                  });
+	          return lhs_ext.intersects(rhs_ext);
+	      });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -5321,6 +5320,10 @@ struct ST_IntersectsExtent {
 // ST_IsClosed
 //======================================================================================================================
 struct ST_IsClosed {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (GEOMETRY)
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
@@ -5338,6 +5341,16 @@ struct ST_IsClosed {
 		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = "Check if a geometry is 'closed'";
+	// TODO: add example
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_IsClosed", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -5346,10 +5359,11 @@ struct ST_IsClosed {
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
-
-				variant.SetDescription("Check if a geometry is closed");
-				// TODO: Set example
 			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");
 		});
@@ -5525,10 +5539,15 @@ struct ST_Length {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_MakeEnvelope
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_MakeEnvelope {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (GEOMETRY)
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
@@ -5562,6 +5581,17 @@ struct ST_MakeEnvelope {
 		    });
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Create a rectangular polygon from min/max coordinates
+	)";
+	static constexpr auto EXAMPLE = ""; // todo: example
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_MakeEnvelope", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -5573,10 +5603,10 @@ struct ST_MakeEnvelope {
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
-
-				variant.SetDescription("Create a rectangular polygon from min/max coordinates");
-				// todo: example
 			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
 
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
@@ -5584,10 +5614,15 @@ struct ST_MakeEnvelope {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_MakeLine
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_MakeLine {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (LIST)
+	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteList(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
@@ -5665,6 +5700,9 @@ struct ST_MakeLine {
 		    });
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (GEOMETRY, GEOMETRY)
+	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteBinary(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
@@ -5717,6 +5755,30 @@ struct ST_MakeLine {
 		    });
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION_LIST = R"(
+		Create a LINESTRING from a list of POINT geometries
+	)";
+	static constexpr auto EXAMPLE_LIST = R"(
+		SELECT ST_MakeLine([ST_Point(0, 0), ST_Point(1, 1)]);
+		----
+		LINESTRING(0 0, 1 1)
+	)";
+
+	static constexpr auto DESCRIPTION_BINARY = R"(
+		Create a LINESTRING from two POINT geometries
+	)";
+	static constexpr auto EXAMPLE_BINARY = R"(
+		SELECT ST_MakeLine(ST_Point(0, 0), ST_Point(1, 1));
+		----
+		LINESTRING(0 0, 1 1)
+	)";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_MakeLine", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -5726,8 +5788,8 @@ struct ST_MakeLine {
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(ExecuteList);
 
-				variant.SetDescription("Create a LINESTRING from a list of POINT geometries");
-				variant.SetExample("SELECT ST_MakeLine([ST_Point(0, 0), ST_Point(1, 1)]);");
+				variant.SetDescription(DESCRIPTION_LIST);
+				variant.SetExample(EXAMPLE_LIST);
 			});
 
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -5738,8 +5800,8 @@ struct ST_MakeLine {
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(ExecuteBinary);
 
-				variant.SetDescription("Create a LINESTRING from two POINT geometries");
-				variant.SetExample("SELECT ST_MakeLine(ST_Point(0, 0), ST_Point(1, 1));");
+				variant.SetDescription(DESCRIPTION_BINARY);
+				variant.SetExample(EXAMPLE_BINARY);
 			});
 
 			func.SetTag("ext", "spatial");
@@ -5748,10 +5810,15 @@ struct ST_MakeLine {
 	}
 };
 
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
 // ST_MakePolygon
-//----------------------------------------------------------------------------------------------------------------------
+//======================================================================================================================
+
 struct ST_MakePolygon {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (LINESTRING)
+	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteFromShell(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
@@ -5777,6 +5844,9 @@ struct ST_MakePolygon {
 		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (LINESTRING, LIST)
+	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteFromRings(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
@@ -5854,6 +5924,9 @@ struct ST_MakePolygon {
 		    });
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_MakePolygon", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
