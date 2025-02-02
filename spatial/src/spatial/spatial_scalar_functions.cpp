@@ -1334,6 +1334,8 @@ struct ST_AsSVG {
 				} else {
 					const auto vert = geom->get_vertex_xy(i);
 					const auto delta = vert - last_vert;
+					last_vert = vert;
+					buffer.push_back(' ');
 					MathUtil::format_coord(delta.x, -delta.y, buffer, max_digits);
 				}
 			}
@@ -2550,7 +2552,8 @@ struct ST_Dump {
 				}
 
 				while (true) {
-					auto parent = part->get_parent();
+					const auto parent = part->get_parent();
+
 					if (parent == root) {
 						is_done = true;
 						break;
