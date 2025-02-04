@@ -6491,10 +6491,97 @@ struct ST_Perimeter {
 
 struct ST_Point {
 
+	//------------------------------------------------------------------------------
+	// POINT_2D
+	//------------------------------------------------------------------------------
+	static void ExecutePoint2D(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 2);
+		auto count = args.size();
+
+		auto &x = args.data[0];
+		auto &y = args.data[1];
+
+		x.Flatten(count);
+		y.Flatten(count);
+
+		auto &children = StructVector::GetEntries(result);
+		auto &x_child = children[0];
+		auto &y_child = children[1];
+
+		x_child->Reference(x);
+		y_child->Reference(y);
+
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------
+	// POINT_3D
+	//------------------------------------------------------------------------------
+	static void ExecutePoint3D(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 3);
+		auto count = args.size();
+
+		auto &x = args.data[0];
+		auto &y = args.data[1];
+		auto &z = args.data[2];
+
+		x.Flatten(count);
+		y.Flatten(count);
+		z.Flatten(count);
+
+		auto &children = StructVector::GetEntries(result);
+		auto &x_child = children[0];
+		auto &y_child = children[1];
+		auto &z_child = children[2];
+
+		x_child->Reference(x);
+		y_child->Reference(y);
+		z_child->Reference(z);
+
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------
+	// POINT_4D
+	//------------------------------------------------------------------------------
+	static void ExecutePoint4D(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 4);
+		auto count = args.size();
+
+		auto &x = args.data[0];
+		auto &y = args.data[1];
+		auto &z = args.data[2];
+		auto &m = args.data[3];
+
+		x.Flatten(count);
+		y.Flatten(count);
+		z.Flatten(count);
+		m.Flatten(count);
+
+		auto &children = StructVector::GetEntries(result);
+		auto &x_child = children[0];
+		auto &y_child = children[1];
+		auto &z_child = children[2];
+		auto &m_child = children[3];
+
+		x_child->Reference(x);
+		y_child->Reference(y);
+		z_child->Reference(z);
+		m_child->Reference(m);
+
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
 	//------------------------------------------------------------------------------------------------------------------
-	// Execute
+	// Execute (GEOMETRY)
 	//------------------------------------------------------------------------------------------------------------------
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		BinaryExecutor::Execute<double, double, string_t>(
@@ -6513,7 +6600,7 @@ struct ST_Point {
 	// Documentation
 	//------------------------------------------------------------------------------------------------------------------
 	static constexpr auto DESCRIPTION = R"(
-		Creates a point geometry from X and Y coordinates.
+		Creates a GEOMETRY point
 	)";
 
 	// TODO: example
@@ -6529,14 +6616,57 @@ struct ST_Point {
 				variant.AddParameter("y", LogicalType::DOUBLE);
 				variant.SetReturnType(GeoTypes::GEOMETRY());
 
-				variant.SetFunction(Execute);
+				variant.SetFunction(ExecuteGeometry);
 				variant.SetInit(LocalState::Init);
-
-				variant.SetDescription("Creates a GEOMETRY point");
 			});
 
 			func.SetDescription(DESCRIPTION);
 			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+
+		FunctionBuilder::RegisterScalar(db, "ST_Point2D", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("x", LogicalType::DOUBLE);
+				variant.AddParameter("y", LogicalType::DOUBLE);
+				variant.SetReturnType(GeoTypes::POINT_2D());
+				variant.SetFunction(ExecutePoint2D);
+
+				variant.SetDescription("Creates a POINT_2D");
+			});
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+
+		FunctionBuilder::RegisterScalar(db, "ST_Point3D", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("x", LogicalType::DOUBLE);
+				variant.AddParameter("y", LogicalType::DOUBLE);
+				variant.AddParameter("z", LogicalType::DOUBLE);
+				variant.SetReturnType(GeoTypes::POINT_3D());
+				variant.SetFunction(ExecutePoint3D);
+
+				variant.SetDescription("Creates a POINT_3D");
+			});
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+
+		FunctionBuilder::RegisterScalar(db, "ST_Point4D", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("x", LogicalType::DOUBLE);
+				variant.AddParameter("y", LogicalType::DOUBLE);
+				variant.AddParameter("z", LogicalType::DOUBLE);
+				variant.AddParameter("m", LogicalType::DOUBLE);
+				variant.SetReturnType(GeoTypes::POINT_4D());
+				variant.SetFunction(ExecutePoint4D);
+
+				variant.SetDescription("Creates a POINT_4D");
+			});
 
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
