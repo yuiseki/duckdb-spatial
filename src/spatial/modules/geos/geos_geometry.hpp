@@ -1,0 +1,385 @@
+#pragma once
+
+#include "geos_c.h"
+
+namespace duckdb {
+
+class GeosGeometry;
+class PreparedGeosGeometry;
+
+class GeosGeometry {
+	friend class PreparedGeosGeometry;
+public:
+	// constructor
+	GeosGeometry(GEOSContextHandle_t handle_p, GEOSGeometry *geom_p);
+
+	// disable copy
+	GeosGeometry(const GeosGeometry&) = delete;
+	GeosGeometry& operator=(const GeosGeometry&) = delete;
+
+	// support move
+	GeosGeometry(GeosGeometry&& other) noexcept;
+	GeosGeometry& operator=(GeosGeometry&& other) noexcept;
+
+	// destructor
+	~GeosGeometry();
+public:
+	GEOSGeomTypes type() const;
+	const GEOSGeometry* get_raw() const;
+
+	bool is_simple() const;
+	bool is_ring() const;
+	bool is_valid() const;
+
+	GeosGeometry get_boundary() const;
+	GeosGeometry get_centroid() const;
+	GeosGeometry get_convex_hull() const;
+	GeosGeometry get_envelope() const;
+    GeosGeometry get_reversed() const;
+	GeosGeometry get_point_on_surface() const;
+	GeosGeometry get_made_valid() const;
+
+	bool contains(const GeosGeometry &other) const;
+	bool covers(const GeosGeometry &other) const;
+	bool covered_by(const GeosGeometry &other) const;
+	bool crosses(const GeosGeometry &other) const;
+	bool disjoint(const GeosGeometry &other) const;
+	bool equals(const GeosGeometry &other) const;
+	bool intersects(const GeosGeometry &other) const;
+	bool overlaps(const GeosGeometry &other) const;
+	bool touches(const GeosGeometry &other) const;
+	bool within(const GeosGeometry &other) const;
+	bool distance_within(const GeosGeometry &other, double distance) const;
+
+	double distance_to(const GeosGeometry &other) const;
+
+	void normalize_in_place() const;
+
+	GeosGeometry get_difference(const GeosGeometry &other) const;
+	GeosGeometry get_intersection(const GeosGeometry &other) const;
+	GeosGeometry get_union(const GeosGeometry &other) const;
+	GeosGeometry get_shortest_line(const GeosGeometry &other) const;
+
+	GeosGeometry get_simplified(double tolerance) const;
+	GeosGeometry get_simplified_topo(double tolerance) const;
+	GeosGeometry get_without_repeated_points(double tolerance) const;
+	GeosGeometry get_reduced_precision(double tolerance) const;
+	GeosGeometry get_linemerged(bool directed) const;
+	GeosGeometry get_buffer(double distance, int quadsegs) const;
+	GeosGeometry get_buffer_style(double distance, int quadsegs, int endcap_style, int join_style, double mitre_limit) const;
+
+	PreparedGeosGeometry get_prepared() const;
+
+private:
+	GEOSContextHandle_t handle;
+	GEOSGeometry *geom;
+};
+
+class PreparedGeosGeometry {
+	friend class GeosGeometry;
+public:
+	// constructor
+	PreparedGeosGeometry(GEOSContextHandle_t handle_p, const GeosGeometry &geom);
+
+	// disable copy
+	PreparedGeosGeometry(const PreparedGeosGeometry&) = delete;
+	PreparedGeosGeometry& operator=(const PreparedGeosGeometry&) = delete;
+
+	// support move
+	PreparedGeosGeometry(PreparedGeosGeometry&& other) noexcept;
+	PreparedGeosGeometry& operator=(PreparedGeosGeometry&& other) noexcept;
+
+	~PreparedGeosGeometry();
+public:
+	bool contains(const GeosGeometry &other) const;
+	bool contains_properly(const GeosGeometry &other) const;
+	bool covers(const GeosGeometry &other) const;
+	bool covered_by(const GeosGeometry &other) const;
+	bool crosses(const GeosGeometry &other) const;
+	bool disjoint(const GeosGeometry &other) const;
+	bool intersects(const GeosGeometry &other) const;
+	bool overlaps(const GeosGeometry &other) const;
+	bool touches(const GeosGeometry &other) const;
+	bool within(const GeosGeometry &other) const;
+
+	double distance_to(const GeosGeometry &other) const;
+	bool distance_within(const GeosGeometry &other, double distance) const;
+
+private:
+	GEOSContextHandle_t handle;
+	const GEOSPreparedGeometry *prepared;
+};
+
+//------------------------------------------------------------------------------
+// Lifecycle methods
+//------------------------------------------------------------------------------
+
+//-- GeosGeometry --//
+inline GeosGeometry::GeosGeometry(GEOSContextHandle_t handle_p, GEOSGeometry *geom_p) : handle(handle_p), geom(geom_p) {}
+inline GeosGeometry::GeosGeometry(GeosGeometry&& other) noexcept : handle(other.handle), geom(other.geom) {
+	other.geom = nullptr;
+}
+inline GeosGeometry& GeosGeometry::operator=(GeosGeometry&& other) noexcept {
+	if(this != &other) {
+		if(geom) {
+			GEOSGeom_destroy_r(handle, geom);
+		}
+		handle = other.handle;
+		geom = other.geom;
+		other.geom = nullptr;
+	}
+	return *this;
+}
+
+inline GeosGeometry::~GeosGeometry() {
+	if(geom) {
+		GEOSGeom_destroy_r(handle, geom);
+	}
+}
+
+//-- PreparedGeosGeometry --//
+inline PreparedGeosGeometry::PreparedGeosGeometry(GEOSContextHandle_t handle_p, const GeosGeometry &geom)
+	: handle(handle_p) {
+    prepared = GEOSPrepare_r(handle, geom.geom);
+}
+inline PreparedGeosGeometry::PreparedGeosGeometry(PreparedGeosGeometry&& other) noexcept
+	: handle(other.handle), prepared(other.prepared) {
+    other.prepared = nullptr;
+}
+
+inline PreparedGeosGeometry& PreparedGeosGeometry::operator=(PreparedGeosGeometry&& other) noexcept {
+    if(this != &other) {
+        if(prepared) {
+            GEOSPreparedGeom_destroy_r(handle, prepared);
+        }
+        handle = other.handle;
+        prepared = other.prepared;
+        other.prepared = nullptr;
+    }
+    return *this;
+}
+
+inline PreparedGeosGeometry::~PreparedGeosGeometry() {
+    if(prepared) {
+        GEOSPreparedGeom_destroy_r(handle, prepared);
+    }
+}
+
+//------------------------------------------------------------------------------
+// Methods
+//------------------------------------------------------------------------------
+
+//-- GeosGeometry --//
+inline GEOSGeomTypes GeosGeometry::type() const {
+	return static_cast<GEOSGeomTypes>(GEOSGeomTypeId_r(handle, geom));
+}
+
+inline const GEOSGeometry* GeosGeometry::get_raw() const {
+    return geom;
+}
+
+inline bool GeosGeometry::is_simple() const {
+	return GEOSisSimple_r(handle, geom);
+}
+
+inline bool GeosGeometry::is_ring() const {
+	return GEOSisRing_r(handle, geom);
+}
+
+inline bool GeosGeometry::is_valid() const {
+	return GEOSisValid_r(handle, geom);
+}
+
+inline GeosGeometry GeosGeometry::get_boundary() const {
+	return GeosGeometry(handle, GEOSBoundary_r(handle, geom));
+}
+
+inline GeosGeometry GeosGeometry::get_centroid() const {
+	return GeosGeometry(handle, GEOSGetCentroid_r(handle, geom));
+}
+
+inline GeosGeometry GeosGeometry::get_convex_hull() const {
+	return GeosGeometry(handle, GEOSConvexHull_r(handle, geom));
+}
+
+inline GeosGeometry GeosGeometry::get_envelope() const {
+	return GeosGeometry(handle, GEOSEnvelope_r(handle, geom));
+}
+
+inline GeosGeometry GeosGeometry::get_reversed() const {
+	return GeosGeometry(handle, GEOSReverse_r(handle, geom));
+}
+
+inline GeosGeometry GeosGeometry::get_point_on_surface() const {
+	return GeosGeometry(handle, GEOSPointOnSurface_r(handle, geom));
+}
+
+inline GeosGeometry GeosGeometry::get_made_valid() const {
+	return GeosGeometry(handle, GEOSMakeValid_r(handle, geom));
+}
+
+inline bool GeosGeometry::contains(const GeosGeometry &other) const {
+	return GEOSContains_r(handle, geom, other.geom);
+}
+
+inline bool GeosGeometry::covers(const GeosGeometry &other) const {
+	return GEOSCovers_r(handle, geom, other.geom);
+}
+
+inline bool GeosGeometry::covered_by(const GeosGeometry &other) const {
+	return GEOSCoveredBy_r(handle, geom, other.geom);
+}
+
+inline bool GeosGeometry::crosses(const GeosGeometry &other) const {
+	return GEOSCrosses_r(handle, geom, other.geom);
+}
+
+inline bool GeosGeometry::disjoint(const GeosGeometry &other) const {
+	return GEOSDisjoint_r(handle, geom, other.geom);
+}
+
+inline bool GeosGeometry::equals(const GeosGeometry &other) const {
+	return GEOSEquals_r(handle, geom, other.geom);
+}
+
+inline bool GeosGeometry::intersects(const GeosGeometry &other) const {
+	return GEOSIntersects_r(handle, geom, other.geom);
+}
+
+inline bool GeosGeometry::overlaps(const GeosGeometry &other) const {
+	return GEOSOverlaps_r(handle, geom, other.geom);
+}
+
+inline bool GeosGeometry::touches(const GeosGeometry &other) const {
+	return GEOSTouches_r(handle, geom, other.geom);
+}
+
+inline bool GeosGeometry::within(const GeosGeometry &other) const {
+	return GEOSWithin_r(handle, geom, other.geom);
+}
+
+inline bool GeosGeometry::distance_within(const GeosGeometry &other, double distance) const {
+	return GEOSDistanceWithin_r(handle, geom, other.geom, distance);
+}
+
+inline double GeosGeometry::distance_to(const GeosGeometry &other) const {
+	double distance = 0;
+	GEOSDistance_r(handle, geom, other.geom, &distance);
+	return distance;
+}
+
+inline void GeosGeometry::normalize_in_place() const {
+	GEOSNormalize_r(handle, geom);
+}
+
+inline GeosGeometry GeosGeometry::get_difference(const GeosGeometry &other) const {
+	return GeosGeometry(handle, GEOSDifference_r(handle, geom, other.geom));
+}
+
+inline GeosGeometry GeosGeometry::get_intersection(const GeosGeometry &other) const {
+	return GeosGeometry(handle, GEOSIntersection_r(handle, geom, other.geom));
+}
+
+inline GeosGeometry GeosGeometry::get_union(const GeosGeometry &other) const {
+	return GeosGeometry(handle, GEOSUnion_r(handle, geom, other.geom));
+}
+
+inline GeosGeometry GeosGeometry::get_shortest_line(const GeosGeometry &other) const {
+	const auto line = GEOSNearestPoints_r(handle, geom, other.geom);
+	const auto line_geom = GEOSGeom_createLineString_r(handle, line);
+	return GeosGeometry(handle, line_geom);
+}
+
+inline GeosGeometry GeosGeometry::get_simplified(double tolerance) const {
+	return GeosGeometry(handle, GEOSSimplify_r(handle, geom, tolerance));
+}
+
+inline GeosGeometry GeosGeometry::get_simplified_topo(double tolerance) const {
+	return GeosGeometry(handle, GEOSTopologyPreserveSimplify_r(handle, geom, tolerance));
+}
+
+inline GeosGeometry GeosGeometry::get_without_repeated_points(double tolerance) const {
+	const auto simplified = GEOSRemoveRepeatedPoints_r(handle, geom, tolerance);
+	return GeosGeometry(handle, simplified);
+}
+
+inline GeosGeometry GeosGeometry::get_reduced_precision(double tolerance) const {
+	const auto reduced = GEOSGeom_setPrecision_r(handle, geom, tolerance, 0);
+	return GeosGeometry(handle, reduced);
+}
+
+inline GeosGeometry GeosGeometry::get_linemerged(bool directed) const {
+	const auto merged = directed ? GEOSLineMergeDirected_r(handle, geom) : GEOSLineMerge_r(handle, geom);
+	return GeosGeometry(handle, merged);
+}
+
+inline GeosGeometry GeosGeometry::get_buffer(double distance, int quadsegs) const {
+	const auto buffer = GEOSBuffer_r(handle, geom, distance, quadsegs);
+	return GeosGeometry(handle, buffer);
+}
+
+inline GeosGeometry GeosGeometry::get_buffer_style(double distance, int quadsegs, int endcap_style, int join_style,
+                                                   double mitre_limit) const {
+	const auto buffer = GEOSBufferWithStyle_r(handle, geom, distance, quadsegs, endcap_style, join_style, mitre_limit);
+	return GeosGeometry(handle, buffer);
+}
+
+
+
+inline PreparedGeosGeometry GeosGeometry::get_prepared() const {
+	return PreparedGeosGeometry(handle, *this);
+}
+
+//-- PreparedGeosGeometry --//
+
+inline bool PreparedGeosGeometry::contains(const GeosGeometry &other) const {
+	return GEOSPreparedContains_r(handle, prepared, other.geom);
+}
+
+inline bool PreparedGeosGeometry::contains_properly(const GeosGeometry &other) const {
+	return GEOSPreparedContainsProperly_r(handle, prepared, other.geom);
+}
+
+inline bool PreparedGeosGeometry::covers(const GeosGeometry &other) const {
+	return GEOSPreparedCovers_r(handle, prepared, other.geom);
+}
+
+inline bool PreparedGeosGeometry::covered_by(const GeosGeometry &other) const {
+	return GEOSPreparedCoveredBy_r(handle, prepared, other.geom);
+}
+
+inline bool PreparedGeosGeometry::crosses(const GeosGeometry &other) const {
+	return GEOSPreparedCrosses_r(handle, prepared, other.geom);
+}
+
+inline bool PreparedGeosGeometry::disjoint(const GeosGeometry &other) const {
+	return GEOSPreparedDisjoint_r(handle, prepared, other.geom);
+}
+
+inline bool PreparedGeosGeometry::intersects(const GeosGeometry &other) const {
+	return GEOSPreparedIntersects_r(handle, prepared, other.geom);
+}
+
+inline bool PreparedGeosGeometry::overlaps(const GeosGeometry &other) const {
+	return GEOSPreparedOverlaps_r(handle, prepared, other.geom);
+}
+
+inline bool PreparedGeosGeometry::touches(const GeosGeometry &other) const {
+	return GEOSPreparedTouches_r(handle, prepared, other.geom);
+}
+
+inline bool PreparedGeosGeometry::within(const GeosGeometry &other) const {
+	return GEOSPreparedWithin_r(handle, prepared, other.geom);
+}
+
+inline double PreparedGeosGeometry::distance_to(const GeosGeometry &other) const {
+	double distance = 0;
+	GEOSPreparedDistance_r(handle, prepared, other.geom, &distance);
+	return distance;
+}
+
+inline bool PreparedGeosGeometry::distance_within(const GeosGeometry &other, double distance) const {
+	return GEOSPreparedDistanceWithin_r(handle, prepared, other.geom, distance);
+}
+
+}

@@ -1,0 +1,5 @@
+set(EXTENSION_SOURCES
+    ${EXTENSION_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/geos_module.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/geos_serde.cpp
+    PARENT_SCOPE)
