@@ -10,6 +10,28 @@
 
 namespace duckdb {
 
+template<class T>
+static T TypeFromGEOS(int type) {
+	switch(type) {
+	case GEOS_POINT:
+		return static_cast<T>(0);
+	case GEOS_LINESTRING:
+		return static_cast<T>(1);
+	case GEOS_POLYGON:
+		return static_cast<T>(2);
+	case GEOS_MULTIPOINT:
+		return static_cast<T>(3);
+	case GEOS_MULTILINESTRING:
+		return static_cast<T>(4);
+	case GEOS_MULTIPOLYGON:
+		return static_cast<T>(5);
+	case GEOS_GEOMETRYCOLLECTION:
+		return static_cast<T>(6);
+	default:
+		throw InvalidInputException("Unsupported GEOS geometry type %d", type);
+	}
+}
+
 //----------------------------------------------------------------------------------------------------------------------
 // Get Required Size
 //----------------------------------------------------------------------------------------------------------------------
@@ -63,7 +85,8 @@ static size_t GetRequiredSizeInternal(const GEOSContextHandle_t ctx, const GEOSG
 			size += 4 + interior_len * vsize;
 		}
 
-		if(num_rings % 2 != 0) {
+		// We need to count the shell as well
+		if((num_rings + 1) % 2 != 0) {
 			size += 4;
 		}
 		return size;
@@ -125,11 +148,11 @@ static void SerializeCoordSeq(const GEOSContextHandle_t ctx, const GEOSCoordSequ
 }
 
 static void SerializeInternal(const GEOSContextHandle_t ctx, const GEOSGeometry* geom, BinaryWriter &cursor) {
-		const auto type = GEOSGeomTypeId_r(ctx, geom);
+	const auto type = GEOSGeomTypeId_r(ctx, geom);
 	const bool has_z = GEOSHasZ_r(ctx, geom);
 	const bool has_m = GEOSHasM_r(ctx, geom);
 
-	cursor.Write<uint32_t>(static_cast<uint32_t>(type));
+	cursor.Write(TypeFromGEOS<uint32_t>(type));
 
 	switch(type) {
 	case GEOS_POINT:
@@ -165,7 +188,7 @@ static void SerializeInternal(const GEOSContextHandle_t ctx, const GEOSGeometry*
 		cursor.Skip(sizeof(uint32_t) * (num_rings + 1));
 
 		// Add padding if odd number of rings
-		if(num_rings % 2 != 0) {
+		if((num_rings + 1) % 2 != 0) {
 			cursor.Write<uint32_t>(0);
 		}
 
@@ -351,7 +374,7 @@ void GeosSerde::Serialize(GEOSContextHandle_t ctx, const GEOSGeom_t *geom, char 
 	flags |= has_m ? 0x02 : 0;
 	flags |= has_bbox ? 0x04 : 0;
 
-	cursor.Write<uint8_t>(static_cast<uint8_t>(type));
+	cursor.Write<uint8_t>(TypeFromGEOS<uint8_t>(type));
 	cursor.Write<uint8_t>(flags);
 	cursor.Write<uint16_t>(0); //unused
 	cursor.Write<uint32_t>(0); //padding

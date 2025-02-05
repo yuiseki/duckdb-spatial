@@ -756,6 +756,9 @@ double length(const geometry *geom);
 size_t vertex_count(const geometry *geom);
 int32_t max_surface_dimension(const geometry *geom, bool ignore_empty);
 
+typedef void (*visit_func)(void *state, const geometry *part);
+void visit_by_dimension(const geometry *geom, int surface_dimension, void *state, visit_func func);
+
 typedef void (*map_vertex_xy_func)(void *state, vertex_xy *vertex);
 void replace_vertices_xy(geometry *geom, void *state, map_vertex_xy_func callback);
 
@@ -976,6 +979,60 @@ inline int32_t max_surface_dimension(const geometry *geom, bool ignore_empty) {
 	}
 }
 
+inline void visit_by_dimension(const geometry *geom, int surface_dimension, void *state, visit_func func) {
+	if (!geom) {
+		return;
+	}
+
+	const geometry *part = geom;
+	const geometry *root = part->get_parent();
+
+	while (true) {
+		switch (part->get_type()) {
+		case geometry_type::POINT:
+		case geometry_type::MULTI_POINT:
+			if(surface_dimension == 0) {
+				func(state, part);
+			}
+			break;
+		case geometry_type::LINESTRING:
+		case geometry_type::MULTI_LINESTRING:
+			if(surface_dimension == 1) {
+				func(state, part);
+			}
+		break;
+		case geometry_type::POLYGON:
+		case geometry_type::MULTI_POLYGON:
+			if(surface_dimension == 2) {
+				func(state, part);
+			}
+			break;
+		case geometry_type::MULTI_GEOMETRY:
+			if (!part->is_empty()) {
+				part = part->get_first_part();
+				continue;
+			}
+			break;
+		default:
+			SGL_ASSERT(false);
+			return;
+		}
+
+		while (true) {
+			const auto parent = part->get_parent();
+			if (parent == root) {
+				return;
+			}
+
+			if (part != parent->get_last_part()) {
+				part = part->get_next();
+				break;
+			}
+
+			part = parent;
+		}
+	}
+}
 
 inline void replace_vertices_xy(geometry *geom, void *state, map_vertex_xy_func callback) {
 	if (!geom) {

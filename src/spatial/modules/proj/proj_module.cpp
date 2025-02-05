@@ -10,6 +10,7 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 
 #include "proj.h"
+#include "geodesic.h"
 #include "sqlite3.h"
 
 // We embed the whole proj.db in the proj_db.c file, which we then link into the extension binary
@@ -37,9 +38,9 @@ namespace duckdb {
 
 namespace {
 
-//======================================================================================================================
-// PROJ Module
-//======================================================================================================================
+//######################################################################################################################
+// PROJ Module & SQLITE VFS Registration
+//######################################################################################################################
 
 struct ProjModule {
 	static void RegisterVFS(DatabaseInstance &db);
@@ -99,6 +100,10 @@ void ProjModule::RegisterVFS(DatabaseInstance &db) {
 		throw InternalException("Could not set proj.db path");
 	}
 }
+
+//######################################################################################################################
+// Coordinate Transformation Functions
+//######################################################################################################################
 
 //======================================================================================================================
 // Local State
@@ -444,17 +449,354 @@ struct ST_Transform {
 	}
 };
 
-} // namespace
+//######################################################################################################################
+// Geodesic Functions
+//######################################################################################################################
+
+constexpr auto EARTH_A = 6378137;
+constexpr auto EARTH_F = 1 / 298.257223563;
 
 //======================================================================================================================
-// Register Module
+// Local State
 //======================================================================================================================
+
+
+struct GeodesicLocalState final : FunctionLocalState {
+
+	ArenaAllocator arena;
+	GeometryAllocator alloc;
+	geod_geodesic geod = {};
+	geod_polygon poly = {};
+	double accum = 0;
+
+	explicit GeodesicLocalState(ClientContext &context, bool is_line)
+	    : arena(BufferAllocator::Get(context)), alloc(arena) {
+
+		// Initialize the geodesic object for earth
+		geod_init(&geod, EARTH_A, EARTH_F);
+		geod_polygon_init(&poly, is_line ? 1 : 0);
+	}
+
+	static unique_ptr<FunctionLocalState> InitPolygon(ExpressionState &state, const BoundFunctionExpression &expr, FunctionData *bind_data) {
+		return make_uniq<GeodesicLocalState>(state.GetContext(), false);
+	}
+
+	static unique_ptr<FunctionLocalState> InitLine(ExpressionState &state, const BoundFunctionExpression &expr, FunctionData *bind_data) {
+		return make_uniq<GeodesicLocalState>(state.GetContext(), true);
+	}
+
+	static GeodesicLocalState& ResetAndGet(ExpressionState &state) {
+		auto &local_state = ExecuteFunctionState::GetFunctionState(state)->Cast<GeodesicLocalState>();
+		local_state.arena.Reset();
+		return local_state;
+	}
+
+	sgl::geometry Deserialize(const string_t &blob) {
+		sgl::geometry geom;
+		Serde::Deserialize(geom, arena, blob.GetDataUnsafe(), blob.GetSize());
+		return geom;
+	}
+};
+
+//======================================================================================================================
+// ST_Area_Spheroid
+//======================================================================================================================
+
+struct ST_Area_Spheroid {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+		auto &lstate = GeodesicLocalState::ResetAndGet(state);
+
+		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
+			const auto geom = lstate.Deserialize(input);
+
+			// Reset the state
+			lstate.accum = 0;
+
+			// Visit all polygons
+			sgl::ops::visit_by_dimension(&geom, 2, &lstate, [](void *arg, const sgl::geometry *part) {
+				if(part->get_type() != sgl::geometry_type::POLYGON) {
+					return;
+				}
+
+				auto &sstate = *static_cast<GeodesicLocalState*>(arg);
+
+				// Calculate the area of the polygon
+				const auto tail = part->get_last_part();
+				auto ring = tail;
+				if(!ring) {
+					return;
+				}
+
+				const auto head = ring->get_next();
+
+				do {
+					ring = ring->get_next();
+
+					const auto vertex_count = ring->get_count();
+					if(vertex_count < 4) {
+						continue;
+					}
+
+					geod_polygon_clear(&sstate.poly);
+
+					// Dont add the last vertex
+					for(auto i = 0; i < vertex_count - 1; i++) {
+						const auto vertex = ring->get_vertex_xy(i);
+						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
+					}
+
+					double area = 0;
+					geod_polygon_compute(&sstate.geod, &sstate.poly, 0, 1, &area, nullptr);
+
+
+					if(ring == head) {
+						sstate.accum += std::abs(area);
+					} else {
+						sstate.accum -= std::abs(area);
+					}
+				} while(ring != tail);
+			});
+
+			return lstate.accum;
+		});
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Area_Spheroid", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::DOUBLE);
+
+				variant.SetInit(GeodesicLocalState::InitPolygon);
+				variant.SetFunction(Execute);
+			});
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_Perimeter_Spheroid
+//======================================================================================================================
+struct ST_Perimeter_Spheroid {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+		auto &lstate = GeodesicLocalState::ResetAndGet(state);
+
+		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
+			const auto geom = lstate.Deserialize(input);
+
+			// Reset the state
+			lstate.accum = 0;
+
+			// Visit all polygons
+			sgl::ops::visit_by_dimension(&geom, 2, &lstate, [](void *arg, const sgl::geometry *part) {
+				if(part->get_type() != sgl::geometry_type::POLYGON) {
+					return;
+				}
+
+				auto &sstate = *static_cast<GeodesicLocalState*>(arg);
+
+				// Calculate the perimeter of the polygon
+				const auto tail = part->get_last_part();
+				auto ring = tail;
+				if(!ring) {
+					return;
+				}
+				do {
+					ring = ring->get_next();
+
+					const auto vertex_count = ring->get_count();
+					if(vertex_count < 4) {
+						continue;
+					}
+
+					geod_polygon_clear(&sstate.poly);
+
+					// Dont add the last vertex
+					for(auto i = 0; i < vertex_count - 1; i++) {
+						const auto vertex = ring->get_vertex_xy(i);
+						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
+					}
+
+					double perimeter = 0;
+					geod_polygon_compute(&sstate.geod, &sstate.poly, 0, 1, nullptr, &perimeter);
+					// Add the perimeter of the ring
+					sstate.accum += perimeter;
+
+				} while(ring != tail);
+			});
+
+			return lstate.accum;
+		});
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Perimeter_Spheroid", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::DOUBLE);
+
+				variant.SetInit(GeodesicLocalState::InitPolygon);
+				variant.SetFunction(Execute);
+			});
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_Length_Spheroid
+//======================================================================================================================
+
+struct ST_Length_Spheroid {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+		auto &lstate = GeodesicLocalState::ResetAndGet(state);
+
+		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
+			const auto geom = lstate.Deserialize(input);
+
+			// Reset the state
+			lstate.accum = 0;
+
+			// Visit all polygons
+			sgl::ops::visit_by_dimension(&geom, 1, &lstate, [](void *arg, const sgl::geometry *part) {
+				if(part->get_type() != sgl::geometry_type::LINESTRING) {
+					return;
+				}
+
+				auto &sstate = *static_cast<GeodesicLocalState*>(arg);
+
+				const auto vertex_count = part->get_count();
+				if(vertex_count < 2) {
+					return;
+				}
+
+				geod_polygon_clear(&sstate.poly);
+
+				for(auto i = 0; i < vertex_count; i++) {
+					const auto vertex = part->get_vertex_xy(i);
+					geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
+				}
+
+				// Calculate the length of the linestring
+				double length = 0;
+				geod_polygon_compute(&sstate.geod, &sstate.poly, 0, 1, nullptr, &length);
+
+				sstate.accum += length;
+			});
+
+			return lstate.accum;
+		});
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Length_Spheroid", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::DOUBLE);
+
+				variant.SetInit(GeodesicLocalState::InitLine);
+				variant.SetFunction(Execute);
+			});
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_Distance_Spheroid
+//======================================================================================================================
+
+struct ST_Distance_Spheroid {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		using POINT_TYPE = StructTypeBinary<double, double>;
+		using DISTANCE_TYPE = PrimitiveType<double>;
+
+		geod_geodesic geod = {};
+		geod_init(&geod, EARTH_A, EARTH_F);
+
+		GenericExecutor::ExecuteBinary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE>(
+			args.data[0], args.data[1], result, args.size(),
+			[&](const POINT_TYPE &p1, const POINT_TYPE &p2) {
+				double distance;
+				geod_inverse(&geod, p1.a_val, p1.b_val, p2.a_val, p2.b_val, &distance, nullptr, nullptr);
+				return distance;
+			});
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Distance_Spheroid", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("p1", GeoTypes::POINT_2D());
+				variant.AddParameter("p2", GeoTypes::POINT_2D());
+				variant.SetReturnType(LogicalType::DOUBLE);
+
+				variant.SetFunction(Execute);
+			});
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_DWithin_Spheroid
+//======================================================================================================================
+
+struct ST_DWithin_Spheroid {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		using POINT_TYPE = StructTypeBinary<double, double>;
+		using DISTANCE_TYPE = PrimitiveType<double>;
+		using BOOL_TYPE = PrimitiveType<bool>;
+
+		geod_geodesic geod = {};
+		geod_init(&geod, EARTH_A, EARTH_F);
+
+		GenericExecutor::ExecuteTernary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE, BOOL_TYPE>(
+			args.data[0], args.data[1], args.data[2], result, args.size(),
+			[&](const POINT_TYPE &p1, const POINT_TYPE &p2, const DISTANCE_TYPE &limit) {
+				double distance;
+				geod_inverse(&geod, p1.a_val, p1.b_val, p2.a_val, p2.b_val, &distance, nullptr, nullptr);
+				return distance <= limit.val;
+			});
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_DWithin_Spheroid", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("p1", GeoTypes::POINT_2D());
+				variant.AddParameter("p2", GeoTypes::POINT_2D());
+				variant.SetReturnType(LogicalType::DOUBLE);
+
+				variant.SetFunction(Execute);
+			});
+		});
+	}
+};
+
+} // namespace
+
+//######################################################################################################################
+// Module Registration
+//######################################################################################################################
 void RegisterProjModule(DatabaseInstance &db) {
 
 	// Register the VFS for the proj.db database
 	ProjModule::RegisterVFS(db);
 
+	// Coordinate Transform Function
 	ST_Transform::Register(db);
+
+	// Geodesic Functions
+	ST_Area_Spheroid::Register(db);
+	ST_Perimeter_Spheroid::Register(db);
+	ST_Length_Spheroid::Register(db);
+	ST_Distance_Spheroid::Register(db);
+	ST_DWithin_Spheroid::Register(db);
+
 }
 
 } // namespace duckdb
