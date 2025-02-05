@@ -96,7 +96,6 @@ find_package(SQLite3 REQUIRED)
 find_package(GEOS REQUIRED)
 find_package(GDAL REQUIRED)
 find_package(EXPAT REQUIRED)
-find_package(GeographicLib REQUIRED)
 
 # Important: The link order matters, its the reverse order of dependency
 set(EXTENSION_DEPENDENCIES
@@ -106,8 +105,7 @@ set(EXTENSION_DEPENDENCIES
     EXPAT::EXPAT
     SQLite::SQLite3
     ZLIB::ZLIB
-    ${SQLITE3_MEMVFS}
-    ${GeographicLib_LIBRARIES})
+    ${SQLITE3_MEMVFS})
 
 if(SPATIAL_USE_NETWORK)
   message(STATUS "Building with network functionality")
@@ -129,9 +127,6 @@ if((NOT EMSCRIPTEN) AND (NOT IOS))
          ${SystemConfiguration_Library})
   endif()
 endif()
-
-# Geographiclib is special
-include_directories(${GeographicLib_INCLUDE_DIRS})
 
 # Add dependencies to extension
 target_link_libraries(${EXTENSION_NAME} PUBLIC ${EXTENSION_DEPENDENCIES})
