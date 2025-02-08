@@ -640,6 +640,36 @@ inline double perimeter(const geometry *geom) {
 	return perimeter;
 }
 
+inline sgl::geometry make_from_box(sgl::allocator *alloc, double minx, double miny, double maxx, double maxy) {
+	auto poly = sgl::polygon::make_empty(false, false);
+
+	const auto ring_mem = alloc->alloc(sizeof(sgl::geometry));
+	const auto ring_ptr = new (ring_mem) sgl::geometry(sgl::geometry_type::LINESTRING, false, false);
+
+	const auto data_mem = alloc->alloc(2 * sizeof(double) * 5);
+	const auto data_ptr = static_cast<double*>(data_mem);
+
+	data_ptr[0] = minx;
+	data_ptr[1] = miny;
+
+	data_ptr[2] = minx;
+	data_ptr[3] = maxy;
+
+	data_ptr[4] = maxx;
+	data_ptr[5] = maxy;
+
+	data_ptr[6] = maxx;
+	data_ptr[7] = miny;
+
+	data_ptr[8] = minx;
+	data_ptr[9] = miny;
+
+	ring_ptr->set_vertex_data(static_cast<const uint8_t*>(data_mem), 5);
+	poly.append_part(ring_ptr);
+
+	return poly;
+}
+
 } // namespace polygon
 
 namespace multi_point {
@@ -755,6 +785,8 @@ double perimeter(const geometry *geom);
 double length(const geometry *geom);
 size_t vertex_count(const geometry *geom);
 int32_t max_surface_dimension(const geometry *geom, bool ignore_empty);
+
+double distance(const geometry* lhs, const geometry* rhs);
 
 typedef void (*visit_func)(void *state, const geometry *part);
 void visit_by_dimension(const geometry *geom, int surface_dimension, void *state, visit_func func);

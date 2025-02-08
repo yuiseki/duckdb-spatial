@@ -1,23 +1,22 @@
-#include "spatial/modules/main/functions.hpp"
-
-#include "spatial/spatial_types.hpp"
-#include "spatial/geometry/sgl.hpp"
-#include "spatial/geometry/geometry_processor.hpp"
-#include "spatial/serde/geometry_serialization.hpp"
-#include "spatial/util/math.hpp"
-
+#include "duckdb/common/error_data.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/common/vector_operations/generic_executor.hpp"
-#include "duckdb/common/error_data.hpp"
 #include "duckdb/main/extension_util.hpp"
+#include "spatial/geometry/geometry_processor.hpp"
+#include "spatial/geometry/sgl.hpp"
+#include "spatial/modules/main/functions.hpp"
+#include "spatial/serde/geometry_serialization.hpp"
+#include "spatial/spatial_types.hpp"
+#include "spatial/util/math.hpp"
+#include "spatial/geometry/wkb_writer.hpp"
 
 namespace duckdb {
 
-//----------------------------------------------------------------------------------------------------------------------
-// Local State
-//----------------------------------------------------------------------------------------------------------------------
-
 namespace {
+
+//======================================================================================================================
+// Local State
+//======================================================================================================================
 
 class LocalState final : public FunctionLocalState {
 public:
@@ -67,7 +66,554 @@ string_t LocalState::Serialize(Vector &vector, const sgl::geometry &geom) {
 	return blob;
 }
 
+//======================================================================================================================
+// GEOMETRY Casts
+//======================================================================================================================
+
+struct GeometryCasts {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY -> VARCHAR
+	//------------------------------------------------------------------------------------------------------------------
+	static bool ToVarcharCast(Vector &source, Vector &result, idx_t count, CastParameters &) {
+		CoreVectorOperations::GeometryToVarchar(source, result, count);
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// VARCHAR -> GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static bool FromVarcharCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+		auto &lstate = LocalState::ResetAndGet(parameters);
+		auto &alloc = lstate.GetAllocator();
+
+		sgl::ops::wkt_reader reader = {};
+		reader.alloc = &alloc;
+
+		auto success = true;
+
+		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
+			source, result, count,
+			[&](const string_t &wkt, ValidityMask &mask, idx_t row_idx) {
+				const auto wkt_ptr = wkt.GetDataUnsafe();
+				const auto wkt_len = wkt.GetSize();
+
+				reader.buf = wkt_ptr;
+				reader.end = wkt_ptr + wkt_len;
+
+				sgl::geometry geom;
+
+				if (!sgl::ops::wkt_reader_try_parse(&reader, &geom)) {
+					if(success) {
+						success = false;
+						const auto error = sgl::ops::wkt_reader_get_error_message(&reader);
+						HandleCastError::AssignError(error, parameters.error_message);
+					}
+					mask.SetInvalid(row_idx);
+					return string_t {};
+				}
+
+				return lstate.Serialize(result, geom);
+			});
+
+		return success;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY -> WKB_BLOB
+	//------------------------------------------------------------------------------------------------------------------
+	static bool ToWKBCast(Vector &source, Vector &result, idx_t count, CastParameters &) {
+		UnaryExecutor::Execute<string_t, string_t>(
+			source, result, count, [&](const string_t &input) {
+				return WKBWriter::Write(input, result);
+			});
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// WKB_BLOB -> GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static bool FromWKBCast(Vector &source, Vector &result, idx_t count, CastParameters &params) {
+		auto &lstate = LocalState::ResetAndGet(params);
+		auto &alloc = lstate.GetAllocator();
+
+		constexpr auto MAX_STACK_DEPTH = 128;
+		uint32_t recursion_stack[MAX_STACK_DEPTH];
+
+		sgl::ops::wkb_reader reader = {};
+		reader.copy_vertices = false;
+		reader.alloc = &alloc;
+		reader.allow_mixed_zm = false;
+		reader.nan_as_empty = true;
+
+		reader.stack_buf = recursion_stack;
+		reader.stack_cap = MAX_STACK_DEPTH;
+
+		bool success = true;
+
+		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(source, result, count,
+			[&](const string_t &wkb, ValidityMask &mask, idx_t row_idx) {
+			reader.buf = wkb.GetDataUnsafe();
+			reader.end = reader.buf + wkb.GetSize();
+
+			sgl::geometry geom(sgl::geometry_type::INVALID);
+
+			// Try parse, if it fails, assign error message and return NULL
+			if (!sgl::ops::wkb_reader_try_parse(&reader, &geom)) {
+				const auto error = sgl::ops::wkb_reader_get_error_message(&reader);
+				if (success) {
+					success = false;
+					HandleCastError::AssignError(error, params.error_message);
+				}
+				mask.SetInvalid(row_idx);
+				return string_t {};
+			}
+
+			return lstate.Serialize(result, geom);
+		});
+
+		return success;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
+	static void Register(DatabaseInstance &db) {
+		const auto wkb_type = GeoTypes::WKB_BLOB();
+		const auto geom_type = GeoTypes::GEOMETRY();
+
+		// VARCHAR -> Geometry is explicitly castable
+		ExtensionUtil::RegisterCastFunction(db, geom_type, LogicalType::VARCHAR, BoundCastInfo(ToVarcharCast), 1);
+
+		// Geometry -> VARCHAR is implicitly castable
+		ExtensionUtil::RegisterCastFunction(db, LogicalType::VARCHAR, geom_type, BoundCastInfo(FromVarcharCast));
+
+		// Geometry -> WKB is explicitly castable
+		ExtensionUtil::RegisterCastFunction(db, geom_type, wkb_type, BoundCastInfo(ToWKBCast));
+
+		// Geometry -> BLOB is explicitly castable
+		ExtensionUtil::RegisterCastFunction(db, geom_type, LogicalType::BLOB, DefaultCasts::ReinterpretCast);
+
+		// WKB -> Geometry is explicitly castable
+		ExtensionUtil::RegisterCastFunction( db, wkb_type, geom_type,
+			BoundCastInfo(FromWKBCast, nullptr, LocalState::InitCast));
+
+		// WKB -> BLOB is implicitly castable
+		ExtensionUtil::RegisterCastFunction(db, wkb_type, LogicalType::BLOB, DefaultCasts::ReinterpretCast, 1);
+	}
+};
+
+//======================================================================================================================
+// POINT_2D Casts
+//======================================================================================================================
+
+struct PointCasts {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// POINT_2D -> VARCHAR
+	//------------------------------------------------------------------------------------------------------------------
+	static bool ToVarcharCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+		CoreVectorOperations::Point2DToVarchar(source, result, count);
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// POINT_2D -> GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static bool ToGeometryCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+		using POINT_TYPE = StructTypeBinary<double, double>;
+		using GEOMETRY_TYPE = PrimitiveType<string_t>;
+
+		auto &lstate = LocalState::ResetAndGet(parameters);
+
+		GenericExecutor::ExecuteUnary<POINT_TYPE, GEOMETRY_TYPE>(source, result, count,
+			[&](const POINT_TYPE &point) {
+
+			const double buffer[2] = {point.a_val, point.b_val};
+			auto geom = sgl::point::make_empty();
+			geom.set_type(sgl::geometry_type::POINT);
+			geom.set_vertex_data(reinterpret_cast<const uint8_t *>(buffer), 1);
+
+			return lstate.Serialize(result, geom);
+		});
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY -> POINT_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static bool FromGeometryCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+		using POINT_TYPE = StructTypeBinary<double, double>;
+		using GEOMETRY_TYPE = PrimitiveType<string_t>;
+
+		auto &lstate = LocalState::ResetAndGet(parameters);
+
+		GenericExecutor::ExecuteUnary<GEOMETRY_TYPE, POINT_TYPE>(source, result, count,
+			[&](const GEOMETRY_TYPE &blob) {
+
+			const auto geom = lstate.Deserialize(blob.val);
+			if (geom.get_type() != sgl::geometry_type::POINT) {
+				throw ConversionException("Cannot cast non-point GEOMETRY to POINT_2D");
+			}
+			if (geom.is_empty()) {
+				// TODO: Maybe make this return NULL instead
+				throw ConversionException("Cannot cast empty point GEOMETRY to POINT_2D");
+			}
+			const auto vertex = geom.get_vertex_xy(0);
+			return POINT_TYPE {vertex.x, vertex.y};
+		});
+
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// POINT(N) -> POINT_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static bool ToPoint2DCast(Vector &source, Vector &result, idx_t count, CastParameters &) {
+		auto &children = StructVector::GetEntries(source);
+		const auto &x_child = children[0];
+		const auto &y_child = children[1];
+
+		const auto &result_children = StructVector::GetEntries(result);
+		const auto &result_x_child = result_children[0];
+		const auto &result_y_child = result_children[1];
+
+		result_x_child->Reference(*x_child);
+		result_y_child->Reference(*y_child);
+
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
+	static void Register(DatabaseInstance &db) {
+		// POINT_2D -> VARCHAR
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::POINT_2D(), LogicalType::VARCHAR, BoundCastInfo(ToVarcharCast), 1);
+		// POINT_2D -> GEOMETRY
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::POINT_2D(), GeoTypes::GEOMETRY(), BoundCastInfo(ToGeometryCast, nullptr, LocalState::InitCast), 1);
+		// GEOMETRY -> POINT_2D
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::GEOMETRY(), GeoTypes::POINT_2D(), BoundCastInfo(FromGeometryCast, nullptr, LocalState::InitCast), 1);
+		// POINT_3D -> POINT_2D
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::POINT_3D(), GeoTypes::POINT_2D(), ToPoint2DCast, 1);
+		// POINT_4D -> POINT_2D
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::POINT_4D(), GeoTypes::POINT_2D(), ToPoint2DCast, 1);
+	}
+};
+
+//======================================================================================================================
+// LINESTRING_2D Casts
+//======================================================================================================================
+
+struct LinestringCasts {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// LINESTRING_2D -> VARCHAR
+	//------------------------------------------------------------------------------------------------------------------
+	static bool ToVarcharCast(Vector &source, Vector &result, idx_t count, CastParameters &) {
+		CoreVectorOperations::LineString2DToVarchar(source, result, count);
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// LINESTRING_2D -> GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static bool ToGeometryCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+		auto &lstate = LocalState::ResetAndGet(parameters);
+		auto &arena = lstate.GetArena();
+
+		auto &coord_vec = ListVector::GetEntry(source);
+		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
+		const auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
+		const auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+
+		UnaryExecutor::Execute<list_entry_t, string_t>(source, result, count,
+			[&](const list_entry_t &line) {
+
+			const auto vertex_data_mem = arena.AllocateAligned(sizeof(double) * 2 * line.length);
+			const auto vertex_data_ptr = reinterpret_cast<double *>(vertex_data_mem);
+
+			for (idx_t i = 0; i < line.length; i++) {
+				vertex_data_ptr[i * 2] = x_data[line.offset + i];
+				vertex_data_ptr[i * 2 + 1] = y_data[line.offset + i];
+			}
+
+			auto geom = sgl::linestring::make_empty();
+			geom.set_type(sgl::geometry_type::LINESTRING);
+			geom.set_vertex_data(vertex_data_mem, line.length);
+
+			return lstate.Serialize(result, geom);
+		});
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY -> LINESTRING_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static bool FromGeometryCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+		auto &lstate = LocalState::ResetAndGet(parameters);
+
+		auto &coord_vec = ListVector::GetEntry(result);
+		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
+		const auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
+		const auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+
+		idx_t total_coords = 0;
+
+		UnaryExecutor::Execute<string_t, list_entry_t>(source, result, count, [&](const string_t &blob) {
+
+			const auto line = lstate.Deserialize(blob);
+			if (line.get_type() != sgl::geometry_type::LINESTRING) {
+				// TODO: Dont throw here, return NULL instead to allow TRY_CAST
+				throw ConversionException("Cannot cast non-linestring GEOMETRY to LINESTRING_2D");
+			}
+
+			const auto line_size = line.get_count();
+
+			const auto entry = list_entry_t(total_coords, line_size);
+			total_coords += line_size;
+			ListVector::Reserve(result, total_coords);
+
+			for (idx_t i = 0; i < line_size; i++) {
+				const auto vertex = line.get_vertex_xy(i);
+				x_data[entry.offset + i] = vertex.x;
+				y_data[entry.offset + i] = vertex.y;
+			}
+			return entry;
+		});
+		ListVector::SetListSize(result, total_coords);
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
+	static void Register(DatabaseInstance &db) {
+		// LINESTRING_2D -> VARCHAR
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::LINESTRING_2D(), LogicalType::VARCHAR, BoundCastInfo(ToVarcharCast), 1);
+		// LINESTRING_2D -> GEOMETRY
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::LINESTRING_2D(), GeoTypes::GEOMETRY(), BoundCastInfo(ToGeometryCast, nullptr, LocalState::InitCast), 1);
+		// GEOMETRY -> LINESTRING_2D
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::GEOMETRY(), GeoTypes::LINESTRING_2D(), BoundCastInfo(FromGeometryCast, nullptr, LocalState::InitCast), 1);
+	}
+};
+
+//======================================================================================================================
+// POLYGON_2D Casts
+//======================================================================================================================
+
+struct PolygonCasts {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// POLYGON_2D -> VARCHAR
+	//------------------------------------------------------------------------------------------------------------------
+	static bool ToVarcharCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+		CoreVectorOperations::Polygon2DToVarchar(source, result, count);
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// POLYGON_2D -> GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static bool ToGeometryCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+		auto &lstate = LocalState::ResetAndGet(parameters);
+		auto &arena = lstate.GetArena();
+
+		auto &ring_vec = ListVector::GetEntry(source);
+		const auto ring_entries = ListVector::GetData(ring_vec);
+		const auto &coord_vec = ListVector::GetEntry(ring_vec);
+		const auto &coord_vec_children = StructVector::GetEntries(coord_vec);
+		const auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
+		const auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+
+		UnaryExecutor::Execute<list_entry_t, string_t>(source, result, count, [&](const list_entry_t &poly) {
+			auto geom = sgl::polygon::make_empty();
+
+			for (idx_t i = 0; i < poly.length; i++) {
+				const auto ring_entry = ring_entries[poly.offset + i];
+
+				// Allocate part
+				const auto ring_mem = arena.AllocateAligned(sizeof(sgl::geometry));
+				const auto ring_ptr = new (ring_mem) sgl::geometry(sgl::geometry_type::LINESTRING);
+
+				// Allocate data
+				const auto ring_data_mem = arena.AllocateAligned(sizeof(double) * 2 * ring_entry.length);
+				const auto ring_data_ptr = reinterpret_cast<double *>(ring_data_mem);
+
+				for (idx_t j = 0; j < ring_entry.length; j++) {
+					ring_data_ptr[j * 2] = x_data[ring_entry.offset + j];
+					ring_data_ptr[j * 2 + 1] = y_data[ring_entry.offset + j];
+				}
+
+				ring_ptr->set_vertex_data(ring_data_mem, ring_entry.length);
+
+				// Append part
+				geom.append_part(ring_ptr);
+			}
+
+			return lstate.Serialize(result, geom);
+		});
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY -> POLYGON_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static bool FromGeometryCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+		auto &lstate = LocalState::ResetAndGet(parameters);
+		auto &ring_vec = ListVector::GetEntry(result);
+
+		idx_t total_rings = 0;
+		idx_t total_coords = 0;
+
+		UnaryExecutor::Execute<string_t, list_entry_t>(source, result, count, [&](const string_t &blob) {
+			const auto poly = lstate.Deserialize(blob);
+
+			// TODO: Dont throw here, return NULL instead to allow TRY_CAST
+			if(poly.get_type() != sgl::geometry_type::POLYGON) {
+				throw ConversionException("Cannot cast non-polygon GEOMETRY to POLYGON_2D");
+			}
+
+			const auto poly_size = poly.get_count();
+			const auto poly_entry = list_entry_t(total_rings, poly_size);
+
+			ListVector::Reserve(result, total_rings + poly_size);
+
+			const auto tail = poly.get_last_part();
+			auto head = tail;
+
+			idx_t ring_idx = 0;
+			do {
+				D_ASSERT(ring_idx < poly_size);
+				head = head->get_next();
+
+				const auto ring_size = head->get_count();
+				const auto ring_entry = list_entry_t(total_coords, ring_size);
+
+				ListVector::Reserve(ring_vec, total_coords + ring_size);
+
+				const auto ring_entries = ListVector::GetData(ring_vec);
+				auto &coord_vec = ListVector::GetEntry(ring_vec);
+				auto &coord_vec_children = StructVector::GetEntries(coord_vec);
+				const auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
+				const auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+
+				ring_entries[total_rings + ring_idx] = ring_entry;
+
+				for (idx_t j = 0; j < ring_size; j++) {
+					const auto vertext = head->get_vertex_xy(j);
+					x_data[ring_entry.offset + j] = vertext.x;
+					y_data[ring_entry.offset + j] = vertext.y;
+				}
+				total_coords += ring_size;
+
+				ring_idx++;
+			} while (head != tail);
+
+			total_rings += poly_size;
+
+			return poly_entry;
+		});
+
+		ListVector::SetListSize(result, total_rings);
+		ListVector::SetListSize(ring_vec, total_coords);
+
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
+	static void Register(DatabaseInstance &db) {
+		// POLYGON_2D -> VARCHAR
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::POLYGON_2D(), LogicalType::VARCHAR, BoundCastInfo(ToVarcharCast), 1);
+		// POLYGON_2D -> GEOMETRY
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::POLYGON_2D(), GeoTypes::GEOMETRY(), BoundCastInfo(ToGeometryCast, nullptr, LocalState::InitCast), 1);
+		// GEOMETRY -> POLYGON_2D
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::GEOMETRY(), GeoTypes::POLYGON_2D(), BoundCastInfo(FromGeometryCast, nullptr, LocalState::InitCast), 1);
+	}
+};
+
+
+//======================================================================================================================
+// BOX_2D Casts
+//======================================================================================================================
+
+struct BoxCasts {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// BOX_2D -> VARCHAR
+	//------------------------------------------------------------------------------------------------------------------
+	static bool ToVarcharCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+		CoreVectorOperations::Box2DToVarchar(source, result, count);
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// BOX_2D -> GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static bool ToGeometryCast2D(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+		auto &lstate = LocalState::ResetAndGet(parameters);
+		auto &alloc = lstate.GetAllocator();
+
+		using BOX_TYPE = StructTypeQuaternary<double, double, double, double>;
+		using GEOMETRY_TYPE = PrimitiveType<string_t>;
+		GenericExecutor::ExecuteUnary<BOX_TYPE, GEOMETRY_TYPE>(source, result, count, [&](const BOX_TYPE &box) {
+			const auto minx = box.a_val;
+			const auto miny = box.b_val;
+			const auto maxx = box.c_val;
+			const auto maxy = box.d_val;
+			const auto poly = sgl::polygon::make_from_box(&alloc, minx, miny, maxx, maxy);
+			return lstate.Serialize(result, poly);
+		});
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// BOX_2DF -> GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static bool ToGeometryCast2F(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+		auto &lstate = LocalState::ResetAndGet(parameters);
+		auto &alloc = lstate.GetAllocator();
+		using BOX_TYPE = StructTypeQuaternary<float, float, float, float>;
+		using GEOMETRY_TYPE = PrimitiveType<string_t>;
+		GenericExecutor::ExecuteUnary<BOX_TYPE, GEOMETRY_TYPE>(source, result, count, [&](const BOX_TYPE &box) {
+			const auto minx = box.a_val;
+			const auto miny = box.b_val;
+			const auto maxx = box.c_val;
+			const auto maxy = box.d_val;
+			const auto poly = sgl::polygon::make_from_box(&alloc, minx, miny, maxx, maxy);
+			return lstate.Serialize(result, poly);
+		});
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
+	static void Register(DatabaseInstance &db) {
+		// BOX_2D -> VARCHAR
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::BOX_2D(), LogicalType::VARCHAR, BoundCastInfo(ToVarcharCast), 1);
+
+		// BOX_2D -> GEOMETRY
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::BOX_2D(), GeoTypes::GEOMETRY(), BoundCastInfo(ToGeometryCast2D, nullptr, LocalState::InitCast), 1);
+
+		// BOX_2F -> GEOMETRY
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::BOX_2DF(), GeoTypes::GEOMETRY(), BoundCastInfo(ToGeometryCast2F, nullptr, LocalState::InitCast), 1);
+	}
+};
+
 } // namespace
+
+
+//======================================================================================================================
+// Vector Operations
+//======================================================================================================================
+//  TODO: Move/inline this. This is a relic from the original implementation, but being able to access it from outside
+//  is not really important anymore (there are other ways to work around it).
 
 //------------------------------------------------------------------------------
 // POINT_2D -> VARCHAR
@@ -175,6 +721,7 @@ void CoreVectorOperations::Box2DToVarchar(Vector &source, Vector &result, idx_t 
 //------------------------------------------------------------------------------
 // GEOMETRY -> VARCHAR
 //------------------------------------------------------------------------------
+namespace {
 class GeometryTextProcessor final : GeometryProcessor<void, bool> {
 private:
 	string text;
@@ -354,8 +901,7 @@ public:
 		}
 	}
 
-	virtual ~GeometryTextProcessor() {
-	}
+	virtual ~GeometryTextProcessor() = default;
 
 	const string &Execute(const geometry_t &geom) {
 		text.clear();
@@ -364,99 +910,26 @@ public:
 	}
 };
 
+} // namespace
+
 void CoreVectorOperations::GeometryToVarchar(Vector &source, Vector &result, idx_t count) {
 	GeometryTextProcessor processor;
-	UnaryExecutor::Execute<geometry_t, string_t>(source, result, count, [&](geometry_t &input) {
-		auto text = processor.Execute(input);
+	UnaryExecutor::Execute<geometry_t, string_t>(source, result, count, [&](const geometry_t &input) {
+		const auto text = processor.Execute(input);
 		return StringVector::AddString(result, text);
 	});
 }
 
-static bool TextToGeometryCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
-
-	auto &lstate = LocalState::ResetAndGet(parameters);
-	auto &alloc = lstate.GetAllocator();
-
-	sgl::ops::wkt_reader reader = {};
-	reader.alloc = &alloc;
-
-	bool success = true;
-	UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
-	    source, result, count, [&](const string_t &wkt, ValidityMask &mask, idx_t idx) {
-
-		    const auto wkt_ptr = wkt.GetDataUnsafe();
-			const auto wkt_len = wkt.GetSize();
-
-			reader.buf = wkt_ptr;
-			reader.end = wkt_ptr + wkt_len;
-
-			sgl::geometry geom;
-		    if(sgl::ops::wkt_reader_try_parse(&reader, &geom)) {
-			    return lstate.Serialize(result, geom);
-		    }
-
-	    	if(success) {
-	    		success = false;
-	    		const auto error_msg = sgl::ops::wkt_reader_get_error_message(&reader);
-	    		const ErrorData error(error_msg);
-	    		HandleCastError::AssignError(error.RawMessage(), parameters.error_message);
-	    	}
-
-	    	mask.SetInvalid(idx);
-	    	return string_t {};
-	    });
-
-	return success;
-}
-
-//------------------------------------------------------------------------------
-// CASTS
-//------------------------------------------------------------------------------
-static bool Point2DToVarcharCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
-	CoreVectorOperations::Point2DToVarchar(source, result, count);
-	return true;
-}
-
-static bool LineString2DToVarcharCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
-	CoreVectorOperations::LineString2DToVarchar(source, result, count);
-	return true;
-}
-
-static bool Polygon2DToVarcharCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
-	CoreVectorOperations::Polygon2DToVarchar(source, result, count);
-	return true;
-}
-
-static bool Box2DToVarcharCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
-	CoreVectorOperations::Box2DToVarchar(source, result, count);
-	return true;
-}
-
-static bool GeometryToVarcharCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
-	CoreVectorOperations::GeometryToVarchar(source, result, count);
-	return true;
-}
+//======================================================================================================================
+// Register Casts
+//======================================================================================================================
 
 void RegisterSpatialCastFunctions(DatabaseInstance &db) {
-
-	ExtensionUtil::RegisterCastFunction(db, GeoTypes::POINT_2D(), LogicalType::VARCHAR,
-	                                    BoundCastInfo(Point2DToVarcharCast), 1);
-
-	ExtensionUtil::RegisterCastFunction(db, GeoTypes::LINESTRING_2D(), LogicalType::VARCHAR,
-	                                    BoundCastInfo(LineString2DToVarcharCast), 1);
-
-	ExtensionUtil::RegisterCastFunction(db, GeoTypes::POLYGON_2D(), LogicalType::VARCHAR,
-	                                    BoundCastInfo(Polygon2DToVarcharCast), 1);
-
-	ExtensionUtil::RegisterCastFunction(db, GeoTypes::BOX_2D(), LogicalType::VARCHAR, BoundCastInfo(Box2DToVarcharCast),
-	                                    1);
-
-	ExtensionUtil::RegisterCastFunction(db, GeoTypes::GEOMETRY(), LogicalType::VARCHAR,
-	                                    BoundCastInfo(GeometryToVarcharCast), 1);
-
-	ExtensionUtil::RegisterCastFunction(
-	    db, LogicalType::VARCHAR, GeoTypes::GEOMETRY(),
-	    BoundCastInfo(TextToGeometryCast, nullptr, LocalState::InitCast));
+	GeometryCasts::Register(db);
+	PointCasts::Register(db);
+	LinestringCasts::Register(db);
+	PolygonCasts::Register(db);
+	BoxCasts::Register(db);
 }
 
 } // namespace duckdb

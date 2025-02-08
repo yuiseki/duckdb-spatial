@@ -11,7 +11,7 @@
 namespace duckdb {
 
 template<class T>
-static T TypeFromGEOS(int type) {
+static T StorageTypeFromGEOS(int type) {
 	switch(type) {
 	case GEOS_POINT:
 		return static_cast<T>(0);
@@ -152,7 +152,7 @@ static void SerializeInternal(const GEOSContextHandle_t ctx, const GEOSGeometry*
 	const bool has_z = GEOSHasZ_r(ctx, geom);
 	const bool has_m = GEOSHasM_r(ctx, geom);
 
-	cursor.Write(TypeFromGEOS<uint32_t>(type));
+	cursor.Write(StorageTypeFromGEOS<uint32_t>(type));
 
 	switch(type) {
 	case GEOS_POINT:
@@ -374,7 +374,7 @@ void GeosSerde::Serialize(GEOSContextHandle_t ctx, const GEOSGeom_t *geom, char 
 	flags |= has_m ? 0x02 : 0;
 	flags |= has_bbox ? 0x04 : 0;
 
-	cursor.Write<uint8_t>(TypeFromGEOS<uint8_t>(type));
+	cursor.Write<uint8_t>(StorageTypeFromGEOS<uint8_t>(type));
 	cursor.Write<uint8_t>(flags);
 	cursor.Write<uint16_t>(0); //unused
 	cursor.Write<uint32_t>(0); //padding

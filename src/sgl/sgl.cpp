@@ -1350,6 +1350,279 @@ geometry extract_polygons(sgl::geometry *geom) {
 	return polygons;
 }
 
+
+//------------------------------------------------------------------------------
+// Distance
+//------------------------------------------------------------------------------
+static double point_point_distance(const sgl::geometry *lhs, const sgl::geometry *rhs) {
+	SGL_ASSERT(lhs->get_type() == sgl::geometry_type::POINT);
+	SGL_ASSERT(rhs->get_type() == sgl::geometry_type::POINT);
+
+	if(lhs->is_empty() || rhs->is_empty()) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+
+	const auto lhs_vertex = lhs->get_vertex_xy(0);
+	const auto rhs_vertex = rhs->get_vertex_xy(0);
+
+	return std::hypot(lhs_vertex.x - rhs_vertex.x, lhs_vertex.y - rhs_vertex.y);
+}
+
+/*
+function sqr(x) { return x * x }
+function dist2(v, w) { return sqr(v.x - w.x) + sqr(v.y - w.y) }
+function distToSegmentSquared(p, v, w) {
+var l2 = dist2(v, w);
+if (l2 == 0) return dist2(p, v);
+var t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+t = Math.max(0, Math.min(1, t));
+return dist2(p, { x: v.x + t * (w.x - v.x),
+y: v.y + t * (w.y - v.y) });
+}
+function distToSegment(p, v, w) { return Math.sqrt(distToSegmentSquared(p, v, w)); }
+ */
+
+static double vertex_distance_squared(const vertex_xy *lhs, const vertex_xy *rhs) {
+	return std::pow(lhs->x - rhs->x, 2) + std::pow(lhs->y - rhs->y, 2);
+}
+
+static double vertex_distance(const vertex_xy *lhs, const vertex_xy *rhs) {
+	return std::hypot(lhs->x - rhs->x, lhs->y - rhs->y);
+}
+
+static double point_line_distance(const vertex_xy *p, const vertex_xy *v, const vertex_xy *w) {
+	const auto l2 = vertex_distance_squared(v, w);
+	if (l2 == 0) {
+		// is not better to just compare if w == v?
+		return vertex_distance(p, v);
+	}
+
+	const auto t = ((p->x - v->x) * (w->x - v->x) + (p->y - v->y) * (w->y - v->y)) / l2;
+	const auto t_clamped = std::max(0.0, std::min(1.0, t));
+	const auto x = v->x + t_clamped * (w->x - v->x);
+	const auto y = v->y + t_clamped * (w->y - v->y);
+
+	const vertex_xy intersection {x, y};
+
+	return vertex_distance(p, &intersection);
+}
+
+static double point_linestring_distance(const sgl::geometry *lhs, const sgl::geometry *rhs) {
+	SGL_ASSERT(lhs->get_type() == sgl::geometry_type::POINT);
+	SGL_ASSERT(rhs->get_type() == sgl::geometry_type::LINESTRING);
+
+	if(lhs->is_empty() || rhs->is_empty()) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+
+	const auto lhs_vertex = lhs->get_vertex_xy(0);
+	double min_dist = std::numeric_limits<double>::infinity();
+	const auto count = rhs->get_count();
+
+	auto v1 = rhs->get_vertex_xy(0);
+	if(count == 1) {
+		// Degenerate case, should not happen
+		return vertex_distance(&lhs_vertex, &v1);
+	}
+
+	for(size_t i = 1; i < count; i++) {
+		const auto v2 = rhs->get_vertex_xy(i);
+		const auto dist = point_line_distance(&lhs_vertex, &v1, &v2);
+		min_dist = std::min(min_dist, dist);
+		v1 = v2;
+	}
+
+	return min_dist;
+}
+
+static double point_polygon_distance(const sgl::geometry *lhs, const sgl::geometry *rhs) {
+	SGL_ASSERT(lhs->get_type() == sgl::geometry_type::POINT);
+	SGL_ASSERT(rhs->get_type() == sgl::geometry_type::POLYGON);
+
+	if(rhs->is_empty()) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+	const auto shell = rhs->get_first_part();
+	SGL_ASSERT(shell != nullptr);
+	return point_linestring_distance(lhs, shell);
+}
+
+static double linestring_linestring_distance(const geometry *lhs, const geometry *rhs) {
+	SGL_ASSERT(lhs->get_type() == geometry_type::LINESTRING);
+	SGL_ASSERT(rhs->get_type() == geometry_type::LINESTRING);
+
+	if(lhs->is_empty() || rhs->is_empty()) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+
+	double min_dist = std::numeric_limits<double>::infinity();
+	// TODO:
+	return min_dist;
+}
+
+static double linestring_polygon_distance(const geometry *lhs, const geometry *rhs) {
+	SGL_ASSERT(lhs->get_type() == geometry_type::LINESTRING);
+	SGL_ASSERT(rhs->get_type() == geometry_type::POLYGON);
+
+	if(lhs->is_empty() || rhs->is_empty()) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+
+	if(rhs->is_empty()) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+	const auto shell = rhs->get_first_part();
+	if(shell->is_empty()) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+	return linestring_linestring_distance(lhs, shell);
+}
+
+static double polygon_polygon_distance(const geometry *lhs, const geometry *rhs) {
+	SGL_ASSERT(lhs->get_type() == geometry_type::POLYGON);
+	SGL_ASSERT(rhs->get_type() == geometry_type::POLYGON);
+
+	if(lhs->is_empty() || rhs->is_empty()) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+
+	if(lhs->is_empty()) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+	const auto lhs_shell = lhs->get_first_part();
+	if(lhs_shell->is_empty()) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+
+	if(rhs->is_empty()) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+	const auto rhs_shell = rhs->get_first_part();
+	if(rhs_shell->is_empty()) {
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+
+	return linestring_linestring_distance(lhs_shell, rhs_shell);
+}
+
+static double distance_dispatch(const geometry *lhs_p, const geometry *rhs_p) {
+	SGL_ASSERT(!lhs_p->is_collection());
+	SGL_ASSERT(!rhs_p->is_collection());
+
+	switch (lhs_p->get_type()) {
+	case geometry_type::POINT:
+	switch (rhs_p->get_type()) {
+		case geometry_type::POINT:
+			return point_point_distance(lhs_p, rhs_p);
+		case geometry_type::LINESTRING:
+			return point_linestring_distance(lhs_p, rhs_p);
+		case geometry_type::POLYGON:
+			return point_polygon_distance(lhs_p, rhs_p);
+		default:
+			SGL_ASSERT(false);
+			return std::numeric_limits<double>::quiet_NaN();
+	}
+	case geometry_type::LINESTRING:
+		switch (rhs_p->get_type()) {
+		case geometry_type::POINT:
+			return point_linestring_distance(rhs_p, lhs_p);
+		case geometry_type::LINESTRING:
+			return linestring_linestring_distance(lhs_p, rhs_p);
+		case geometry_type::POLYGON:
+			return linestring_polygon_distance(lhs_p, rhs_p);
+		default:
+			SGL_ASSERT(false);
+			return std::numeric_limits<double>::quiet_NaN();
+		}
+	case geometry_type::POLYGON:
+		switch (rhs_p->get_type()) {
+		case geometry_type::POINT:
+			return point_polygon_distance(rhs_p, lhs_p);
+		case geometry_type::LINESTRING:
+			return linestring_polygon_distance(rhs_p, lhs_p);
+		case geometry_type::POLYGON:
+			return polygon_polygon_distance(lhs_p, rhs_p);
+		default:
+			SGL_ASSERT(false);
+			return std::numeric_limits<double>::quiet_NaN();
+		}
+	default:
+		SGL_ASSERT(false);
+		return std::numeric_limits<double>::quiet_NaN();
+	}
+}
+
+double distance(const geometry* lhs_p, const geometry* rhs_p) {
+	SGL_ASSERT(lhs_p != nullptr);
+	SGL_ASSERT(rhs_p != nullptr);
+
+	auto lhs = lhs_p;
+	auto rhs = rhs_p;
+
+	const auto lhs_root = lhs->get_parent();
+	const auto rhs_root = rhs->get_parent();
+
+	double min_dist = std::numeric_limits<double>::infinity();
+
+	while(lhs != lhs_root) {
+
+		if(lhs->is_collection() && !lhs->is_empty()) {
+			lhs = lhs->get_first_part();
+			continue;
+		}
+
+		// Otherwise, we have a leaf on the LHS
+		// I guess this is where we create an LHS index?
+		// I guess it makes sense to re-order lhs and rhs depending on number of parts/verts?
+		// Maybe calculate a part/vertex ratio. Although dont count interior polygon rings for that.
+		// Alt just cache every calculation.
+
+		while(rhs != rhs_root) {
+			if(rhs->is_collection() && !rhs->is_empty()) {
+				rhs = rhs->get_first_part();
+				continue;
+			}
+
+			// If we get here, we have a leaf on both sides!
+			min_dist = std::min(min_dist, distance_dispatch(lhs, rhs));
+
+			// Now move the rhs up
+			while(rhs != rhs_root) {
+				const auto parent = rhs->get_parent();
+				if(parent == rhs_root) {
+					rhs = parent;
+					break;
+				}
+
+				if(rhs != parent->get_last_part()) {
+					rhs = rhs->get_next();
+					break;
+				}
+
+				rhs = parent;
+			}
+		}
+
+		while (lhs != lhs_root) {
+			const auto parent = lhs->get_parent();
+			if (parent == lhs_root) {
+				lhs = parent;
+				break;
+			}
+
+			if (lhs != parent->get_last_part()) {
+				lhs = lhs->get_next();
+				break;
+			}
+
+			lhs = parent;
+		}
+	}
+
+	return min_dist;
+}
+
+
 } // namespace ops
 
 } // namespace sgl
