@@ -93,28 +93,27 @@ struct GeometryCasts {
 		auto success = true;
 
 		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
-			source, result, count,
-			[&](const string_t &wkt, ValidityMask &mask, idx_t row_idx) {
-				const auto wkt_ptr = wkt.GetDataUnsafe();
-				const auto wkt_len = wkt.GetSize();
+		    source, result, count, [&](const string_t &wkt, ValidityMask &mask, idx_t row_idx) {
+			    const auto wkt_ptr = wkt.GetDataUnsafe();
+			    const auto wkt_len = wkt.GetSize();
 
-				reader.buf = wkt_ptr;
-				reader.end = wkt_ptr + wkt_len;
+			    reader.buf = wkt_ptr;
+			    reader.end = wkt_ptr + wkt_len;
 
-				sgl::geometry geom;
+			    sgl::geometry geom;
 
-				if (!sgl::ops::wkt_reader_try_parse(&reader, &geom)) {
-					if(success) {
-						success = false;
-						const auto error = sgl::ops::wkt_reader_get_error_message(&reader);
-						HandleCastError::AssignError(error, parameters.error_message);
-					}
-					mask.SetInvalid(row_idx);
-					return string_t {};
-				}
+			    if (!sgl::ops::wkt_reader_try_parse(&reader, &geom)) {
+				    if (success) {
+					    success = false;
+					    const auto error = sgl::ops::wkt_reader_get_error_message(&reader);
+					    HandleCastError::AssignError(error, parameters.error_message);
+				    }
+				    mask.SetInvalid(row_idx);
+				    return string_t {};
+			    }
 
-				return lstate.Serialize(result, geom);
-			});
+			    return lstate.Serialize(result, geom);
+		    });
 
 		return success;
 	}
@@ -124,9 +123,7 @@ struct GeometryCasts {
 	//------------------------------------------------------------------------------------------------------------------
 	static bool ToWKBCast(Vector &source, Vector &result, idx_t count, CastParameters &) {
 		UnaryExecutor::Execute<string_t, string_t>(
-			source, result, count, [&](const string_t &input) {
-				return WKBWriter::Write(input, result);
-			});
+		    source, result, count, [&](const string_t &input) { return WKBWriter::Write(input, result); });
 		return true;
 	}
 
@@ -151,26 +148,26 @@ struct GeometryCasts {
 
 		bool success = true;
 
-		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(source, result, count,
-			[&](const string_t &wkb, ValidityMask &mask, idx_t row_idx) {
-			reader.buf = wkb.GetDataUnsafe();
-			reader.end = reader.buf + wkb.GetSize();
+		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
+		    source, result, count, [&](const string_t &wkb, ValidityMask &mask, idx_t row_idx) {
+			    reader.buf = wkb.GetDataUnsafe();
+			    reader.end = reader.buf + wkb.GetSize();
 
-			sgl::geometry geom(sgl::geometry_type::INVALID);
+			    sgl::geometry geom(sgl::geometry_type::INVALID);
 
-			// Try parse, if it fails, assign error message and return NULL
-			if (!sgl::ops::wkb_reader_try_parse(&reader, &geom)) {
-				const auto error = sgl::ops::wkb_reader_get_error_message(&reader);
-				if (success) {
-					success = false;
-					HandleCastError::AssignError(error, params.error_message);
-				}
-				mask.SetInvalid(row_idx);
-				return string_t {};
-			}
+			    // Try parse, if it fails, assign error message and return NULL
+			    if (!sgl::ops::wkb_reader_try_parse(&reader, &geom)) {
+				    const auto error = sgl::ops::wkb_reader_get_error_message(&reader);
+				    if (success) {
+					    success = false;
+					    HandleCastError::AssignError(error, params.error_message);
+				    }
+				    mask.SetInvalid(row_idx);
+				    return string_t {};
+			    }
 
-			return lstate.Serialize(result, geom);
-		});
+			    return lstate.Serialize(result, geom);
+		    });
 
 		return success;
 	}
@@ -195,8 +192,8 @@ struct GeometryCasts {
 		ExtensionUtil::RegisterCastFunction(db, geom_type, LogicalType::BLOB, DefaultCasts::ReinterpretCast);
 
 		// WKB -> Geometry is explicitly castable
-		ExtensionUtil::RegisterCastFunction( db, wkb_type, geom_type,
-			BoundCastInfo(FromWKBCast, nullptr, LocalState::InitCast));
+		ExtensionUtil::RegisterCastFunction(db, wkb_type, geom_type,
+		                                    BoundCastInfo(FromWKBCast, nullptr, LocalState::InitCast));
 
 		// WKB -> BLOB is implicitly castable
 		ExtensionUtil::RegisterCastFunction(db, wkb_type, LogicalType::BLOB, DefaultCasts::ReinterpretCast, 1);
@@ -226,9 +223,7 @@ struct PointCasts {
 
 		auto &lstate = LocalState::ResetAndGet(parameters);
 
-		GenericExecutor::ExecuteUnary<POINT_TYPE, GEOMETRY_TYPE>(source, result, count,
-			[&](const POINT_TYPE &point) {
-
+		GenericExecutor::ExecuteUnary<POINT_TYPE, GEOMETRY_TYPE>(source, result, count, [&](const POINT_TYPE &point) {
 			const double buffer[2] = {point.a_val, point.b_val};
 			auto geom = sgl::point::make_empty();
 			geom.set_type(sgl::geometry_type::POINT);
@@ -248,9 +243,7 @@ struct PointCasts {
 
 		auto &lstate = LocalState::ResetAndGet(parameters);
 
-		GenericExecutor::ExecuteUnary<GEOMETRY_TYPE, POINT_TYPE>(source, result, count,
-			[&](const GEOMETRY_TYPE &blob) {
-
+		GenericExecutor::ExecuteUnary<GEOMETRY_TYPE, POINT_TYPE>(source, result, count, [&](const GEOMETRY_TYPE &blob) {
 			const auto geom = lstate.Deserialize(blob.val);
 			if (geom.get_type() != sgl::geometry_type::POINT) {
 				throw ConversionException("Cannot cast non-point GEOMETRY to POINT_2D");
@@ -292,11 +285,14 @@ struct PointCasts {
 	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		// POINT_2D -> VARCHAR
-		ExtensionUtil::RegisterCastFunction(db, GeoTypes::POINT_2D(), LogicalType::VARCHAR, BoundCastInfo(ToVarcharCast), 1);
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::POINT_2D(), LogicalType::VARCHAR,
+		                                    BoundCastInfo(ToVarcharCast), 1);
 		// POINT_2D -> GEOMETRY
-		ExtensionUtil::RegisterCastFunction(db, GeoTypes::POINT_2D(), GeoTypes::GEOMETRY(), BoundCastInfo(ToGeometryCast, nullptr, LocalState::InitCast), 1);
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::POINT_2D(), GeoTypes::GEOMETRY(),
+		                                    BoundCastInfo(ToGeometryCast, nullptr, LocalState::InitCast), 1);
 		// GEOMETRY -> POINT_2D
-		ExtensionUtil::RegisterCastFunction(db, GeoTypes::GEOMETRY(), GeoTypes::POINT_2D(), BoundCastInfo(FromGeometryCast, nullptr, LocalState::InitCast), 1);
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::GEOMETRY(), GeoTypes::POINT_2D(),
+		                                    BoundCastInfo(FromGeometryCast, nullptr, LocalState::InitCast), 1);
 		// POINT_3D -> POINT_2D
 		ExtensionUtil::RegisterCastFunction(db, GeoTypes::POINT_3D(), GeoTypes::POINT_2D(), ToPoint2DCast, 1);
 		// POINT_4D -> POINT_2D
@@ -330,9 +326,7 @@ struct LinestringCasts {
 		const auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
 		const auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
 
-		UnaryExecutor::Execute<list_entry_t, string_t>(source, result, count,
-			[&](const list_entry_t &line) {
-
+		UnaryExecutor::Execute<list_entry_t, string_t>(source, result, count, [&](const list_entry_t &line) {
 			const auto vertex_data_mem = arena.AllocateAligned(sizeof(double) * 2 * line.length);
 			const auto vertex_data_ptr = reinterpret_cast<double *>(vertex_data_mem);
 
@@ -364,7 +358,6 @@ struct LinestringCasts {
 		idx_t total_coords = 0;
 
 		UnaryExecutor::Execute<string_t, list_entry_t>(source, result, count, [&](const string_t &blob) {
-
 			const auto line = lstate.Deserialize(blob);
 			if (line.get_type() != sgl::geometry_type::LINESTRING) {
 				// TODO: Dont throw here, return NULL instead to allow TRY_CAST
@@ -393,11 +386,14 @@ struct LinestringCasts {
 	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		// LINESTRING_2D -> VARCHAR
-		ExtensionUtil::RegisterCastFunction(db, GeoTypes::LINESTRING_2D(), LogicalType::VARCHAR, BoundCastInfo(ToVarcharCast), 1);
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::LINESTRING_2D(), LogicalType::VARCHAR,
+		                                    BoundCastInfo(ToVarcharCast), 1);
 		// LINESTRING_2D -> GEOMETRY
-		ExtensionUtil::RegisterCastFunction(db, GeoTypes::LINESTRING_2D(), GeoTypes::GEOMETRY(), BoundCastInfo(ToGeometryCast, nullptr, LocalState::InitCast), 1);
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::LINESTRING_2D(), GeoTypes::GEOMETRY(),
+		                                    BoundCastInfo(ToGeometryCast, nullptr, LocalState::InitCast), 1);
 		// GEOMETRY -> LINESTRING_2D
-		ExtensionUtil::RegisterCastFunction(db, GeoTypes::GEOMETRY(), GeoTypes::LINESTRING_2D(), BoundCastInfo(FromGeometryCast, nullptr, LocalState::InitCast), 1);
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::GEOMETRY(), GeoTypes::LINESTRING_2D(),
+		                                    BoundCastInfo(FromGeometryCast, nullptr, LocalState::InitCast), 1);
 	}
 };
 
@@ -473,7 +469,7 @@ struct PolygonCasts {
 			const auto poly = lstate.Deserialize(blob);
 
 			// TODO: Dont throw here, return NULL instead to allow TRY_CAST
-			if(poly.get_type() != sgl::geometry_type::POLYGON) {
+			if (poly.get_type() != sgl::geometry_type::POLYGON) {
 				throw ConversionException("Cannot cast non-polygon GEOMETRY to POLYGON_2D");
 			}
 
@@ -529,14 +525,16 @@ struct PolygonCasts {
 	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		// POLYGON_2D -> VARCHAR
-		ExtensionUtil::RegisterCastFunction(db, GeoTypes::POLYGON_2D(), LogicalType::VARCHAR, BoundCastInfo(ToVarcharCast), 1);
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::POLYGON_2D(), LogicalType::VARCHAR,
+		                                    BoundCastInfo(ToVarcharCast), 1);
 		// POLYGON_2D -> GEOMETRY
-		ExtensionUtil::RegisterCastFunction(db, GeoTypes::POLYGON_2D(), GeoTypes::GEOMETRY(), BoundCastInfo(ToGeometryCast, nullptr, LocalState::InitCast), 1);
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::POLYGON_2D(), GeoTypes::GEOMETRY(),
+		                                    BoundCastInfo(ToGeometryCast, nullptr, LocalState::InitCast), 1);
 		// GEOMETRY -> POLYGON_2D
-		ExtensionUtil::RegisterCastFunction(db, GeoTypes::GEOMETRY(), GeoTypes::POLYGON_2D(), BoundCastInfo(FromGeometryCast, nullptr, LocalState::InitCast), 1);
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::GEOMETRY(), GeoTypes::POLYGON_2D(),
+		                                    BoundCastInfo(FromGeometryCast, nullptr, LocalState::InitCast), 1);
 	}
 };
-
 
 //======================================================================================================================
 // BOX_2D Casts
@@ -596,18 +594,20 @@ struct BoxCasts {
 	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		// BOX_2D -> VARCHAR
-		ExtensionUtil::RegisterCastFunction(db, GeoTypes::BOX_2D(), LogicalType::VARCHAR, BoundCastInfo(ToVarcharCast), 1);
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::BOX_2D(), LogicalType::VARCHAR, BoundCastInfo(ToVarcharCast),
+		                                    1);
 
 		// BOX_2D -> GEOMETRY
-		ExtensionUtil::RegisterCastFunction(db, GeoTypes::BOX_2D(), GeoTypes::GEOMETRY(), BoundCastInfo(ToGeometryCast2D, nullptr, LocalState::InitCast), 1);
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::BOX_2D(), GeoTypes::GEOMETRY(),
+		                                    BoundCastInfo(ToGeometryCast2D, nullptr, LocalState::InitCast), 1);
 
 		// BOX_2F -> GEOMETRY
-		ExtensionUtil::RegisterCastFunction(db, GeoTypes::BOX_2DF(), GeoTypes::GEOMETRY(), BoundCastInfo(ToGeometryCast2F, nullptr, LocalState::InitCast), 1);
+		ExtensionUtil::RegisterCastFunction(db, GeoTypes::BOX_2DF(), GeoTypes::GEOMETRY(),
+		                                    BoundCastInfo(ToGeometryCast2F, nullptr, LocalState::InitCast), 1);
 	}
 };
 
 } // namespace
-
 
 //======================================================================================================================
 // Vector Operations

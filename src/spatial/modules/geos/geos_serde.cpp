@@ -10,9 +10,9 @@
 
 namespace duckdb {
 
-template<class T>
+template <class T>
 static T StorageTypeFromGEOS(int type) {
-	switch(type) {
+	switch (type) {
 	case GEOS_POINT:
 		return static_cast<T>(0);
 	case GEOS_LINESTRING:
@@ -36,26 +36,26 @@ static T StorageTypeFromGEOS(int type) {
 // Get Required Size
 //----------------------------------------------------------------------------------------------------------------------
 
-static size_t GetCoordSeqLength(const GEOSContextHandle_t ctx, const GEOSCoordSequence* seq) {
+static size_t GetCoordSeqLength(const GEOSContextHandle_t ctx, const GEOSCoordSequence *seq) {
 	uint32_t len = 0;
 	GEOSCoordSeq_getSize_r(ctx, seq, &len);
 	return len;
 }
 
-static size_t GetRequiredSizeInternal(const GEOSContextHandle_t ctx, const GEOSGeometry* geom) {
+static size_t GetRequiredSizeInternal(const GEOSContextHandle_t ctx, const GEOSGeometry *geom) {
 	const auto type = GEOSGeomTypeId_r(ctx, geom);
 	const bool has_z = GEOSHasZ_r(ctx, geom);
 	const bool has_m = GEOSHasM_r(ctx, geom);
 
 	const auto vsize = sizeof(double) * (2 + has_z + has_m);
 
-	switch(type) {
+	switch (type) {
 	case GEOS_POINT: {
 		return 4 + 4 + (GEOSisEmpty_r(ctx, geom) ? 0 : vsize);
 	}
 	case GEOS_LINESTRING: {
 		const auto line_seq = GEOSGeom_getCoordSeq_r(ctx, geom);
-		uint32_t   line_len = 0;
+		uint32_t line_len = 0;
 		GEOSCoordSeq_getSize_r(ctx, line_seq, &line_len);
 		return 4 + 4 + line_len * vsize;
 	}
@@ -72,21 +72,21 @@ static size_t GetRequiredSizeInternal(const GEOSContextHandle_t ctx, const GEOSG
 
 		const auto exterior_ptr = GEOSGetExteriorRing_r(ctx, geom);
 		const auto exterior_seq = GEOSGeom_getCoordSeq_r(ctx, exterior_ptr);
-		uint32_t   exterior_len = 0;
+		uint32_t exterior_len = 0;
 		GEOSCoordSeq_getSize_r(ctx, exterior_seq, &exterior_len);
 		size += 4 + exterior_len * vsize;
 
 		const auto num_rings = GEOSGetNumInteriorRings_r(ctx, geom);
-		for(auto i = 0; i < num_rings; i++) {
+		for (auto i = 0; i < num_rings; i++) {
 			const auto interior_ptr = GEOSGetInteriorRingN_r(ctx, geom, i);
 			const auto interior_seq = GEOSGeom_getCoordSeq_r(ctx, interior_ptr);
-			uint32_t   interior_len = 0;
+			uint32_t interior_len = 0;
 			GEOSCoordSeq_getSize_r(ctx, interior_seq, &interior_len);
 			size += 4 + interior_len * vsize;
 		}
 
 		// We need to count the shell as well
-		if((num_rings + 1) % 2 != 0) {
+		if ((num_rings + 1) % 2 != 0) {
 			size += 4;
 		}
 		return size;
@@ -97,10 +97,10 @@ static size_t GetRequiredSizeInternal(const GEOSContextHandle_t ctx, const GEOSG
 	case GEOS_GEOMETRYCOLLECTION: {
 		size_t size = 4 + 4;
 		const auto num_items = GEOSGetNumGeometries_r(ctx, geom);
-		for(auto i = 0; i < num_items; i++) {
+		for (auto i = 0; i < num_items; i++) {
 			const auto item = GEOSGetGeometryN_r(ctx, geom, i);
 			const auto item_size = GetRequiredSizeInternal(ctx, item);
-			if(item_size == 0) {
+			if (item_size == 0) {
 				// Unsupported geometry type
 				return 0;
 			}
@@ -110,7 +110,7 @@ static size_t GetRequiredSizeInternal(const GEOSContextHandle_t ctx, const GEOSG
 	}
 	default:
 		// Unsupported geometry type
-			return 0;
+		return 0;
 	}
 }
 
@@ -136,28 +136,27 @@ size_t GeosSerde::GetRequiredSize(GEOSContextHandle_t ctx, const GEOSGeom_t *geo
 	return full_size;
 }
 
-
 //----------------------------------------------------------------------------------------------------------------------
 // Serialization
 //----------------------------------------------------------------------------------------------------------------------
 
-
-static void SerializeCoordSeq(const GEOSContextHandle_t ctx, const GEOSCoordSequence* seq, bool has_z, bool has_m, size_t len, BinaryWriter &cursor) {
+static void SerializeCoordSeq(const GEOSContextHandle_t ctx, const GEOSCoordSequence *seq, bool has_z, bool has_m,
+                              size_t len, BinaryWriter &cursor) {
 	const auto buffer = cursor.Reserve(len * sizeof(double) * (2 + has_z + has_m));
 	GEOSCoordSeq_copyToBuffer_r(ctx, seq, reinterpret_cast<double *>(buffer), has_z, has_m);
 }
 
-static void SerializeInternal(const GEOSContextHandle_t ctx, const GEOSGeometry* geom, BinaryWriter &cursor) {
+static void SerializeInternal(const GEOSContextHandle_t ctx, const GEOSGeometry *geom, BinaryWriter &cursor) {
 	const auto type = GEOSGeomTypeId_r(ctx, geom);
 	const bool has_z = GEOSHasZ_r(ctx, geom);
 	const bool has_m = GEOSHasM_r(ctx, geom);
 
 	cursor.Write(StorageTypeFromGEOS<uint32_t>(type));
 
-	switch(type) {
+	switch (type) {
 	case GEOS_POINT:
 	case GEOS_LINESTRING: {
-		if(GEOSisEmpty_r(ctx, geom)) {
+		if (GEOSisEmpty_r(ctx, geom)) {
 			cursor.Write<uint32_t>(0);
 			return;
 		}
@@ -168,7 +167,7 @@ static void SerializeInternal(const GEOSContextHandle_t ctx, const GEOSGeometry*
 		return;
 	}
 	case GEOS_POLYGON: {
-		if(GEOSisEmpty_r(ctx, geom)) {
+		if (GEOSisEmpty_r(ctx, geom)) {
 			cursor.Write<uint32_t>(0);
 			return;
 		}
@@ -188,7 +187,7 @@ static void SerializeInternal(const GEOSContextHandle_t ctx, const GEOSGeometry*
 		cursor.Skip(sizeof(uint32_t) * (num_rings + 1));
 
 		// Add padding if odd number of rings
-		if((num_rings + 1) % 2 != 0) {
+		if ((num_rings + 1) % 2 != 0) {
 			cursor.Write<uint32_t>(0);
 		}
 
@@ -199,7 +198,7 @@ static void SerializeInternal(const GEOSContextHandle_t ctx, const GEOSGeometry*
 		SerializeCoordSeq(ctx, exterior_seq, has_z, has_m, exterior_len, cursor);
 
 		// And for each interior ring
-		for(auto i = 0; i < num_rings; i++) {
+		for (auto i = 0; i < num_rings; i++) {
 			const auto interior_ptr = GEOSGetInteriorRingN_r(ctx, geom, i);
 			const auto interior_seq = GEOSGeom_getCoordSeq_r(ctx, interior_ptr);
 			const auto interior_len = GetCoordSeqLength(ctx, interior_seq);
@@ -214,7 +213,7 @@ static void SerializeInternal(const GEOSContextHandle_t ctx, const GEOSGeometry*
 	case GEOS_GEOMETRYCOLLECTION: {
 		const auto num_items = GEOSGetNumGeometries_r(ctx, geom);
 		cursor.Write<uint32_t>(num_items);
-		for(auto i = 0; i < num_items; i++) {
+		for (auto i = 0; i < num_items; i++) {
 			const auto item = GEOSGetGeometryN_r(ctx, geom, i);
 			SerializeInternal(ctx, item, cursor);
 		}
@@ -226,7 +225,6 @@ static void SerializeInternal(const GEOSContextHandle_t ctx, const GEOSGeometry*
 		break;
 	}
 }
-
 
 namespace {
 
@@ -242,9 +240,10 @@ struct Extent {
 	Point max;
 };
 
-}
+} // namespace
 
-inline void GetCoordSeqExtent(const GEOSContextHandle_t ctx, const GEOSCoordSeq_t *geom, bool has_z, bool has_m, Extent &extent) {
+inline void GetCoordSeqExtent(const GEOSContextHandle_t ctx, const GEOSCoordSeq_t *geom, bool has_z, bool has_m,
+                              Extent &extent) {
 
 	double x;
 	double y;
@@ -253,7 +252,7 @@ inline void GetCoordSeqExtent(const GEOSContextHandle_t ctx, const GEOSCoordSeq_
 
 	const auto len = GetCoordSeqLength(ctx, geom);
 
-	for(size_t i = 0; i < len; i++) {
+	for (size_t i = 0; i < len; i++) {
 		GEOSCoordSeq_getXY_r(ctx, geom, i, &x, &y);
 		extent.min.x = std::min(extent.min.x, x);
 		extent.min.y = std::min(extent.min.y, y);
@@ -261,8 +260,8 @@ inline void GetCoordSeqExtent(const GEOSContextHandle_t ctx, const GEOSCoordSeq_
 		extent.max.y = std::max(extent.max.y, y);
 	}
 
-	if(has_z && has_m) {
-		for(size_t i = 0; i < len; i++) {
+	if (has_z && has_m) {
+		for (size_t i = 0; i < len; i++) {
 			GEOSCoordSeq_getZ_r(ctx, geom, i, &z);
 			GEOSCoordSeq_getOrdinate_r(ctx, geom, i, 3, &m);
 			extent.min.z = std::min(extent.min.z, z);
@@ -270,16 +269,14 @@ inline void GetCoordSeqExtent(const GEOSContextHandle_t ctx, const GEOSCoordSeq_
 			extent.max.z = std::max(extent.max.z, z);
 			extent.max.m = std::max(extent.max.m, m);
 		}
-	}
-	else if(has_z) {
-		for(size_t i = 0; i < len; i++) {
+	} else if (has_z) {
+		for (size_t i = 0; i < len; i++) {
 			GEOSCoordSeq_getZ_r(ctx, geom, i, &z);
 			extent.min.z = std::min(extent.min.z, z);
 			extent.max.z = std::max(extent.max.z, z);
 		}
-	}
-	else if (has_m) {
-		for(size_t i = 0; i < len; i++) {
+	} else if (has_m) {
+		for (size_t i = 0; i < len; i++) {
 			GEOSCoordSeq_getOrdinate_r(ctx, geom, i, 2, &m);
 			extent.min.m = std::min(extent.min.m, m);
 			extent.max.m = std::max(extent.max.m, m);
@@ -287,11 +284,12 @@ inline void GetCoordSeqExtent(const GEOSContextHandle_t ctx, const GEOSCoordSeq_
 	}
 }
 
-inline void GetGeometryExtent(const GEOSContextHandle_t ctx, const GEOSGeometry *geom, bool has_z, bool has_m, Extent &extent) {
-	switch(GEOSGeomTypeId_r(ctx, geom)) {
+inline void GetGeometryExtent(const GEOSContextHandle_t ctx, const GEOSGeometry *geom, bool has_z, bool has_m,
+                              Extent &extent) {
+	switch (GEOSGeomTypeId_r(ctx, geom)) {
 	case GEOS_POINT:
 	case GEOS_LINESTRING: {
-		if(GEOSisEmpty_r(ctx, geom)) {
+		if (GEOSisEmpty_r(ctx, geom)) {
 			return;
 		}
 		const auto seq = GEOSGeom_getCoordSeq_r(ctx, geom);
@@ -300,7 +298,7 @@ inline void GetGeometryExtent(const GEOSContextHandle_t ctx, const GEOSGeometry 
 	}
 	case GEOS_POLYGON: {
 		// We only need to check the exterior ring
-		if(GEOSisEmpty_r(ctx, geom)) {
+		if (GEOSisEmpty_r(ctx, geom)) {
 			return;
 		}
 		const auto exterior_ptr = GEOSGetExteriorRing_r(ctx, geom);
@@ -313,7 +311,7 @@ inline void GetGeometryExtent(const GEOSContextHandle_t ctx, const GEOSGeometry 
 	case GEOS_MULTIPOLYGON:
 	case GEOS_GEOMETRYCOLLECTION: {
 		const auto num_items = GEOSGetNumGeometries_r(ctx, geom);
-		for(auto i = 0; i < num_items; i++) {
+		for (auto i = 0; i < num_items; i++) {
 			const auto item = GEOSGetGeometryN_r(ctx, geom, i);
 			GetGeometryExtent(ctx, item, has_z, has_m, extent);
 		}
@@ -325,7 +323,8 @@ inline void GetGeometryExtent(const GEOSContextHandle_t ctx, const GEOSGeometry 
 	}
 }
 
-inline void SerializeExtent(const GEOSContextHandle_t ctx, const GEOSGeometry *geom, bool has_z, bool has_m, BinaryWriter &cursor) {
+inline void SerializeExtent(const GEOSContextHandle_t ctx, const GEOSGeometry *geom, bool has_z, bool has_m,
+                            BinaryWriter &cursor) {
 
 	Extent extent = {};
 	extent.min.x = std::numeric_limits<double>::max();
@@ -344,12 +343,12 @@ inline void SerializeExtent(const GEOSContextHandle_t ctx, const GEOSGeometry *g
 	cursor.Write<float>(MathUtil::DoubleToFloatUp(extent.max.x));
 	cursor.Write<float>(MathUtil::DoubleToFloatUp(extent.max.y));
 
-	if(has_z) {
+	if (has_z) {
 		cursor.Write<float>(MathUtil::DoubleToFloatDown(extent.min.z));
 		cursor.Write<float>(MathUtil::DoubleToFloatUp(extent.max.z));
 	}
 
-	if(has_m) {
+	if (has_m) {
 		cursor.Write<float>(MathUtil::DoubleToFloatDown(extent.min.m));
 		cursor.Write<float>(MathUtil::DoubleToFloatUp(extent.max.m));
 	}
@@ -376,17 +375,16 @@ void GeosSerde::Serialize(GEOSContextHandle_t ctx, const GEOSGeom_t *geom, char 
 
 	cursor.Write<uint8_t>(StorageTypeFromGEOS<uint8_t>(type));
 	cursor.Write<uint8_t>(flags);
-	cursor.Write<uint16_t>(0); //unused
-	cursor.Write<uint32_t>(0); //padding
+	cursor.Write<uint16_t>(0); // unused
+	cursor.Write<uint32_t>(0); // padding
 
-	if(has_bbox) {
+	if (has_bbox) {
 		SerializeExtent(ctx, geom, has_z, has_m, cursor);
 	}
 
 	// Serialize the geometry
 	SerializeInternal(ctx, geom, cursor);
 }
-
 
 //------------------------------------------------------------------------------
 // Deserialize
@@ -405,6 +403,7 @@ class GEOSDeserializer final : GeometryProcessor<GEOSGeometry *> {
 private:
 	GEOSContextHandle_t ctx;
 	vector<double> aligned_buffer;
+
 private:
 	GEOSCoordSeq_t *HandleVertexData(const VertexData &vertices) {
 		auto n_dims = 2 + (HasZ() ? 1 : 0) + (HasM() ? 1 : 0);
@@ -503,12 +502,12 @@ public:
 	virtual ~GEOSDeserializer() {
 	}
 
-	GEOSGeom_t * Execute(const geometry_t &geom) {
-		return  Process(geom);
+	GEOSGeom_t *Execute(const geometry_t &geom) {
+		return Process(geom);
 	}
 };
 
-}
+} // namespace
 
 GEOSGeom_t *GeosSerde::Deserialize(GEOSContextHandle_t ctx, const char *buffer, size_t buffer_size) {
 	geometry_t blob(string_t(buffer, buffer_size));
@@ -516,4 +515,4 @@ GEOSGeom_t *GeosSerde::Deserialize(GEOSContextHandle_t ctx, const char *buffer, 
 	return deserializer.Execute(blob);
 }
 
-}
+} // namespace duckdb

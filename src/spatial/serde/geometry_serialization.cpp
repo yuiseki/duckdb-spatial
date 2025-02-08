@@ -328,5 +328,4 @@ void Serde::Deserialize(sgl::geometry &result, ArenaAllocator &arena, const char
 	DeserializeRecursive(cursor, result, has_z, has_m, arena);
 }
 
-
 } // namespace duckdb

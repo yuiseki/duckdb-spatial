@@ -63,4 +63,4 @@ private:
 	char *ptr;
 };
 
-}
+} // namespace duckdb

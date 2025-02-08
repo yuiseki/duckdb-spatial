@@ -6,4 +6,4 @@ class DatabaseInstance;
 
 void RegisterGEOSModule(DatabaseInstance &db);
 
-};
+}; // namespace duckdb

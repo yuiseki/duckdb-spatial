@@ -1,5 +1,3 @@
 #include "spatial/modules/main/functions.hpp"
 
-namespace duckdb {
-
-} // namespace duckdb
+namespace duckdb {} // namespace duckdb

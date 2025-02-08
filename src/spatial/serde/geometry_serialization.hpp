@@ -17,4 +17,4 @@ struct Serde {
 	static void Deserialize(sgl::geometry &result, ArenaAllocator &arena, const char *buffer, size_t buffer_size);
 };
 
-}
+} // namespace duckdb

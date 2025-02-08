@@ -396,7 +396,6 @@ public:
 	}
 };
 
-
 //######################################################################################################################
 // Context State
 //######################################################################################################################
@@ -407,6 +406,7 @@ class GDALClientContextState final : public ClientContextState {
 	ClientContext &context;
 	string client_prefix;
 	DuckDBFileSystemHandler *fs_handler;
+
 public:
 	explicit GDALClientContextState(ClientContext &context);
 	~GDALClientContextState() override;
@@ -414,7 +414,6 @@ public:
 	string GetPrefix(const string &value) const;
 	static GDALClientContextState &GetOrCreate(ClientContext &context);
 };
-
 
 GDALClientContextState::GDALClientContextState(ClientContext &context) : context(context) {
 
@@ -458,8 +457,6 @@ GDALClientContextState &GDALClientContextState::GetOrCreate(ClientContext &conte
 	return *gdal_state;
 }
 
-
-
 //######################################################################################################################
 // Functions
 //######################################################################################################################
@@ -483,7 +480,8 @@ struct ST_Read : ArrowTableFunction {
 	struct RectangleSpatialFilter : SpatialFilter {
 		double min_x, min_y, max_x, max_y;
 		RectangleSpatialFilter(double min_x_p, double min_y_p, double max_x_p, double max_y_p)
-			: SpatialFilter(SpatialFilterType::Rectangle), min_x(min_x_p), min_y(min_y_p), max_x(max_x_p), max_y(max_y_p) {
+		    : SpatialFilter(SpatialFilterType::Rectangle), min_x(min_x_p), min_y(min_y_p), max_x(max_x_p),
+		      max_y(max_y_p) {
 		}
 	};
 
@@ -539,7 +537,7 @@ struct ST_Read : ArrowTableFunction {
 	};
 
 	static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &input,
-										 vector<LogicalType> &return_types, vector<string> &names) {
+	                                     vector<LogicalType> &return_types, vector<string> &names) {
 
 		// Result
 		auto result = make_uniq<BindData>();
@@ -699,7 +697,6 @@ struct ST_Read : ArrowTableFunction {
 			throw IOException("Could not get arrow schema from layer");
 		}
 
-
 		// The Arrow API will return attributes in this order
 		// 1. FID column
 		// 2. all ogr field attributes
@@ -804,9 +801,9 @@ struct ST_Read : ArrowTableFunction {
 	static unique_ptr<GlobalTableFunctionState> InitGlobal(ClientContext &context, TableFunctionInitInput &input) {
 		auto &data = input.bind_data->Cast<BindData>();
 
-		auto dataset = GDALDatasetUniquePtr(
-		    GDALDataset::Open(data.prefixed_file_name.c_str(), GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR | GDAL_OF_READONLY,
-		                      data.dataset_allowed_drivers, data.dataset_open_options, data.dataset_sibling_files));
+		auto dataset = GDALDatasetUniquePtr(GDALDataset::Open(
+		    data.prefixed_file_name.c_str(), GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR | GDAL_OF_READONLY,
+		    data.dataset_allowed_drivers, data.dataset_open_options, data.dataset_sibling_files));
 		if (dataset == nullptr) {
 			const auto error = string(CPLGetLastErrorMsg());
 			throw IOException("Could not open file: " + data.raw_file_name + " (" + error + ")");
@@ -835,7 +832,7 @@ struct ST_Read : ArrowTableFunction {
 			// Otherwise get the layer directly
 			layer = gstate.dataset->GetLayer(data.layer_idx);
 		}
-		if(!layer) {
+		if (!layer) {
 			throw IOException("Could not get layer");
 		}
 
@@ -881,8 +878,8 @@ struct ST_Read : ArrowTableFunction {
 		sgl::ops::wkb_reader wkb_reader = {};
 
 		explicit LocalState(unique_ptr<ArrowArrayWrapper> current_chunk, ClientContext &context)
-			: ArrowScanLocalState(std::move(current_chunk), context),
-		arena(BufferAllocator::Get(context)), alloc(arena) {
+		    : ArrowScanLocalState(std::move(current_chunk), context), arena(BufferAllocator::Get(context)),
+		      alloc(arena) {
 
 			// Setup WKB reader
 			wkb_reader.copy_vertices = false;
@@ -901,7 +898,6 @@ struct ST_Read : ArrowTableFunction {
 			arena.Reset();
 
 			UnaryExecutor::Execute<string_t, string_t>(source, target, count, [&](const string_t &wkb) {
-
 				wkb_reader.buf = wkb.GetDataUnsafe();
 				wkb_reader.end = wkb_reader.buf + wkb.GetSize();
 
@@ -928,7 +924,7 @@ struct ST_Read : ArrowTableFunction {
 	};
 
 	static unique_ptr<LocalTableFunctionState> InitLocal(ExecutionContext &context, TableFunctionInitInput &input,
-		GlobalTableFunctionState *gstate_p) {
+	                                                     GlobalTableFunctionState *gstate_p) {
 
 		auto &gstate = gstate_p->Cast<ArrowScanGlobalState>();
 		auto current_chunk = make_uniq<ArrowArrayWrapper>();
@@ -973,11 +969,13 @@ struct ST_Read : ArrowTableFunction {
 		if (gstate.CanRemoveFilterColumns()) {
 			state.all_columns.Reset();
 			state.all_columns.SetCardinality(output_size);
-			ArrowTableFunction::ArrowToDuckDB(state, data.arrow_table.GetColumns(), state.all_columns, gstate.lines_read - output_size, false);
+			ArrowTableFunction::ArrowToDuckDB(state, data.arrow_table.GetColumns(), state.all_columns,
+			                                  gstate.lines_read - output_size, false);
 			output.ReferenceColumns(state.all_columns, gstate.projection_ids);
 		} else {
 			output.SetCardinality(output_size);
-			ArrowTableFunction::ArrowToDuckDB(state, data.arrow_table.GetColumns(), output, gstate.lines_read - output_size, false);
+			ArrowTableFunction::ArrowToDuckDB(state, data.arrow_table.GetColumns(), output,
+			                                  gstate.lines_read - output_size, false);
 		}
 
 		if (!data.keep_wkb) {
@@ -1018,7 +1016,7 @@ struct ST_Read : ArrowTableFunction {
 	// Replacement Scan
 	//------------------------------------------------------------------------------------------------------------------
 	static unique_ptr<TableRef> ReplacementScan(ClientContext &, ReplacementScanInput &input,
-														optional_ptr<ReplacementScanData>) {
+	                                            optional_ptr<ReplacementScanData>) {
 		auto &table_name = input.table_name;
 		auto lower_name = StringUtil::Lower(table_name);
 		// Check if the table name ends with some common geospatial file extensions
@@ -1090,8 +1088,7 @@ struct ST_Read : ArrowTableFunction {
 	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		TableFunctionSet set("ST_Read");
-		TableFunction scan({LogicalType::VARCHAR}, Execute, Bind,
-						   InitGlobal, InitLocal);
+		TableFunction scan({LogicalType::VARCHAR}, Execute, Bind, InitGlobal, InitLocal);
 
 		scan.cardinality = Cardinality;
 		scan.get_partition_data = ArrowTableFunction::ArrowGetPartitionData;
@@ -1121,34 +1118,34 @@ struct ST_Read : ArrowTableFunction {
 // ST_Read_Meta
 //======================================================================================================================
 const auto GEOMETRY_FIELD_TYPE = LogicalType::STRUCT({
-	{"name", LogicalType::VARCHAR},
-	{"type", LogicalType::VARCHAR},
-	{"nullable", LogicalType::BOOLEAN},
-	{"crs", LogicalType::STRUCT({
-		{"name", LogicalType::VARCHAR},
-		{"auth_name", LogicalType::VARCHAR},
-		{"auth_code", LogicalType::VARCHAR},
-		{"wkt", LogicalType::VARCHAR},
-		{"proj4", LogicalType::VARCHAR},
-		{"projjson", LogicalType::VARCHAR},
-	})},
+    {"name", LogicalType::VARCHAR},
+    {"type", LogicalType::VARCHAR},
+    {"nullable", LogicalType::BOOLEAN},
+    {"crs", LogicalType::STRUCT({
+                {"name", LogicalType::VARCHAR},
+                {"auth_name", LogicalType::VARCHAR},
+                {"auth_code", LogicalType::VARCHAR},
+                {"wkt", LogicalType::VARCHAR},
+                {"proj4", LogicalType::VARCHAR},
+                {"projjson", LogicalType::VARCHAR},
+            })},
 });
 
 const auto STANDARD_FIELD_TYPE = LogicalType::STRUCT({
-	{"name", LogicalType::VARCHAR},
-	{"type", LogicalType::VARCHAR},
-	{"subtype", LogicalType::VARCHAR},
-	{"nullable", LogicalType::BOOLEAN},
-	{"unique", LogicalType::BOOLEAN},
-	{"width", LogicalType::BIGINT},
-	{"precision", LogicalType::BIGINT},
+    {"name", LogicalType::VARCHAR},
+    {"type", LogicalType::VARCHAR},
+    {"subtype", LogicalType::VARCHAR},
+    {"nullable", LogicalType::BOOLEAN},
+    {"unique", LogicalType::BOOLEAN},
+    {"width", LogicalType::BIGINT},
+    {"precision", LogicalType::BIGINT},
 });
 
 const auto LAYER_TYPE = LogicalType::STRUCT({
-	{"name", LogicalType::VARCHAR},
-	{"feature_count", LogicalType::BIGINT},
-	{"geometry_fields", LogicalType::LIST(GEOMETRY_FIELD_TYPE)},
-	{"fields", LogicalType::LIST(STANDARD_FIELD_TYPE)},
+    {"name", LogicalType::VARCHAR},
+    {"feature_count", LogicalType::BIGINT},
+    {"geometry_fields", LogicalType::LIST(GEOMETRY_FIELD_TYPE)},
+    {"fields", LogicalType::LIST(STANDARD_FIELD_TYPE)},
 });
 
 struct ST_Read_Meta {
@@ -1159,11 +1156,12 @@ struct ST_Read_Meta {
 	struct BindData final : TableFunctionData {
 		vector<string> file_names;
 
-		explicit BindData(vector<string> file_names_p) : file_names(std::move(file_names_p)) { }
+		explicit BindData(vector<string> file_names_p) : file_names(std::move(file_names_p)) {
+		}
 	};
 
 	static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &input,
-										 vector<LogicalType> &return_types, vector<string> &names) {
+	                                     vector<LogicalType> &return_types, vector<string> &names) {
 
 		names.push_back("file_name");
 		return_types.push_back(LogicalType::VARCHAR);
@@ -1190,7 +1188,8 @@ struct ST_Read_Meta {
 	//------------------------------------------------------------------------------------------------------------------
 	struct State final : GlobalTableFunctionState {
 		idx_t current_idx;
-		explicit State() : current_idx(0) { }
+		explicit State() : current_idx(0) {
+		}
 	};
 
 	static unique_ptr<GlobalTableFunctionState> Init(ClientContext &context, TableFunctionInitInput &input) {
@@ -1255,7 +1254,8 @@ struct ST_Read_Meta {
 				child_list_t<Value> standard_field_value_fields;
 				standard_field_value_fields.emplace_back("name", Value(field->GetNameRef()));
 				standard_field_value_fields.emplace_back("type", Value(OGR_GetFieldTypeName(field->GetType())));
-				standard_field_value_fields.emplace_back("subtype", Value(OGR_GetFieldSubTypeName(field->GetSubType())));
+				standard_field_value_fields.emplace_back("subtype",
+				                                         Value(OGR_GetFieldSubTypeName(field->GetSubType())));
 				standard_field_value_fields.emplace_back("nullable", Value(field->IsNullable()));
 				standard_field_value_fields.emplace_back("unique", Value(field->IsUnique()));
 				standard_field_value_fields.emplace_back("width", Value(field->GetWidth()));
@@ -1283,7 +1283,7 @@ struct ST_Read_Meta {
 			GDALDatasetUniquePtr dataset;
 			try {
 				dataset = GDALDatasetUniquePtr(
-					GDALDataset::Open(prefixed_file_name.c_str(), GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR));
+				    GDALDataset::Open(prefixed_file_name.c_str(), GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR));
 			} catch (...) {
 				// Just skip anything we cant open
 				out_idx--;
@@ -1329,7 +1329,6 @@ struct ST_Read_Meta {
 	}
 };
 
-
 //======================================================================================================================
 // ST_Drivers
 //======================================================================================================================
@@ -1341,11 +1340,12 @@ struct ST_Drivers {
 	//------------------------------------------------------------------------------------------------------------------
 	struct BindData final : TableFunctionData {
 		idx_t driver_count;
-		explicit BindData(const idx_t driver_count_p) : driver_count(driver_count_p) { }
+		explicit BindData(const idx_t driver_count_p) : driver_count(driver_count_p) {
+		}
 	};
 
 	static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &input,
-		vector<LogicalType> &return_types, vector<string> &names) {
+	                                     vector<LogicalType> &return_types, vector<string> &names) {
 
 		return_types.emplace_back(LogicalType::VARCHAR);
 		return_types.emplace_back(LogicalType::VARCHAR);
@@ -1368,7 +1368,8 @@ struct ST_Drivers {
 	//------------------------------------------------------------------------------------------------------------------
 	struct State final : GlobalTableFunctionState {
 		idx_t current_idx;
-		explicit State() : current_idx(0) { }
+		explicit State() : current_idx(0) {
+		}
 	};
 
 	static unique_ptr<GlobalTableFunctionState> Init(ClientContext &context, TableFunctionInitInput &input) {
@@ -1379,7 +1380,7 @@ struct ST_Drivers {
 	// Execute
 	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(ClientContext &context, TableFunctionInput &input, DataChunk &output) {
-		auto &state =input.global_state->Cast<State>();
+		auto &state = input.global_state->Cast<State>();
 		auto &bind_data = input.bind_data->Cast<BindData>();
 
 		idx_t count = 0;
@@ -1406,8 +1407,8 @@ struct ST_Drivers {
 
 			auto help_topic_flag = GDALGetDriverHelpTopic(driver);
 			auto help_topic_value = help_topic_flag == nullptr
-										? Value(LogicalType::VARCHAR)
-										: Value(StringUtil::Format("https://gdal.org/%s", help_topic_flag));
+			                            ? Value(LogicalType::VARCHAR)
+			                            : Value(StringUtil::Format("https://gdal.org/%s", help_topic_flag));
 
 			output.data[0].SetValue(count, short_name);
 			output.data[1].SetValue(count, long_name);
@@ -1426,7 +1427,7 @@ struct ST_Drivers {
 
 	// static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}};
 
-	static constexpr auto DESCRIPTION  = R"(
+	static constexpr auto DESCRIPTION = R"(
 		Returns the list of supported GDAL drivers and file formats
 
 		Note that far from all of these drivers have been tested properly.
@@ -1447,7 +1448,6 @@ struct ST_Drivers {
 		ExtensionUtil::RegisterFunction(db, func);
 	}
 };
-
 
 //======================================================================================================================
 // ST_Write
@@ -1473,13 +1473,13 @@ struct ST_Write {
 		OGRwkbGeometryType geometry_type = wkbUnknown;
 
 		BindData(string file_path, vector<LogicalType> field_sql_types, vector<string> field_names)
-			: file_path(std::move(file_path)), field_sql_types(std::move(field_sql_types)),
-			  field_names(std::move(field_names)) {
+		    : file_path(std::move(file_path)), field_sql_types(std::move(field_sql_types)),
+		      field_names(std::move(field_names)) {
 		}
 	};
 
-	static unique_ptr<FunctionData> Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<string> &names,
-                                     const vector<LogicalType> &sql_types) {
+	static unique_ptr<FunctionData> Bind(ClientContext &context, CopyFunctionBindInput &input,
+	                                     const vector<string> &names, const vector<LogicalType> &sql_types) {
 
 		auto bind_data = make_uniq<BindData>(input.info.file_path, sql_types, names);
 
@@ -1537,10 +1537,10 @@ struct ST_Write {
 					} else if (StringUtil::CIEquals(type, "GEOMETRYCOLLECTION")) {
 						bind_data->geometry_type = wkbGeometryCollection;
 					} else {
-						throw BinderException(
-						    "Unknown geometry type '%s', expected one of 'POINT', 'LINESTRING', 'POLYGON', 'MULTIPOINT', "
-						    "'MULTILINESTRING', 'MULTIPOLYGON', 'GEOMETRYCOLLECTION'",
-						    type);
+						throw BinderException("Unknown geometry type '%s', expected one of 'POINT', 'LINESTRING', "
+						                      "'POLYGON', 'MULTIPOINT', "
+						                      "'MULTILINESTRING', 'MULTIPOLYGON', 'GEOMETRYCOLLECTION'",
+						                      type);
 					}
 				} else {
 					throw BinderException("Geometry type must be a string");
@@ -1606,13 +1606,12 @@ struct ST_Write {
 		vector<unique_ptr<OGRFieldDefn>> field_defs;
 
 		GlobalState(GDALDatasetUniquePtr dataset, OGRLayer *layer, vector<unique_ptr<OGRFieldDefn>> field_defs)
-			: dataset(std::move(dataset)), layer(layer), field_defs(std::move(field_defs)) {
+		    : dataset(std::move(dataset)), layer(layer), field_defs(std::move(field_defs)) {
 		}
 	};
 
 	static bool IsGeometryType(const LogicalType &type) {
-		return type == GeoTypes::WKB_BLOB() || type == GeoTypes::POINT_2D() ||
-			   type == GeoTypes::GEOMETRY();
+		return type == GeoTypes::WKB_BLOB() || type == GeoTypes::POINT_2D() || type == GeoTypes::GEOMETRY();
 	}
 
 	static unique_ptr<OGRFieldDefn> OGRFieldTypeFromLogicalType(const string &name, const LogicalType &type) {
@@ -1699,7 +1698,6 @@ struct ST_Write {
 		}
 	}
 
-
 	static unique_ptr<GlobalFunctionData> InitGlobal(ClientContext &context, FunctionData &bind_data,
 	                                                 const string &file_path) {
 
@@ -1759,7 +1757,6 @@ struct ST_Write {
 		return std::move(global_data);
 	}
 
-
 	//------------------------------------------------------------------------------------------------------------------
 	// Local State
 	//------------------------------------------------------------------------------------------------------------------
@@ -1774,11 +1771,11 @@ struct ST_Write {
 		return std::move(local_data);
 	}
 
-
 	//------------------------------------------------------------------------------------------------------------------
 	// Sink
 	//------------------------------------------------------------------------------------------------------------------
-	static OGRGeometryUniquePtr OGRGeometryFromValue(const LogicalType &type, const Value &value, ArenaAllocator &arena) {
+	static OGRGeometryUniquePtr OGRGeometryFromValue(const LogicalType &type, const Value &value,
+	                                                 ArenaAllocator &arena) {
 		if (value.IsNull()) {
 			return nullptr;
 		}
@@ -1788,7 +1785,7 @@ struct ST_Write {
 			OGRGeometry *ptr;
 			size_t consumed;
 			const auto ok = OGRGeometryFactory::createFromWkb(str.GetDataUnsafe(), nullptr, &ptr, str.GetSize(),
-				wkbVariantIso,consumed);
+			                                                  wkbVariantIso, consumed);
 
 			if (ok != OGRERR_NONE) {
 				throw IOException("Could not parse WKB");
@@ -1934,8 +1931,8 @@ struct ST_Write {
 		}
 	}
 
-	static void Sink(ExecutionContext &context, FunctionData &bdata, GlobalFunctionData &gstate, LocalFunctionData &lstate,
-	                 DataChunk &input) {
+	static void Sink(ExecutionContext &context, FunctionData &bdata, GlobalFunctionData &gstate,
+	                 LocalFunctionData &lstate, DataChunk &input) {
 
 		auto &bind_data = bdata.Cast<BindData>();
 		auto &global_state = gstate.Cast<GlobalState>();
@@ -1962,12 +1959,13 @@ struct ST_Write {
 					auto geom = OGRGeometryFromValue(type, value, local_state.arena);
 					if (geom && bind_data.geometry_type != wkbUnknown &&
 					    geom->getGeometryType() != bind_data.geometry_type) {
-						auto got_name =
-						    StringUtil::Replace(StringUtil::Upper(OGRGeometryTypeToName(geom->getGeometryType())), " ", "");
-						auto expected_name =
-						    StringUtil::Replace(StringUtil::Upper(OGRGeometryTypeToName(bind_data.geometry_type)), " ", "");
-						throw InvalidInputException("Expected all geometries to be of type '%s', but got one of type '%s'",
-						                            expected_name, got_name);
+						auto got_name = StringUtil::Replace(
+						    StringUtil::Upper(OGRGeometryTypeToName(geom->getGeometryType())), " ", "");
+						auto expected_name = StringUtil::Replace(
+						    StringUtil::Upper(OGRGeometryTypeToName(bind_data.geometry_type)), " ", "");
+						throw InvalidInputException(
+						    "Expected all geometries to be of type '%s', but got one of type '%s'", expected_name,
+						    got_name);
 					}
 
 					if (feature->SetGeometry(geom.get()) != OGRERR_NONE) {
@@ -1988,8 +1986,7 @@ struct ST_Write {
 	// Combine
 	//------------------------------------------------------------------------------------------------------------------
 	static void Combine(ExecutionContext &context, FunctionData &bind_data, GlobalFunctionData &gstate,
-						LocalFunctionData &lstate) {
-
+	                    LocalFunctionData &lstate) {
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -2018,7 +2015,6 @@ struct ST_Write {
 };
 
 } // namespace
-
 
 //######################################################################################################################
 // Register Module
@@ -2070,7 +2066,6 @@ void RegisterGDALModule(DatabaseInstance &db) {
 			}
 		});
 	});
-
 
 	ST_Read::Register(db);
 	ST_Read_Meta::Register(db);

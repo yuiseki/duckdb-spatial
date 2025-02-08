@@ -191,5 +191,4 @@ const_data_ptr_t WKBWriter::Write(const string_t &geometry, uint32_t *size, Aren
 	return WKBWriter::Write(geom, size, allocator);
 }
 
-
 } // namespace duckdb

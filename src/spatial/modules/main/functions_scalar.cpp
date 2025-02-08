@@ -3778,7 +3778,7 @@ struct ST_GeomFromWKB {
 				throw InvalidInputException("Could not parse WKB input: %s", error);
 			}
 
-			if(reader.has_mixed_zm) {
+			if (reader.has_mixed_zm) {
 				sgl::ops::force_zm(alloc, &geom, reader.has_any_z, reader.has_any_m, 0, 0);
 			}
 

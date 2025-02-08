@@ -18,16 +18,19 @@ namespace {
 
 class LocalState final : public FunctionLocalState {
 public:
-	static unique_ptr<FunctionLocalState> Init(ExpressionState &state, const BoundFunctionExpression &expr, FunctionData *bind_data) {
+	static unique_ptr<FunctionLocalState> Init(ExpressionState &state, const BoundFunctionExpression &expr,
+	                                           FunctionData *bind_data) {
 		return make_uniq<LocalState>(state.GetContext());
 	}
 
-	static LocalState& ResetAndGet(ExpressionState &state) {
+	static LocalState &ResetAndGet(ExpressionState &state) {
 		auto &local_state = ExecuteFunctionState::GetFunctionState(state)->Cast<LocalState>();
 		return local_state;
 	}
 
-	GEOSContextHandle_t GetContext() const { return ctx; }
+	GEOSContextHandle_t GetContext() const {
+		return ctx;
+	}
 
 	GeosGeometry Deserialize(const string_t &blob) const;
 	string_t Serialize(Vector &result, const GeosGeometry &geom) const;
@@ -35,14 +38,14 @@ public:
 	explicit LocalState(ClientContext &context) {
 		ctx = GEOS_init_r();
 
-		GEOSContext_setErrorMessageHandler_r(ctx, [](const char *message, void *) {
-			throw InvalidInputException(message);
-		}, nullptr);
+		GEOSContext_setErrorMessageHandler_r(
+		    ctx, [](const char *message, void *) { throw InvalidInputException(message); }, nullptr);
 	}
 
 	~LocalState() override {
 		GEOS_finish_r(ctx);
 	}
+
 private:
 	GEOSContextHandle_t ctx;
 };
@@ -70,7 +73,7 @@ GeosGeometry LocalState::Deserialize(const string_t &blob) const {
 
 	const auto geom = GeosSerde::Deserialize(ctx, blob_ptr, blob_len);
 
-	if(geom == nullptr) {
+	if (geom == nullptr) {
 		throw InvalidInputException("Could not deserialize geometry");
 	}
 
@@ -85,7 +88,7 @@ GeosGeometry LocalState::Deserialize(const string_t &blob) const {
 
 namespace {
 
-template<class IMPL, class RETURN_TYPE = bool>
+template <class IMPL, class RETURN_TYPE = bool>
 class SymmetricPreparedBinaryFunction {
 public:
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -94,10 +97,12 @@ public:
 		auto &lhs_vec = args.data[0];
 		auto &rhs_vec = args.data[1];
 
-		const auto lhs_is_const = lhs_vec.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(lhs_vec);
-		const auto rhs_is_const = rhs_vec.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(rhs_vec);
+		const auto lhs_is_const =
+		    lhs_vec.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(lhs_vec);
+		const auto rhs_is_const =
+		    rhs_vec.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(rhs_vec);
 
-		if(lhs_is_const && rhs_is_const) {
+		if (lhs_is_const && rhs_is_const) {
 			// Both are const, just execute once
 			result.SetVectorType(VectorType::CONSTANT_VECTOR);
 			const auto &lhs_blob = ConstantVector::GetData<string_t>(lhs_vec)[0];
@@ -106,7 +111,7 @@ public:
 			const auto rhs_geom = lstate.Deserialize(rhs_blob);
 			ConstantVector::GetData<RETURN_TYPE>(result)[0] = IMPL::ExecutePredicateNormal(lhs_geom, rhs_geom);
 
-		} else if(lhs_is_const != rhs_is_const) {
+		} else if (lhs_is_const != rhs_is_const) {
 			// One of the two is const, prepare the const one and execute on the non-const one
 			auto &const_vec = lhs_is_const ? lhs_vec : rhs_vec;
 			auto &probe_vec = lhs_is_const ? rhs_vec : lhs_vec;
@@ -115,24 +120,24 @@ public:
 			const auto const_geom = lstate.Deserialize(const_blob);
 			const auto const_prep = const_geom.get_prepared();
 
-			UnaryExecutor::Execute<string_t, RETURN_TYPE>(probe_vec, result, args.size(),
-				[&](const string_t &probe_blob) {
-					const auto probe_geom = lstate.Deserialize(probe_blob);
-					return IMPL::ExecutePredicatePrepared(const_prep, probe_geom);
-				});
+			UnaryExecutor::Execute<string_t, RETURN_TYPE>(
+			    probe_vec, result, args.size(), [&](const string_t &probe_blob) {
+				    const auto probe_geom = lstate.Deserialize(probe_blob);
+				    return IMPL::ExecutePredicatePrepared(const_prep, probe_geom);
+			    });
 		} else {
 			// Both are non-const, just execute normally
-			BinaryExecutor::Execute<string_t, string_t, RETURN_TYPE>(lhs_vec, rhs_vec, result, args.size(),
-				[&](const string_t &lhs_blob, const string_t &rhs_blob) {
-					const auto lhs = lstate.Deserialize(lhs_blob);
-					const auto rhs = lstate.Deserialize(rhs_blob);
-					return IMPL::ExecutePredicateNormal(lhs, rhs);
-				});
+			BinaryExecutor::Execute<string_t, string_t, RETURN_TYPE>(
+			    lhs_vec, rhs_vec, result, args.size(), [&](const string_t &lhs_blob, const string_t &rhs_blob) {
+				    const auto lhs = lstate.Deserialize(lhs_blob);
+				    const auto rhs = lstate.Deserialize(rhs_blob);
+				    return IMPL::ExecutePredicateNormal(lhs, rhs);
+			    });
 		}
 	}
 };
 
-template<class IMPL, class RETURN_TYPE = bool>
+template <class IMPL, class RETURN_TYPE = bool>
 class AsymmetricPreparedBinaryFunction {
 public:
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -141,10 +146,12 @@ public:
 		auto &lhs_vec = args.data[0];
 		auto &rhs_vec = args.data[1];
 
-		const auto lhs_is_const = lhs_vec.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(lhs_vec);
-		const auto rhs_is_const = rhs_vec.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(rhs_vec);
+		const auto lhs_is_const =
+		    lhs_vec.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(lhs_vec);
+		const auto rhs_is_const =
+		    rhs_vec.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(rhs_vec);
 
-		if(lhs_is_const && rhs_is_const) {
+		if (lhs_is_const && rhs_is_const) {
 			// Both are const, just execute once
 			result.SetVectorType(VectorType::CONSTANT_VECTOR);
 			const auto &lhs_blob = ConstantVector::GetData<string_t>(lhs_vec)[0];
@@ -153,33 +160,30 @@ public:
 			const auto rhs_geom = lstate.Deserialize(rhs_blob);
 			ConstantVector::GetData<RETURN_TYPE>(result)[0] = IMPL::ExecutePredicateNormal(lhs_geom, rhs_geom);
 
-		}
-		else if (lhs_is_const) {
+		} else if (lhs_is_const) {
 			// Prepare the left const and run on the non-const right
 			// Because this predicate is not symmetric, we can't just swap the two, so we only prepare the left
 			const auto lhs_blob = ConstantVector::GetData<string_t>(lhs_vec)[0];
 			const auto lhs_geom = lstate.Deserialize(lhs_blob);
 			const auto lhs_prep = lhs_geom.get_prepared();
 
-			UnaryExecutor::Execute<string_t, RETURN_TYPE>(rhs_vec, result, args.size(),
-				[&](const string_t &rhs_blob) {
-					const auto rhs_geom = lstate.Deserialize(rhs_blob);
-					return IMPL::ExecutePredicatePrepared(lhs_prep, rhs_geom);
-				});
-		}
-		else {
+			UnaryExecutor::Execute<string_t, RETURN_TYPE>(rhs_vec, result, args.size(), [&](const string_t &rhs_blob) {
+				const auto rhs_geom = lstate.Deserialize(rhs_blob);
+				return IMPL::ExecutePredicatePrepared(lhs_prep, rhs_geom);
+			});
+		} else {
 			// Both are non-const, just execute normally
-			BinaryExecutor::Execute<string_t, string_t, RETURN_TYPE>(lhs_vec, rhs_vec, result, args.size(),
-				[&](const string_t &lhs_blob, const string_t &rhs_blob) {
-					const auto lhs = lstate.Deserialize(lhs_blob);
-					const auto rhs = lstate.Deserialize(rhs_blob);
-					return IMPL::ExecutePredicateNormal(lhs, rhs);
-				});
+			BinaryExecutor::Execute<string_t, string_t, RETURN_TYPE>(
+			    lhs_vec, rhs_vec, result, args.size(), [&](const string_t &lhs_blob, const string_t &rhs_blob) {
+				    const auto lhs = lstate.Deserialize(lhs_blob);
+				    const auto rhs = lstate.Deserialize(rhs_blob);
+				    return IMPL::ExecutePredicateNormal(lhs, rhs);
+			    });
 		}
 	}
 };
 
-}
+} // namespace
 
 //------------------------------------------------------------------------------
 // Functions
@@ -191,18 +195,17 @@ struct ST_Boundary {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(args.data[0], result, args.size(),
-			[&](const string_t &geom_blob, ValidityMask &mask, idx_t row_idx) {
+		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
+		    args.data[0], result, args.size(), [&](const string_t &geom_blob, ValidityMask &mask, idx_t row_idx) {
+			    const auto geom = lstate.Deserialize(geom_blob);
+			    if (geom.type() == GEOS_GEOMETRYCOLLECTION) {
+				    mask.SetInvalid(row_idx);
+				    return string_t();
+			    }
+			    const auto boundary = geom.get_boundary();
 
-				const auto geom = lstate.Deserialize(geom_blob);
-				if(geom.type() == GEOS_GEOMETRYCOLLECTION) {
-					mask.SetInvalid(row_idx);
-					return string_t();
-				}
-				const auto boundary = geom.get_boundary();
-
-				return lstate.Serialize(result, boundary);
-			});
+			    return lstate.Serialize(result, boundary);
+		    });
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -222,19 +225,17 @@ struct ST_Boundary {
 	}
 };
 
-
 struct ST_Buffer {
 
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
-		BinaryExecutor::Execute<string_t, double, string_t>(
-		    args.data[0], args.data[1], result, args.size(),
-		    [&](const string_t &blob, double radius) {
-				const auto geom = lstate.Deserialize(blob);
-				const auto buffer = geom.get_buffer(radius, 8);
-		    	return lstate.Serialize(result, buffer);
-		    });
+		BinaryExecutor::Execute<string_t, double, string_t>(args.data[0], args.data[1], result, args.size(),
+		                                                    [&](const string_t &blob, double radius) {
+			                                                    const auto geom = lstate.Deserialize(blob);
+			                                                    const auto buffer = geom.get_buffer(radius, 8);
+			                                                    return lstate.Serialize(result, buffer);
+		                                                    });
 	}
 
 	static void ExecuteWithSegments(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -243,9 +244,9 @@ struct ST_Buffer {
 		TernaryExecutor::Execute<string_t, double, int32_t, string_t>(
 		    args.data[0], args.data[1], args.data[2], result, args.size(),
 		    [&](const string_t &blob, double radius, int32_t segments) {
-		    	const auto geom = lstate.Deserialize(blob);
-		    	const auto buffer = geom.get_buffer(radius, segments);
-		    	return lstate.Serialize(result, buffer);
+			    const auto geom = lstate.Deserialize(blob);
+			    const auto buffer = geom.get_buffer(radius, segments);
+			    return lstate.Serialize(result, buffer);
 		    });
 	}
 
@@ -271,8 +272,7 @@ struct ST_Buffer {
 		    args, result,
 		    [&](const string_t &blob, double radius, int32_t segments, const string_t &cap_style_str,
 		        const string_t &join_style_str, double mitre_limit) {
-
-		    	const auto geom = lstate.Deserialize(blob);
+			    const auto geom = lstate.Deserialize(blob);
 			    const auto cap_style = TryParseStringArgument<GEOSBufCapStyles>(
 			        "cap style", {"CAP_ROUND", "CAP_FLAT", "CAP_SQUARE"},
 			        {GEOSBUF_CAP_ROUND, GEOSBUF_CAP_FLAT, GEOSBUF_CAP_SQUARE}, cap_style_str);
@@ -281,8 +281,9 @@ struct ST_Buffer {
 			        "join style", {"JOIN_ROUND", "JOIN_MITRE", "JOIN_BEVEL"},
 			        {GEOSBUF_JOIN_ROUND, GEOSBUF_JOIN_MITRE, GEOSBUF_JOIN_BEVEL}, join_style_str);
 
-		    	const auto buffer = geom.get_buffer_style(radius, segments, cap_style, join_style, mitre_limit);
-		    	return lstate.Serialize(result, buffer);;
+			    const auto buffer = geom.get_buffer_style(radius, segments, cap_style, join_style, mitre_limit);
+			    return lstate.Serialize(result, buffer);
+			    ;
 		    });
 	}
 
@@ -353,16 +354,15 @@ struct ST_Centroid {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
-			[&](const string_t &geom_blob) {
-				const auto geom = lstate.Deserialize(geom_blob);
-				const auto centroid = geom.get_centroid();
-				return lstate.Serialize(result, centroid);
-			});
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+			const auto geom = lstate.Deserialize(geom_blob);
+			const auto centroid = geom.get_centroid();
+			return lstate.Serialize(result, centroid);
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
-			FunctionBuilder::RegisterScalar(db, "ST_Centroid", [](ScalarFunctionBuilder &func) {
+		FunctionBuilder::RegisterScalar(db, "ST_Centroid", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("geom", GeoTypes::GEOMETRY());
 				variant.SetReturnType(GeoTypes::GEOMETRY());
@@ -437,12 +437,11 @@ struct ST_ConvexHull {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
-			[&](const string_t &geom_blob) {
-				const auto geom = lstate.Deserialize(geom_blob);
-				const auto hull = geom.get_convex_hull();
-				return lstate.Serialize(result, hull);
-			});
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+			const auto geom = lstate.Deserialize(geom_blob);
+			const auto hull = geom.get_convex_hull();
+			return lstate.Serialize(result, hull);
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -542,16 +541,16 @@ struct ST_Difference {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
 		BinaryExecutor::Execute<string_t, string_t, string_t>(args.data[0], args.data[1], result, args.size(),
-			[&](const string_t &lhs_blob, const string_t &rhs_blob) {
-				const auto lhs = lstate.Deserialize(lhs_blob);
-				const auto rhs = lstate.Deserialize(rhs_blob);
-				const auto difference = lhs.get_difference(rhs);
-				return lstate.Serialize(result, difference);
-			});
+		                                                      [&](const string_t &lhs_blob, const string_t &rhs_blob) {
+			                                                      const auto lhs = lstate.Deserialize(lhs_blob);
+			                                                      const auto rhs = lstate.Deserialize(rhs_blob);
+			                                                      const auto difference = lhs.get_difference(rhs);
+			                                                      return lstate.Serialize(result, difference);
+		                                                      });
 	}
 
 	static void Register(DatabaseInstance &db) {
-			FunctionBuilder::RegisterScalar(db, "ST_Difference", [](ScalarFunctionBuilder &func) {
+		FunctionBuilder::RegisterScalar(db, "ST_Difference", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("geom1", GeoTypes::GEOMETRY());
 				variant.AddParameter("geom2", GeoTypes::GEOMETRY());
@@ -567,7 +566,6 @@ struct ST_Difference {
 		});
 	}
 };
-
 
 struct ST_Disjoint : SymmetricPreparedBinaryFunction<ST_Disjoint> {
 	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
@@ -594,7 +592,7 @@ struct ST_Disjoint : SymmetricPreparedBinaryFunction<ST_Disjoint> {
 	}
 };
 
-struct ST_Distance : SymmetricPreparedBinaryFunction<ST_Distance, double>{
+struct ST_Distance : SymmetricPreparedBinaryFunction<ST_Distance, double> {
 	static double ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
 		return lhs.distance_to(rhs);
 	}
@@ -630,11 +628,14 @@ struct ST_DistanceWithin {
 		auto &rhs_vec = args.data[1];
 		auto &arg_vec = args.data[2];
 
-		const auto lhs_is_const = lhs_vec.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(lhs_vec);
-		const auto rhs_is_const = rhs_vec.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(rhs_vec);
-		const auto arg_is_const = arg_vec.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(arg_vec);
+		const auto lhs_is_const =
+		    lhs_vec.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(lhs_vec);
+		const auto rhs_is_const =
+		    rhs_vec.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(rhs_vec);
+		const auto arg_is_const =
+		    arg_vec.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(arg_vec);
 
-		if(lhs_is_const && rhs_is_const && arg_is_const) {
+		if (lhs_is_const && rhs_is_const && arg_is_const) {
 			// Both geometries (and the argument) are constant, so only execute it once
 			result.SetVectorType(VectorType::CONSTANT_VECTOR);
 			const auto &lhs_blob = ConstantVector::GetData<string_t>(lhs_vec)[0];
@@ -658,12 +659,11 @@ struct ST_DistanceWithin {
 			// PreparedDistanceWithin only works if one is prepared. so just choose the larger one
 			const auto prep_geom = large_geom.get_prepared();
 
-			UnaryExecutor::Execute<double, bool>(arg_vec, result, args.size(),
-				[&](const double arg_dist) {
-					return prep_geom.distance_within(probe_geom, arg_dist);
-				});
+			UnaryExecutor::Execute<double, bool>(arg_vec, result, args.size(), [&](const double arg_dist) {
+				return prep_geom.distance_within(probe_geom, arg_dist);
+			});
 
-		} else if(lhs_is_const != rhs_is_const) {
+		} else if (lhs_is_const != rhs_is_const) {
 			// One of the two is const, prepare the const one and execute on the non-const one
 			auto &const_vec = lhs_is_const ? lhs_vec : rhs_vec;
 			auto &probe_vec = lhs_is_const ? rhs_vec : lhs_vec;
@@ -673,18 +673,19 @@ struct ST_DistanceWithin {
 			const auto const_prep = const_geom.get_prepared();
 
 			BinaryExecutor::Execute<string_t, double, bool>(probe_vec, arg_vec, result, args.size(),
-				[&](const string_t &probe_blob, double distance) {
-					const auto probe_geom = lstate.Deserialize(probe_blob);
-					return const_prep.distance_within(probe_geom, distance);
-				});
+			                                                [&](const string_t &probe_blob, double distance) {
+				                                                const auto probe_geom = lstate.Deserialize(probe_blob);
+				                                                return const_prep.distance_within(probe_geom, distance);
+			                                                });
 		} else {
 			// Both are non-const, just execute normally
-			TernaryExecutor::Execute<string_t, string_t, double, bool>(lhs_vec, rhs_vec, arg_vec, result, args.size(),
-				[&](const string_t &lhs_blob, const string_t &rhs_blob, double distance) {
-					const auto lhs = lstate.Deserialize(lhs_blob);
-					const auto rhs = lstate.Deserialize(rhs_blob);
-					return lhs.distance_within(rhs, distance);
-				});
+			TernaryExecutor::Execute<string_t, string_t, double, bool>(
+			    lhs_vec, rhs_vec, arg_vec, result, args.size(),
+			    [&](const string_t &lhs_blob, const string_t &rhs_blob, double distance) {
+				    const auto lhs = lstate.Deserialize(lhs_blob);
+				    const auto rhs = lstate.Deserialize(rhs_blob);
+				    return lhs.distance_within(rhs, distance);
+			    });
 		}
 	}
 
@@ -715,11 +716,11 @@ struct ST_Equals {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
 		BinaryExecutor::Execute<string_t, string_t, bool>(args.data[0], args.data[1], result, args.size(),
-			[&](const string_t &lhs_blob, const string_t &rhs_blob) {
-				const auto lhs = lstate.Deserialize(lhs_blob);
-				const auto rhs = lstate.Deserialize(rhs_blob);
-				return lhs.equals(rhs);
-			});
+		                                                  [&](const string_t &lhs_blob, const string_t &rhs_blob) {
+			                                                  const auto lhs = lstate.Deserialize(lhs_blob);
+			                                                  const auto rhs = lstate.Deserialize(rhs_blob);
+			                                                  return lhs.equals(rhs);
+		                                                  });
 	}
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Equals", [](ScalarFunctionBuilder &func) {
@@ -743,12 +744,11 @@ struct ST_Envelope {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
-			[&](const string_t &geom_blob) {
-				const auto geom = lstate.Deserialize(geom_blob);
-				const auto intersection = geom.get_envelope();
-				return lstate.Serialize(result, intersection);
-			});
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+			const auto geom = lstate.Deserialize(geom_blob);
+			const auto intersection = geom.get_envelope();
+			return lstate.Serialize(result, intersection);
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -773,12 +773,12 @@ struct ST_Intersection {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
 		BinaryExecutor::Execute<string_t, string_t, string_t>(args.data[0], args.data[1], result, args.size(),
-			[&](const string_t &lhs_blob, const string_t &rhs_blob) {
-				const auto lhs = lstate.Deserialize(lhs_blob);
-				const auto rhs = lstate.Deserialize(rhs_blob);
-				const auto intersection = lhs.get_intersection(rhs);
-				return lstate.Serialize(result, intersection);
-			});
+		                                                      [&](const string_t &lhs_blob, const string_t &rhs_blob) {
+			                                                      const auto lhs = lstate.Deserialize(lhs_blob);
+			                                                      const auto rhs = lstate.Deserialize(rhs_blob);
+			                                                      const auto intersection = lhs.get_intersection(rhs);
+			                                                      return lstate.Serialize(result, intersection);
+		                                                      });
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -797,10 +797,9 @@ struct ST_Intersection {
 			func.SetTag("category", "construction");
 		});
 	}
-
 };
 
-struct ST_Intersects : SymmetricPreparedBinaryFunction<ST_Intersects>{
+struct ST_Intersects : SymmetricPreparedBinaryFunction<ST_Intersects> {
 	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
 		return lhs.intersects(rhs);
 	}
@@ -830,11 +829,10 @@ struct ST_Intersects : SymmetricPreparedBinaryFunction<ST_Intersects>{
 struct ST_IsRing {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
-		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(),
-			[&](const string_t &geom_blob) {
-				const auto geom = lstate.Deserialize(geom_blob);
-				return geom.is_ring();
-			});
+		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+			const auto geom = lstate.Deserialize(geom_blob);
+			return geom.is_ring();
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -857,11 +855,10 @@ struct ST_IsRing {
 struct ST_IsSimple {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
-		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(),
-			[&](const string_t &geom_blob) {
-				const auto geom = lstate.Deserialize(geom_blob);
-				return geom.is_simple();
-			});
+		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+			const auto geom = lstate.Deserialize(geom_blob);
+			return geom.is_simple();
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -878,19 +875,16 @@ struct ST_IsSimple {
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");
 		});
-
 	}
 };
 
 struct ST_IsValid {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
-		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(),
-			[&](const string_t &geom_blob) {
-				const auto geom = lstate.Deserialize(geom_blob);
-				return geom.is_valid();
-			});
-
+		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+			const auto geom = lstate.Deserialize(geom_blob);
+			return geom.is_valid();
+		});
 	}
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_IsValid", [](ScalarFunctionBuilder &func) {
@@ -913,21 +907,23 @@ struct ST_LineMerge {
 
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geometry_blob) {
-			const auto geometry = lstate.Deserialize(geometry_blob);
-			const auto merged = geometry.get_linemerged(false);
-			return lstate.Serialize(result, merged);
-		});
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
+		                                           [&](const string_t &geometry_blob) {
+			                                           const auto geometry = lstate.Deserialize(geometry_blob);
+			                                           const auto merged = geometry.get_linemerged(false);
+			                                           return lstate.Serialize(result, merged);
+		                                           });
 	}
 
 	static void ExecuteWithDirection(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 		BinaryExecutor::Execute<string_t, bool, string_t>(args.data[0], args.data[1], result, args.size(),
-			[&](const string_t &geometry_blob, bool preserve_direction) {
-				const auto geometry = lstate.Deserialize(geometry_blob);
-				const auto merged = geometry.get_linemerged(preserve_direction);
-				return lstate.Serialize(result, merged);
-			});
+		                                                  [&](const string_t &geometry_blob, bool preserve_direction) {
+			                                                  const auto geometry = lstate.Deserialize(geometry_blob);
+			                                                  const auto merged =
+			                                                      geometry.get_linemerged(preserve_direction);
+			                                                  return lstate.Serialize(result, merged);
+		                                                  });
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -958,12 +954,11 @@ struct ST_MakeValid {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
-			[&](const string_t &geom_blob) {
-				const auto geom = lstate.Deserialize(geom_blob);
-				const auto valid = geom.get_made_valid();
-				return lstate.Serialize(result, valid);
-			});
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+			const auto geom = lstate.Deserialize(geom_blob);
+			const auto valid = geom.get_made_valid();
+			return lstate.Serialize(result, valid);
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -986,12 +981,11 @@ struct ST_MakeValid {
 struct ST_Normalize {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
-			[&](const string_t &geom_blob) {
-				const auto geom = lstate.Deserialize(geom_blob);
-				geom.normalize_in_place();
-				return lstate.Serialize(result, geom);
-			});
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+			const auto geom = lstate.Deserialize(geom_blob);
+			geom.normalize_in_place();
+			return lstate.Serialize(result, geom);
+		});
 	}
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Normalize", [](ScalarFunctionBuilder &func) {
@@ -1010,7 +1004,7 @@ struct ST_Normalize {
 	}
 };
 
-struct ST_Overlaps : SymmetricPreparedBinaryFunction<ST_Overlaps>{
+struct ST_Overlaps : SymmetricPreparedBinaryFunction<ST_Overlaps> {
 	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
 		return lhs.overlaps(rhs);
 	}
@@ -1040,12 +1034,11 @@ struct ST_PointOnSurface {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
-			[&](const string_t &geom_blob) {
-				const auto geom = lstate.Deserialize(geom_blob);
-				const auto point = geom.get_point_on_surface();
-				return lstate.Serialize(result, point);
-			});
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+			const auto geom = lstate.Deserialize(geom_blob);
+			const auto point = geom.get_point_on_surface();
+			return lstate.Serialize(result, point);
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -1069,12 +1062,12 @@ struct ST_ReducePrecision {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
-		BinaryExecutor::Execute<string_t, double, string_t>(args.data[0], args.data[1], result, args.size(),
-			[&](const string_t &geom_blob, double precision) {
-				const auto geom = lstate.Deserialize(geom_blob);
-				const auto reduced = geom.get_reduced_precision(precision);
-				return lstate.Serialize(result, reduced);
-			});
+		BinaryExecutor::Execute<string_t, double, string_t>(
+		    args.data[0], args.data[1], result, args.size(), [&](const string_t &geom_blob, double precision) {
+			    const auto geom = lstate.Deserialize(geom_blob);
+			    const auto reduced = geom.get_reduced_precision(precision);
+			    return lstate.Serialize(result, reduced);
+		    });
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -1099,23 +1092,22 @@ struct ST_RemoveRepeatedPoints {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
-			[&](const string_t &geom_blob) {
-				const auto geom = lstate.Deserialize(geom_blob);
-				const auto reduced = geom.get_without_repeated_points(0);
-				return lstate.Serialize(result, reduced);
-			});
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+			const auto geom = lstate.Deserialize(geom_blob);
+			const auto reduced = geom.get_without_repeated_points(0);
+			return lstate.Serialize(result, reduced);
+		});
 	}
 
 	static void ExecuteWithTolerance(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
-		BinaryExecutor::Execute<string_t, double, string_t>(args.data[0], args.data[1], result, args.size(),
-			[&](const string_t &geom_blob, double tolerance) {
-				const auto geom = lstate.Deserialize(geom_blob);
-				const auto reduced = geom.get_without_repeated_points(tolerance);
-				return lstate.Serialize(result, reduced);
-			});
+		BinaryExecutor::Execute<string_t, double, string_t>(
+		    args.data[0], args.data[1], result, args.size(), [&](const string_t &geom_blob, double tolerance) {
+			    const auto geom = lstate.Deserialize(geom_blob);
+			    const auto reduced = geom.get_without_repeated_points(tolerance);
+			    return lstate.Serialize(result, reduced);
+		    });
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -1148,16 +1140,15 @@ struct ST_Reverse {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
-			[&](const string_t &geom_blob) {
-				const auto geom = lstate.Deserialize(geom_blob);
-				const auto reversed = geom.get_reversed();
-				return lstate.Serialize(result, reversed);
-			});
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+			const auto geom = lstate.Deserialize(geom_blob);
+			const auto reversed = geom.get_reversed();
+			return lstate.Serialize(result, reversed);
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
-			FunctionBuilder::RegisterScalar(db, "ST_Reverse", [](ScalarFunctionBuilder &func) {
+		FunctionBuilder::RegisterScalar(db, "ST_Reverse", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("geom", GeoTypes::GEOMETRY());
 				variant.SetReturnType(GeoTypes::GEOMETRY());
@@ -1177,12 +1168,12 @@ struct ST_ShortestLine {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 		BinaryExecutor::Execute<string_t, string_t, string_t>(args.data[0], args.data[1], result, args.size(),
-			[&](const string_t &lhs_blob, const string_t &rhs_blob) {
-				const auto lhs = lstate.Deserialize(lhs_blob);
-				const auto rhs = lstate.Deserialize(rhs_blob);
-				const auto line = lhs.get_shortest_line(rhs);
-				return lstate.Serialize(result, line);
-			});
+		                                                      [&](const string_t &lhs_blob, const string_t &rhs_blob) {
+			                                                      const auto lhs = lstate.Deserialize(lhs_blob);
+			                                                      const auto rhs = lstate.Deserialize(rhs_blob);
+			                                                      const auto line = lhs.get_shortest_line(rhs);
+			                                                      return lstate.Serialize(result, line);
+		                                                      });
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -1207,11 +1198,11 @@ struct ST_Simplify {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 		BinaryExecutor::Execute<string_t, double, string_t>(args.data[0], args.data[1], result, args.size(),
-			[&](const string_t &geom_blob, double tolerance) {
-				const auto geom = lstate.Deserialize(geom_blob);
-				const auto simplified = geom.get_simplified(tolerance);
-				return lstate.Serialize(result, simplified);
-			});
+		                                                    [&](const string_t &geom_blob, double tolerance) {
+			                                                    const auto geom = lstate.Deserialize(geom_blob);
+			                                                    const auto simplified = geom.get_simplified(tolerance);
+			                                                    return lstate.Serialize(result, simplified);
+		                                                    });
 	}
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Simplify", [](ScalarFunctionBuilder &func) {
@@ -1234,12 +1225,12 @@ struct ST_Simplify {
 struct ST_SimplifyPreserveTopology {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
-		BinaryExecutor::Execute<string_t, double, string_t>(args.data[0], args.data[1], result, args.size(),
-			[&](const string_t &geom_blob, double tolerance) {
-				const auto geom = lstate.Deserialize(geom_blob);
-				const auto simplified = geom.get_simplified_topo(tolerance);
-				return lstate.Serialize(result, simplified);
-			});
+		BinaryExecutor::Execute<string_t, double, string_t>(
+		    args.data[0], args.data[1], result, args.size(), [&](const string_t &geom_blob, double tolerance) {
+			    const auto geom = lstate.Deserialize(geom_blob);
+			    const auto simplified = geom.get_simplified_topo(tolerance);
+			    return lstate.Serialize(result, simplified);
+		    });
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -1282,7 +1273,6 @@ struct ST_Touches : SymmetricPreparedBinaryFunction<ST_Touches> {
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "relation");
 		});
-
 	}
 };
 
@@ -1291,12 +1281,12 @@ struct ST_Union {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
 		BinaryExecutor::Execute<string_t, string_t, string_t>(args.data[0], args.data[1], result, args.size(),
-			[&](const string_t &lhs_blob, const string_t &rhs_blob) {
-				const auto lhs = lstate.Deserialize(lhs_blob);
-				const auto rhs = lstate.Deserialize(rhs_blob);
-				const auto unioned = lhs.get_union(rhs);
-				return lstate.Serialize(result, unioned);
-			});
+		                                                      [&](const string_t &lhs_blob, const string_t &rhs_blob) {
+			                                                      const auto lhs = lstate.Deserialize(lhs_blob);
+			                                                      const auto rhs = lstate.Deserialize(rhs_blob);
+			                                                      const auto unioned = lhs.get_union(rhs);
+			                                                      return lstate.Serialize(result, unioned);
+		                                                      });
 	}
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Union", [](ScalarFunctionBuilder &func) {
@@ -1341,8 +1331,6 @@ struct ST_Within : AsymmetricPreparedBinaryFunction<ST_Within> {
 	}
 };
 
-
-
 //######################################################################################################################
 // Aggregate Functions
 //######################################################################################################################
@@ -1372,7 +1360,7 @@ struct GeosUnaryAggFunction {
 	}
 
 	// Deserialize a GEOS geometry
-	static GEOSGeometry* Deserialize(const GEOSContextHandle_t context, const string_t &blob) {
+	static GEOSGeometry *Deserialize(const GEOSContextHandle_t context, const string_t &blob) {
 		const auto ptr = blob.GetData();
 		const auto size = blob.GetSize();
 
@@ -1451,13 +1439,13 @@ struct GeosUnaryAggFunction {
 //======================================================================================================================
 
 struct ST_Union_Agg : GeosUnaryAggFunction {
-	static GEOSGeometry* Merge(const GEOSContextHandle_t context, const GEOSGeometry* curr, const GEOSGeometry* next) {
+	static GEOSGeometry *Merge(const GEOSContextHandle_t context, const GEOSGeometry *curr, const GEOSGeometry *next) {
 		return GEOSUnion_r(context, curr, next);
 	}
 
 	static void Register(DatabaseInstance &db) {
 		auto func = AggregateFunction::UnaryAggregateDestructor<GeosUnaryAggState, string_t, string_t, ST_Union_Agg>(
-			GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY());
+		    GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY());
 		func.name = "ST_Union_Agg";
 
 		ExtensionUtil::RegisterFunction(db, func);
@@ -1469,13 +1457,14 @@ struct ST_Union_Agg : GeosUnaryAggFunction {
 //======================================================================================================================
 
 struct ST_Intersection_Agg : GeosUnaryAggFunction {
-	static GEOSGeometry* Merge(const GEOSContextHandle_t context, const GEOSGeometry* curr, const GEOSGeometry* next) {
+	static GEOSGeometry *Merge(const GEOSContextHandle_t context, const GEOSGeometry *curr, const GEOSGeometry *next) {
 		return GEOSIntersection_r(context, curr, next);
 	}
 
 	static void Register(DatabaseInstance &db) {
-		auto func = AggregateFunction::UnaryAggregateDestructor<GeosUnaryAggState, string_t, string_t, ST_Intersection_Agg>(
-			GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY());
+		auto func =
+		    AggregateFunction::UnaryAggregateDestructor<GeosUnaryAggState, string_t, string_t, ST_Intersection_Agg>(
+		        GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY());
 		func.name = "ST_Intersection_Agg";
 
 		ExtensionUtil::RegisterFunction(db, func);
@@ -1531,6 +1520,4 @@ void RegisterGEOSModule(DatabaseInstance &db) {
 	ST_Intersection_Agg::Register(db);
 }
 
-
 } // namespace duckdb
-

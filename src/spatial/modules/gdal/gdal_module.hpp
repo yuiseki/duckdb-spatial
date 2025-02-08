@@ -6,4 +6,4 @@ class DatabaseInstance;
 
 void RegisterGDALModule(DatabaseInstance &db);
 
-}
+} // namespace duckdb

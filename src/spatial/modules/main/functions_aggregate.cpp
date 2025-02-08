@@ -3,7 +3,6 @@
 namespace duckdb {
 
 void RegisterSpatialAggregateFunctions(DatabaseInstance &db) {
-
 }
 
 } // namespace duckdb

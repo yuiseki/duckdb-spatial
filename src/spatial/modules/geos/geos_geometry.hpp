@@ -9,23 +9,25 @@ class PreparedGeosGeometry;
 
 class GeosGeometry {
 	friend class PreparedGeosGeometry;
+
 public:
 	// constructor
 	GeosGeometry(GEOSContextHandle_t handle_p, GEOSGeometry *geom_p);
 
 	// disable copy
-	GeosGeometry(const GeosGeometry&) = delete;
-	GeosGeometry& operator=(const GeosGeometry&) = delete;
+	GeosGeometry(const GeosGeometry &) = delete;
+	GeosGeometry &operator=(const GeosGeometry &) = delete;
 
 	// support move
-	GeosGeometry(GeosGeometry&& other) noexcept;
-	GeosGeometry& operator=(GeosGeometry&& other) noexcept;
+	GeosGeometry(GeosGeometry &&other) noexcept;
+	GeosGeometry &operator=(GeosGeometry &&other) noexcept;
 
 	// destructor
 	~GeosGeometry();
+
 public:
 	GEOSGeomTypes type() const;
-	const GEOSGeometry* get_raw() const;
+	const GEOSGeometry *get_raw() const;
 
 	bool is_simple() const;
 	bool is_ring() const;
@@ -35,7 +37,7 @@ public:
 	GeosGeometry get_centroid() const;
 	GeosGeometry get_convex_hull() const;
 	GeosGeometry get_envelope() const;
-    GeosGeometry get_reversed() const;
+	GeosGeometry get_reversed() const;
 	GeosGeometry get_point_on_surface() const;
 	GeosGeometry get_made_valid() const;
 
@@ -66,7 +68,8 @@ public:
 	GeosGeometry get_reduced_precision(double tolerance) const;
 	GeosGeometry get_linemerged(bool directed) const;
 	GeosGeometry get_buffer(double distance, int quadsegs) const;
-	GeosGeometry get_buffer_style(double distance, int quadsegs, int endcap_style, int join_style, double mitre_limit) const;
+	GeosGeometry get_buffer_style(double distance, int quadsegs, int endcap_style, int join_style,
+	                              double mitre_limit) const;
 
 	PreparedGeosGeometry get_prepared() const;
 
@@ -77,19 +80,21 @@ private:
 
 class PreparedGeosGeometry {
 	friend class GeosGeometry;
+
 public:
 	// constructor
 	PreparedGeosGeometry(GEOSContextHandle_t handle_p, const GeosGeometry &geom);
 
 	// disable copy
-	PreparedGeosGeometry(const PreparedGeosGeometry&) = delete;
-	PreparedGeosGeometry& operator=(const PreparedGeosGeometry&) = delete;
+	PreparedGeosGeometry(const PreparedGeosGeometry &) = delete;
+	PreparedGeosGeometry &operator=(const PreparedGeosGeometry &) = delete;
 
 	// support move
-	PreparedGeosGeometry(PreparedGeosGeometry&& other) noexcept;
-	PreparedGeosGeometry& operator=(PreparedGeosGeometry&& other) noexcept;
+	PreparedGeosGeometry(PreparedGeosGeometry &&other) noexcept;
+	PreparedGeosGeometry &operator=(PreparedGeosGeometry &&other) noexcept;
 
 	~PreparedGeosGeometry();
+
 public:
 	bool contains(const GeosGeometry &other) const;
 	bool contains_properly(const GeosGeometry &other) const;
@@ -115,13 +120,14 @@ private:
 //------------------------------------------------------------------------------
 
 //-- GeosGeometry --//
-inline GeosGeometry::GeosGeometry(GEOSContextHandle_t handle_p, GEOSGeometry *geom_p) : handle(handle_p), geom(geom_p) {}
-inline GeosGeometry::GeosGeometry(GeosGeometry&& other) noexcept : handle(other.handle), geom(other.geom) {
+inline GeosGeometry::GeosGeometry(GEOSContextHandle_t handle_p, GEOSGeometry *geom_p) : handle(handle_p), geom(geom_p) {
+}
+inline GeosGeometry::GeosGeometry(GeosGeometry &&other) noexcept : handle(other.handle), geom(other.geom) {
 	other.geom = nullptr;
 }
-inline GeosGeometry& GeosGeometry::operator=(GeosGeometry&& other) noexcept {
-	if(this != &other) {
-		if(geom) {
+inline GeosGeometry &GeosGeometry::operator=(GeosGeometry &&other) noexcept {
+	if (this != &other) {
+		if (geom) {
 			GEOSGeom_destroy_r(handle, geom);
 		}
 		handle = other.handle;
@@ -132,37 +138,37 @@ inline GeosGeometry& GeosGeometry::operator=(GeosGeometry&& other) noexcept {
 }
 
 inline GeosGeometry::~GeosGeometry() {
-	if(geom) {
+	if (geom) {
 		GEOSGeom_destroy_r(handle, geom);
 	}
 }
 
 //-- PreparedGeosGeometry --//
 inline PreparedGeosGeometry::PreparedGeosGeometry(GEOSContextHandle_t handle_p, const GeosGeometry &geom)
-	: handle(handle_p) {
-    prepared = GEOSPrepare_r(handle, geom.geom);
+    : handle(handle_p) {
+	prepared = GEOSPrepare_r(handle, geom.geom);
 }
-inline PreparedGeosGeometry::PreparedGeosGeometry(PreparedGeosGeometry&& other) noexcept
-	: handle(other.handle), prepared(other.prepared) {
-    other.prepared = nullptr;
+inline PreparedGeosGeometry::PreparedGeosGeometry(PreparedGeosGeometry &&other) noexcept
+    : handle(other.handle), prepared(other.prepared) {
+	other.prepared = nullptr;
 }
 
-inline PreparedGeosGeometry& PreparedGeosGeometry::operator=(PreparedGeosGeometry&& other) noexcept {
-    if(this != &other) {
-        if(prepared) {
-            GEOSPreparedGeom_destroy_r(handle, prepared);
-        }
-        handle = other.handle;
-        prepared = other.prepared;
-        other.prepared = nullptr;
-    }
-    return *this;
+inline PreparedGeosGeometry &PreparedGeosGeometry::operator=(PreparedGeosGeometry &&other) noexcept {
+	if (this != &other) {
+		if (prepared) {
+			GEOSPreparedGeom_destroy_r(handle, prepared);
+		}
+		handle = other.handle;
+		prepared = other.prepared;
+		other.prepared = nullptr;
+	}
+	return *this;
 }
 
 inline PreparedGeosGeometry::~PreparedGeosGeometry() {
-    if(prepared) {
-        GEOSPreparedGeom_destroy_r(handle, prepared);
-    }
+	if (prepared) {
+		GEOSPreparedGeom_destroy_r(handle, prepared);
+	}
 }
 
 //------------------------------------------------------------------------------
@@ -174,8 +180,8 @@ inline GEOSGeomTypes GeosGeometry::type() const {
 	return static_cast<GEOSGeomTypes>(GEOSGeomTypeId_r(handle, geom));
 }
 
-inline const GEOSGeometry* GeosGeometry::get_raw() const {
-    return geom;
+inline const GEOSGeometry *GeosGeometry::get_raw() const {
+	return geom;
 }
 
 inline bool GeosGeometry::is_simple() const {
@@ -324,8 +330,6 @@ inline GeosGeometry GeosGeometry::get_buffer_style(double distance, int quadsegs
 	return GeosGeometry(handle, buffer);
 }
 
-
-
 inline PreparedGeosGeometry GeosGeometry::get_prepared() const {
 	return PreparedGeosGeometry(handle, *this);
 }
@@ -382,4 +386,4 @@ inline bool PreparedGeosGeometry::distance_within(const GeosGeometry &other, dou
 	return GEOSPreparedDistanceWithin_r(handle, prepared, other.geom, distance);
 }
 
-}
+} // namespace duckdb

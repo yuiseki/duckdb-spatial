@@ -12,9 +12,9 @@ namespace duckdb {
 class ArenaAllocator;
 
 struct GeosSerde {
-    static size_t GetRequiredSize(GEOSContextHandle_t ctx, const GEOSGeom_t *geom);
-    static void Serialize(GEOSContextHandle_t ctx, const GEOSGeom_t *geom, char *buffer, size_t buffer_size);
-    static GEOSGeom_t *Deserialize(GEOSContextHandle_t ctx, const char *buffer, size_t buffer_size);
+	static size_t GetRequiredSize(GEOSContextHandle_t ctx, const GEOSGeom_t *geom);
+	static void Serialize(GEOSContextHandle_t ctx, const GEOSGeom_t *geom, char *buffer, size_t buffer_size);
+	static GEOSGeom_t *Deserialize(GEOSContextHandle_t ctx, const char *buffer, size_t buffer_size);
 };
 
-}
+} // namespace duckdb

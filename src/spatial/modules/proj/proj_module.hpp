@@ -6,4 +6,4 @@ class DatabaseInstance;
 
 void RegisterProjModule(DatabaseInstance &db);
 
-}
+} // namespace duckdb

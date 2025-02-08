@@ -54,8 +54,8 @@ PJ_CONTEXT *ProjModule::GetThreadProjContext() {
 	// We set the default context proj.db path to the one in the binary here
 	// Otherwise GDAL will try to load the proj.db from the system
 	// Any PJ_CONTEXT we create after this will inherit these settings
-	const auto path = StringUtil::Format("file:/proj.db?ptr=%llu&sz=%lu&max=%lu",
-		static_cast<void *>(proj_db), proj_db_len, proj_db_len);
+	const auto path = StringUtil::Format("file:/proj.db?ptr=%llu&sz=%lu&max=%lu", static_cast<void *>(proj_db),
+	                                     proj_db_len, proj_db_len);
 
 	proj_context_set_sqlite3_vfs_name(ctx, "memvfs");
 	const auto ok = proj_context_set_database_path(ctx, path.c_str(), nullptr, nullptr);
@@ -90,8 +90,8 @@ void ProjModule::RegisterVFS(DatabaseInstance &db) {
 	// We set the default context proj.db path to the one in the binary here
 	// Otherwise GDAL will try to load the proj.db from the system
 	// Any PJ_CONTEXT we create after this will inherit these settings (on this thread?)
-	const auto path = StringUtil::Format("file:/proj.db?ptr=%llu&sz=%lu&max=%lu",
-		static_cast<void *>(proj_db), proj_db_len, proj_db_len);
+	const auto path = StringUtil::Format("file:/proj.db?ptr=%llu&sz=%lu&max=%lu", static_cast<void *>(proj_db),
+	                                     proj_db_len, proj_db_len);
 
 	proj_context_set_sqlite3_vfs_name(nullptr, "memvfs");
 
@@ -148,7 +148,7 @@ struct ProjFunctionLocalState final : FunctionLocalState {
 		return local_state;
 	}
 
-	PJ* GetOrCreateProjection(const string &source, const string &target, bool normalize) {
+	PJ *GetOrCreateProjection(const string &source, const string &target, bool normalize) {
 		const auto crs_entry = crs_cache.find({source, target});
 		if (crs_entry != crs_cache.end()) {
 			return crs_entry->second.get();
@@ -241,8 +241,8 @@ struct ST_Transform {
 		GenericExecutor::ExecuteTernary<POINT_TYPE, PROJ_TYPE, PROJ_TYPE, POINT_TYPE>(
 		    args.data[0], args.data[2], args.data[3], result, args.size(),
 		    [&](const POINT_TYPE &point_in, const PROJ_TYPE &source, const PROJ_TYPE target) {
-		    	const auto source_str = source.val.GetString();
-		    	const auto target_str = target.val.GetString();
+			    const auto source_str = source.val.GetString();
+			    const auto target_str = target.val.GetString();
 
 			    const auto crs = lstate.GetOrCreateProjection(source_str, target_str, info.normalize);
 
@@ -269,19 +269,16 @@ struct ST_Transform {
 		GenericExecutor::ExecuteTernary<BOX_TYPE, PROJ_TYPE, PROJ_TYPE, BOX_TYPE>(
 		    args.data[0], args.data[1], args.data[2], result, args.size(),
 		    [&](const BOX_TYPE &box_in, const PROJ_TYPE source, const PROJ_TYPE &target) {
-
-		    	const auto source_str = source.val.GetString();
+			    const auto source_str = source.val.GetString();
 			    const auto target_str = target.val.GetString();
 
-		    	const auto crs = lstate.GetOrCreateProjection(source_str, target_str, info.normalize);
+			    const auto crs = lstate.GetOrCreateProjection(source_str, target_str, info.normalize);
 
 			    // TODO: this may be interesting to use, but at that point we can only return a BOX_TYPE
 			    constexpr int densify_pts = 0;
 			    BOX_TYPE box_out;
-			    proj_trans_bounds(lstate.proj_ctx, crs, PJ_FWD,
-			    	box_in.a_val, box_in.b_val, box_in.c_val, box_in.d_val,
-			    &box_out.a_val, &box_out.b_val, &box_out.c_val, &box_out.d_val,
-						densify_pts);
+			    proj_trans_bounds(lstate.proj_ctx, crs, PJ_FWD, box_in.a_val, box_in.b_val, box_in.c_val, box_in.d_val,
+			                      &box_out.a_val, &box_out.b_val, &box_out.c_val, &box_out.d_val, densify_pts);
 			    return box_out;
 		    });
 	}
@@ -296,23 +293,23 @@ struct ST_Transform {
 		const auto &info = func_expr.bind_info->Cast<BindData>();
 
 		TernaryExecutor::Execute<string_t, string_t, string_t, string_t>(
-		    args.data[0], args.data[1], args.data[2], result,  args.size(),
+		    args.data[0], args.data[1], args.data[2], result, args.size(),
 		    [&](const string_t &input_geom, const string_t &source, const string_t &target) {
 			    const auto source_str = source.GetString();
 			    const auto target_str = target.GetString();
 
-				const auto crs = lstate.GetOrCreateProjection(source_str, target_str, info.normalize);
+			    const auto crs = lstate.GetOrCreateProjection(source_str, target_str, info.normalize);
 
-		    	auto geom = lstate.Deserialize(input_geom);
+			    auto geom = lstate.Deserialize(input_geom);
 
-		    	sgl::ops::replace_vertices_xy(&geom, crs, [](void* arg, sgl::vertex_xy* vertex) {
-		    		const auto crs_ptr = static_cast<PJ*>(arg);
-					const auto transformed = proj_trans(crs_ptr, PJ_FWD, proj_coord(vertex->x, vertex->y, 0, 0)).xy;
-					vertex->x = transformed.x;
-					vertex->y = transformed.y;
-		    	});
+			    sgl::ops::replace_vertices_xy(&geom, crs, [](void *arg, sgl::vertex_xy *vertex) {
+				    const auto crs_ptr = static_cast<PJ *>(arg);
+				    const auto transformed = proj_trans(crs_ptr, PJ_FWD, proj_coord(vertex->x, vertex->y, 0, 0)).xy;
+				    vertex->x = transformed.x;
+				    vertex->y = transformed.y;
+			    });
 
-		    	return lstate.Serialize(result, geom);
+			    return lstate.Serialize(result, geom);
 		    });
 	}
 
@@ -370,7 +367,6 @@ struct ST_Transform {
 	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Transform", [](ScalarFunctionBuilder &func) {
-
 			func.AddVariant([&](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("box", GeoTypes::BOX_2D());
 				variant.AddParameter("source_crs", LogicalType::VARCHAR);
@@ -460,7 +456,6 @@ constexpr auto EARTH_F = 1 / 298.257223563;
 // Local State
 //======================================================================================================================
 
-
 struct GeodesicLocalState final : FunctionLocalState {
 
 	ArenaAllocator arena;
@@ -477,15 +472,17 @@ struct GeodesicLocalState final : FunctionLocalState {
 		geod_polygon_init(&poly, is_line ? 1 : 0);
 	}
 
-	static unique_ptr<FunctionLocalState> InitPolygon(ExpressionState &state, const BoundFunctionExpression &expr, FunctionData *bind_data) {
+	static unique_ptr<FunctionLocalState> InitPolygon(ExpressionState &state, const BoundFunctionExpression &expr,
+	                                                  FunctionData *bind_data) {
 		return make_uniq<GeodesicLocalState>(state.GetContext(), false);
 	}
 
-	static unique_ptr<FunctionLocalState> InitLine(ExpressionState &state, const BoundFunctionExpression &expr, FunctionData *bind_data) {
+	static unique_ptr<FunctionLocalState> InitLine(ExpressionState &state, const BoundFunctionExpression &expr,
+	                                               FunctionData *bind_data) {
 		return make_uniq<GeodesicLocalState>(state.GetContext(), true);
 	}
 
-	static GeodesicLocalState& ResetAndGet(ExpressionState &state) {
+	static GeodesicLocalState &ResetAndGet(ExpressionState &state) {
 		auto &local_state = ExecuteFunctionState::GetFunctionState(state)->Cast<GeodesicLocalState>();
 		local_state.arena.Reset();
 		return local_state;
@@ -516,16 +513,16 @@ struct ST_Area_Spheroid {
 
 			// Visit all polygons
 			sgl::ops::visit_by_dimension(&geom, 2, &lstate, [](void *arg, const sgl::geometry *part) {
-				if(part->get_type() != sgl::geometry_type::POLYGON) {
+				if (part->get_type() != sgl::geometry_type::POLYGON) {
 					return;
 				}
 
-				auto &sstate = *static_cast<GeodesicLocalState*>(arg);
+				auto &sstate = *static_cast<GeodesicLocalState *>(arg);
 
 				// Calculate the area of the polygon
 				const auto tail = part->get_last_part();
 				auto ring = tail;
-				if(!ring) {
+				if (!ring) {
 					return;
 				}
 
@@ -535,14 +532,14 @@ struct ST_Area_Spheroid {
 					ring = ring->get_next();
 
 					const auto vertex_count = ring->get_count();
-					if(vertex_count < 4) {
+					if (vertex_count < 4) {
 						continue;
 					}
 
 					geod_polygon_clear(&sstate.poly);
 
 					// Dont add the last vertex
-					for(auto i = 0; i < vertex_count - 1; i++) {
+					for (auto i = 0; i < vertex_count - 1; i++) {
 						const auto vertex = ring->get_vertex_xy(i);
 						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
 					}
@@ -550,13 +547,12 @@ struct ST_Area_Spheroid {
 					double area = 0;
 					geod_polygon_compute(&sstate.geod, &sstate.poly, 0, 1, &area, nullptr);
 
-
-					if(ring == head) {
+					if (ring == head) {
 						sstate.accum += std::abs(area);
 					} else {
 						sstate.accum -= std::abs(area);
 					}
-				} while(ring != tail);
+				} while (ring != tail);
 			});
 
 			return lstate.accum;
@@ -593,30 +589,30 @@ struct ST_Perimeter_Spheroid {
 
 			// Visit all polygons
 			sgl::ops::visit_by_dimension(&geom, 2, &lstate, [](void *arg, const sgl::geometry *part) {
-				if(part->get_type() != sgl::geometry_type::POLYGON) {
+				if (part->get_type() != sgl::geometry_type::POLYGON) {
 					return;
 				}
 
-				auto &sstate = *static_cast<GeodesicLocalState*>(arg);
+				auto &sstate = *static_cast<GeodesicLocalState *>(arg);
 
 				// Calculate the perimeter of the polygon
 				const auto tail = part->get_last_part();
 				auto ring = tail;
-				if(!ring) {
+				if (!ring) {
 					return;
 				}
 				do {
 					ring = ring->get_next();
 
 					const auto vertex_count = ring->get_count();
-					if(vertex_count < 4) {
+					if (vertex_count < 4) {
 						continue;
 					}
 
 					geod_polygon_clear(&sstate.poly);
 
 					// Dont add the last vertex
-					for(auto i = 0; i < vertex_count - 1; i++) {
+					for (auto i = 0; i < vertex_count - 1; i++) {
 						const auto vertex = ring->get_vertex_xy(i);
 						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
 					}
@@ -626,7 +622,7 @@ struct ST_Perimeter_Spheroid {
 					// Add the perimeter of the ring
 					sstate.accum += perimeter;
 
-				} while(ring != tail);
+				} while (ring != tail);
 			});
 
 			return lstate.accum;
@@ -664,20 +660,20 @@ struct ST_Length_Spheroid {
 
 			// Visit all polygons
 			sgl::ops::visit_by_dimension(&geom, 1, &lstate, [](void *arg, const sgl::geometry *part) {
-				if(part->get_type() != sgl::geometry_type::LINESTRING) {
+				if (part->get_type() != sgl::geometry_type::LINESTRING) {
 					return;
 				}
 
-				auto &sstate = *static_cast<GeodesicLocalState*>(arg);
+				auto &sstate = *static_cast<GeodesicLocalState *>(arg);
 
 				const auto vertex_count = part->get_count();
-				if(vertex_count < 2) {
+				if (vertex_count < 2) {
 					return;
 				}
 
 				geod_polygon_clear(&sstate.poly);
 
-				for(auto i = 0; i < vertex_count; i++) {
+				for (auto i = 0; i < vertex_count; i++) {
 					const auto vertex = part->get_vertex_xy(i);
 					geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
 				}
@@ -720,12 +716,11 @@ struct ST_Distance_Spheroid {
 		geod_init(&geod, EARTH_A, EARTH_F);
 
 		GenericExecutor::ExecuteBinary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE>(
-			args.data[0], args.data[1], result, args.size(),
-			[&](const POINT_TYPE &p1, const POINT_TYPE &p2) {
-				double distance;
-				geod_inverse(&geod, p1.a_val, p1.b_val, p2.a_val, p2.b_val, &distance, nullptr, nullptr);
-				return distance;
-			});
+		    args.data[0], args.data[1], result, args.size(), [&](const POINT_TYPE &p1, const POINT_TYPE &p2) {
+			    double distance;
+			    geod_inverse(&geod, p1.a_val, p1.b_val, p2.a_val, p2.b_val, &distance, nullptr, nullptr);
+			    return distance;
+		    });
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -756,12 +751,12 @@ struct ST_DWithin_Spheroid {
 		geod_init(&geod, EARTH_A, EARTH_F);
 
 		GenericExecutor::ExecuteTernary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE, BOOL_TYPE>(
-			args.data[0], args.data[1], args.data[2], result, args.size(),
-			[&](const POINT_TYPE &p1, const POINT_TYPE &p2, const DISTANCE_TYPE &limit) {
-				double distance;
-				geod_inverse(&geod, p1.a_val, p1.b_val, p2.a_val, p2.b_val, &distance, nullptr, nullptr);
-				return distance <= limit.val;
-			});
+		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    [&](const POINT_TYPE &p1, const POINT_TYPE &p2, const DISTANCE_TYPE &limit) {
+			    double distance;
+			    geod_inverse(&geod, p1.a_val, p1.b_val, p2.a_val, p2.b_val, &distance, nullptr, nullptr);
+			    return distance <= limit.val;
+		    });
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -796,7 +791,6 @@ void RegisterProjModule(DatabaseInstance &db) {
 	ST_Length_Spheroid::Register(db);
 	ST_Distance_Spheroid::Register(db);
 	ST_DWithin_Spheroid::Register(db);
-
 }
 
 } // namespace duckdb
