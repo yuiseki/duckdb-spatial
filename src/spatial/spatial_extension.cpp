@@ -1,17 +1,19 @@
 #define DUCKDB_EXTENSION_MAIN
 
 #include "spatial/spatial_extension.hpp"
+#include "spatial/spatial_types.hpp"
+#include "spatial/spatial_optimizers.hpp"
+#include "spatial/modules/main/functions.hpp"
 
 #include "spatial/modules/geos/geos_module.hpp"
 #include "spatial/modules/osm/osm_module.hpp"
 #include "spatial/modules/shapefile/shapefile_module.hpp"
 #include "spatial/modules/gdal/gdal_module.hpp"
-#include "spatial/modules/main/functions.hpp"
 #include "spatial/modules/proj/proj_module.hpp"
+
 
 #include "duckdb.hpp"
 
-#include "spatial/spatial_types.hpp"
 
 namespace duckdb {
 
@@ -24,6 +26,7 @@ static void LoadInternal(DatabaseInstance &instance) {
 	RegisterSpatialScalarFunctions(instance);
 	RegisterSpatialAggregateFunctions(instance);
 	RegisterSpatialTableFunctions(instance);
+	RegisterSpatialOptimizers(instance);
 
 	RegisterProjModule(instance);
 	RegisterGDALModule(instance);

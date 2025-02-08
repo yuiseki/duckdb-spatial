@@ -4,7 +4,7 @@
 
 namespace duckdb {
 
-class SpatialExtension : public Extension {
+class SpatialExtension final : public Extension {
 public:
 	void Load(DuckDB &db) override;
 	std::string Name() override;
