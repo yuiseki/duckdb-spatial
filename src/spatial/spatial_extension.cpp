@@ -2,11 +2,15 @@
 
 #include "spatial/spatial_extension.hpp"
 
-#include "duckdb.hpp"
-#include "modules/geos/geos_module.hpp"
+#include "spatial/modules/geos/geos_module.hpp"
+#include "spatial/modules/osm/osm_module.hpp"
+#include "spatial/modules/shapefile/shapefile_module.hpp"
 #include "spatial/modules/gdal/gdal_module.hpp"
 #include "spatial/modules/main/functions.hpp"
 #include "spatial/modules/proj/proj_module.hpp"
+
+#include "duckdb.hpp"
+
 #include "spatial/spatial_types.hpp"
 
 namespace duckdb {
@@ -24,6 +28,8 @@ static void LoadInternal(DatabaseInstance &instance) {
 	RegisterProjModule(instance);
 	RegisterGDALModule(instance);
 	RegisterGEOSModule(instance);
+	RegisterOSMModule(instance);
+	RegisterShapefileModule(instance);
 }
 
 void SpatialExtension::Load(DuckDB &db) {
