@@ -9,6 +9,7 @@ class DatabaseInstance;
 void RegisterSpatialScalarFunctions(DatabaseInstance &db);
 void RegisterSpatialAggregateFunctions(DatabaseInstance &db);
 void RegisterSpatialCastFunctions(DatabaseInstance &db);
+void RegisterSpatialTableFunctions(DatabaseInstance &db);
 
 // TODO: Move these
 class Vector;

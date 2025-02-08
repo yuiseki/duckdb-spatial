@@ -19,6 +19,7 @@ static void LoadInternal(DatabaseInstance &instance) {
 	RegisterSpatialCastFunctions(instance);
 	RegisterSpatialScalarFunctions(instance);
 	RegisterSpatialAggregateFunctions(instance);
+	RegisterSpatialTableFunctions(instance);
 
 	RegisterProjModule(instance);
 	RegisterGDALModule(instance);
