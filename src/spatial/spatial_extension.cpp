@@ -11,9 +11,7 @@
 #include "spatial/modules/gdal/gdal_module.hpp"
 #include "spatial/modules/proj/proj_module.hpp"
 
-
 #include "duckdb.hpp"
-
 
 namespace duckdb {
 
