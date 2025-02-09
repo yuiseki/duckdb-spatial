@@ -15,7 +15,6 @@
 #include "duckdb/planner/operator/logical_create_index.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 
-
 namespace duckdb {
 
 LogicalCreateRTreeIndex::LogicalCreateRTreeIndex(unique_ptr<CreateIndexInfo> info_p,

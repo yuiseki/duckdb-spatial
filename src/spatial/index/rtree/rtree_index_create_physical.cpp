@@ -362,4 +362,4 @@ SinkFinalizeType PhysicalCreateRTreeIndex::Finalize(Pipeline &pipeline, Event &e
 	return SinkFinalizeType::READY;
 }
 
-} // namespac duckdb
+} // namespace duckdb

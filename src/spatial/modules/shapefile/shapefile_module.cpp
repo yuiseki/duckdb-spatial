@@ -14,7 +14,6 @@
 
 #include "shapefil.h"
 
-
 void SASetupDefaultHooks(SAHooks *hooks) {
 	// Should never be called, use OpenLL and pass in the hooks
 	throw duckdb::InternalException("SASetupDefaultHooks");
@@ -221,7 +220,6 @@ void DuckDBShapefileError(const char *message) {
 	fprintf(stderr, "%s\n", message);
 }
 
-
 SAHooks GetDuckDBHooks(FileSystem &fs) {
 	SAHooks hooks;
 	hooks.FOpen = DuckDBShapefileOpen;
@@ -286,7 +284,8 @@ struct ST_ReadSHP {
 
 		explicit ShapefileBindData(string file_name_p)
 		    : file_name(std::move(file_name_p)), shape_count(0),
-		      shape_type(0), min_bound {0, 0, 0, 0}, max_bound {0, 0, 0, 0}, attribute_encoding(AttributeEncoding::LATIN1) {
+		      shape_type(0), min_bound {0, 0, 0, 0}, max_bound {0, 0, 0, 0},
+		      attribute_encoding(AttributeEncoding::LATIN1) {
 		}
 	};
 
@@ -581,15 +580,17 @@ struct ST_ReadSHP {
 			auto mpoly = sgl::multi_polygon::make_empty();
 			for (size_t polygon_idx = 0; polygon_idx < polygon_part_starts.size(); polygon_idx++) {
 				const auto part_start = polygon_part_starts[polygon_idx];
-				const auto part_end = polygon_idx == polygon_part_starts.size() - 1 ? shape->nParts
-				                                                              : polygon_part_starts[polygon_idx + 1];
+				const auto part_end = polygon_idx == polygon_part_starts.size() - 1
+				                          ? shape->nParts
+				                          : polygon_part_starts[polygon_idx + 1];
 
 				const auto poly_mem = arena.AllocateAligned(sizeof(sgl::geometry));
 				const auto poly_ptr = new (poly_mem) sgl::geometry(sgl::geometry_type::POLYGON);
 
 				for (auto ring_idx = part_start; ring_idx < part_end; ring_idx++) {
 					const auto start = shape->panPartStart[ring_idx];
-					const auto end = ring_idx == shape->nParts - 1 ? shape->nVertices : shape->panPartStart[ring_idx + 1];
+					const auto end =
+					    ring_idx == shape->nParts - 1 ? shape->nVertices : shape->panPartStart[ring_idx + 1];
 					const auto ring_size = end - start;
 
 					const auto ring_mem = arena.AllocateAligned(sizeof(sgl::geometry));
@@ -742,7 +743,8 @@ struct ST_ReadSHP {
 	};
 
 	template <class OP>
-	static void ConvertAttributeLoop(Vector &result, int record_start, idx_t count, DBFHandle dbf_handle, int field_idx) {
+	static void ConvertAttributeLoop(Vector &result, int record_start, idx_t count, DBFHandle dbf_handle,
+	                                 int field_idx) {
 		int record_idx = record_start;
 		for (idx_t row_idx = 0; row_idx < count; row_idx++) {
 			if (DBFIsAttributeNULL(dbf_handle, record_idx, field_idx)) {
@@ -769,7 +771,8 @@ struct ST_ReadSHP {
 					conversion_buffer.resize(strlen(string_bytes) * 2 + 1); // worst case (all non-ascii chars)
 					auto out_len =
 					    EncodingUtil::LatinToUTF8Buffer(const_data_ptr_cast(string_bytes), conversion_buffer.data());
-					result_str = StringVector::AddString(result, const_char_ptr_cast(conversion_buffer.data()), out_len);
+					result_str =
+					    StringVector::AddString(result, const_char_ptr_cast(conversion_buffer.data()), out_len);
 				} else {
 					result_str = StringVector::AddString(result, const_char_ptr_cast(string_bytes));
 				}
@@ -783,8 +786,8 @@ struct ST_ReadSHP {
 		}
 	}
 
-	static void ConvertAttributeVector(Vector &result, int record_start, idx_t count, DBFHandle dbf_handle, int field_idx,
-	                                   AttributeEncoding attribute_encoding) {
+	static void ConvertAttributeVector(Vector &result, int record_start, idx_t count, DBFHandle dbf_handle,
+	                                   int field_idx, AttributeEncoding attribute_encoding) {
 		switch (result.GetType().id()) {
 		case LogicalTypeId::BLOB:
 			ConvertAttributeLoop<ConvertBlobAttribute>(result, record_start, count, dbf_handle, field_idx);
@@ -919,20 +922,20 @@ struct ShapeTypeEntry {
 };
 
 constexpr ShapeTypeEntry shape_type_map[] = {
-	{SHPT_NULL, "NULL"},
-	{SHPT_POINT, "POINT"},
-	{SHPT_ARC, "LINESTRING"},
-	{SHPT_POLYGON, "POLYGON"},
-	{SHPT_MULTIPOINT, "MULTIPOINT"},
-	{SHPT_POINTZ, "POINTZ"},
-	{SHPT_ARCZ, "LINESTRINGZ"},
-	{SHPT_POLYGONZ, "POLYGONZ"},
-	{SHPT_MULTIPOINTZ, "MULTIPOINTZ"},
-	{SHPT_POINTM, "POINTM"},
-	{SHPT_ARCM, "LINESTRINGM"},
-	{SHPT_POLYGONM, "POLYGONM"},
-	{SHPT_MULTIPOINTM, "MULTIPOINTM"},
-	{SHPT_MULTIPATCH, "MULTIPATCH"},
+    {SHPT_NULL, "NULL"},
+    {SHPT_POINT, "POINT"},
+    {SHPT_ARC, "LINESTRING"},
+    {SHPT_POLYGON, "POLYGON"},
+    {SHPT_MULTIPOINT, "MULTIPOINT"},
+    {SHPT_POINTZ, "POINTZ"},
+    {SHPT_ARCZ, "LINESTRINGZ"},
+    {SHPT_POLYGONZ, "POLYGONZ"},
+    {SHPT_MULTIPOINTZ, "MULTIPOINTZ"},
+    {SHPT_POINTM, "POINTM"},
+    {SHPT_ARCM, "LINESTRINGM"},
+    {SHPT_POLYGONM, "POLYGONM"},
+    {SHPT_MULTIPOINTM, "MULTIPOINTM"},
+    {SHPT_MULTIPATCH, "MULTIPATCH"},
 };
 
 struct Shapefile_Meta {
@@ -942,8 +945,7 @@ struct Shapefile_Meta {
 	};
 
 	static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &input,
-	                                                  vector<LogicalType> &return_types, vector<string> &names) {
-
+	                                     vector<LogicalType> &return_types, vector<string> &names) {
 
 		auto result = make_uniq<ShapeFileMetaBindData>();
 
@@ -984,8 +986,7 @@ struct Shapefile_Meta {
 		vector<string> files;
 	};
 
-	static unique_ptr<GlobalTableFunctionState> InitGlobal(ClientContext &context,
-	                                                                    TableFunctionInitInput &input) {
+	static unique_ptr<GlobalTableFunctionState> InitGlobal(ClientContext &context, TableFunctionInitInput &input) {
 		auto &bind_data = input.bind_data->Cast<ShapeFileMetaBindData>();
 		auto result = make_uniq<ShapeFileMetaGlobalState>();
 
@@ -1047,7 +1048,7 @@ struct Shapefile_Meta {
 	}
 
 	static double GetProgress(ClientContext &context, const FunctionData *bind_data,
-	                                    const GlobalTableFunctionState *gstate) {
+	                          const GlobalTableFunctionState *gstate) {
 		auto &state = gstate->Cast<ShapeFileMetaGlobalState>();
 		return static_cast<double>(state.current_file_idx) / static_cast<double>(state.files.size());
 	}

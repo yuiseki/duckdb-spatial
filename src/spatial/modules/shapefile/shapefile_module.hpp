@@ -6,4 +6,4 @@ class DatabaseInstance;
 
 void RegisterShapefileModule(DatabaseInstance &db);
 
-}
+} // namespace duckdb
