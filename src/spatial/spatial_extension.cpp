@@ -7,7 +7,7 @@
 #include "spatial/index/rtree/rtree_module.hpp"
 #include "spatial/modules/gdal/gdal_module.hpp"
 #include "spatial/modules/geos/geos_module.hpp"
-#include "spatial/modules/main/functions.hpp"
+#include "spatial/modules/main/spatial_functions.hpp"
 #include "spatial/modules/osm/osm_module.hpp"
 #include "spatial/modules/proj/proj_module.hpp"
 #include "spatial/modules/shapefile/shapefile_module.hpp"

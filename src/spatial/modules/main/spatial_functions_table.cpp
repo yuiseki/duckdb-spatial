@@ -1,4 +1,4 @@
-#include "spatial/modules/main/functions.hpp"
+#include "spatial/modules/main/spatial_functions.hpp"
 #include "spatial/spatial_types.hpp"
 #include "spatial/geometry/bbox.hpp"
 

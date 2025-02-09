@@ -1,4 +1,4 @@
-#include "spatial/modules/main/functions.hpp"
+#include "spatial/modules/main/spatial_functions.hpp"
 
 namespace duckdb {
 

@@ -1,14 +1,15 @@
-#include "duckdb/common/error_data.hpp"
-#include "duckdb/common/operator/cast_operators.hpp"
-#include "duckdb/common/vector_operations/generic_executor.hpp"
-#include "duckdb/main/extension_util.hpp"
+#include "spatial/modules/main/spatial_functions.hpp"
 #include "spatial/geometry/geometry_processor.hpp"
 #include "spatial/geometry/sgl.hpp"
-#include "spatial/modules/main/functions.hpp"
 #include "spatial/geometry/geometry_serialization.hpp"
 #include "spatial/spatial_types.hpp"
 #include "spatial/util/math.hpp"
 #include "spatial/geometry/wkb_writer.hpp"
+
+#include "duckdb/common/error_data.hpp"
+#include "duckdb/common/operator/cast_operators.hpp"
+#include "duckdb/common/vector_operations/generic_executor.hpp"
+#include "duckdb/main/extension_util.hpp"
 
 namespace duckdb {
 
