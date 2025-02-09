@@ -13,6 +13,7 @@
 #include "spatial/modules/shapefile/shapefile_module.hpp"
 #include "spatial/spatial_optimizers.hpp"
 #include "spatial/spatial_types.hpp"
+#include "spatial/spatial_geoarrow.hpp"
 
 namespace duckdb {
 
@@ -26,6 +27,7 @@ static void LoadInternal(DatabaseInstance &instance) {
 	RegisterSpatialAggregateFunctions(instance);
 	RegisterSpatialTableFunctions(instance);
 	RegisterSpatialOptimizers(instance);
+	GeoArrow::Register(instance);
 
 	RegisterProjModule(instance);
 	RegisterGDALModule(instance);
