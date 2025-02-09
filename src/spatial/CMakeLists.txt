@@ -1,4 +1,3 @@
-add_subdirectory(serde)
 add_subdirectory(util)
 add_subdirectory(modules)
 add_subdirectory(geometry)

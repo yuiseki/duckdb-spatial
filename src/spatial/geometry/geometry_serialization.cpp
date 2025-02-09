@@ -1,4 +1,4 @@
-#include "spatial/serde/geometry_serialization.hpp"
+#include "spatial/geometry/geometry_serialization.hpp"
 #include "spatial/util/binary_reader.hpp"
 #include "spatial/util/binary_writer.hpp"
 #include "spatial/util/math.hpp"

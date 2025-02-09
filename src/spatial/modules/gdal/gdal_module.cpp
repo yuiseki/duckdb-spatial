@@ -4,7 +4,7 @@
 #include "spatial/spatial_types.hpp"
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/geometry/wkb_writer.hpp"
-#include "spatial/serde/geometry_serialization.hpp"
+#include "spatial/geometry/geometry_serialization.hpp"
 
 // DuckDB
 #include "duckdb/main/database.hpp"

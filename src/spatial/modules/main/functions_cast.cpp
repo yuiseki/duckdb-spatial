@@ -5,7 +5,7 @@
 #include "spatial/geometry/geometry_processor.hpp"
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/modules/main/functions.hpp"
-#include "spatial/serde/geometry_serialization.hpp"
+#include "spatial/geometry/geometry_serialization.hpp"
 #include "spatial/spatial_types.hpp"
 #include "spatial/util/math.hpp"
 #include "spatial/geometry/wkb_writer.hpp"

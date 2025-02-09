@@ -4,7 +4,7 @@
 #include "spatial/util/function_builder.hpp"
 #include "spatial/util/math.hpp"
 #include "spatial/util/binary_reader.hpp"
-#include "spatial/serde/geometry_serialization.hpp"
+#include "spatial/geometry/geometry_serialization.hpp"
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/geometry/wkb_writer.hpp"
 
@@ -4886,6 +4886,7 @@ struct ST_IntersectsExtent {
 //======================================================================================================================
 // ST_IsClosed
 //======================================================================================================================
+
 struct ST_IsClosed {
 
 	//------------------------------------------------------------------------------------------------------------------

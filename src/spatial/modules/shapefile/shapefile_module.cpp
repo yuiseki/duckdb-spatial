@@ -1,5 +1,5 @@
 #include "spatial/modules/shapefile/shapefile_module.hpp"
-#include "spatial/serde/geometry_serialization.hpp"
+#include "spatial/geometry/geometry_serialization.hpp"
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/spatial_types.hpp"
 

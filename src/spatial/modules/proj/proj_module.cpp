@@ -2,7 +2,7 @@
 #include "spatial/spatial_types.hpp"
 #include "spatial/util/function_builder.hpp"
 #include "spatial/geometry/sgl.hpp"
-#include "spatial/serde/geometry_serialization.hpp"
+#include "spatial/geometry/geometry_serialization.hpp"
 
 #include "duckdb/common/vector_operations/generic_executor.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
