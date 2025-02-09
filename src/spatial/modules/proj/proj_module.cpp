@@ -239,7 +239,7 @@ struct ST_Transform {
 		const auto &info = func_expr.bind_info->Cast<BindData>();
 
 		GenericExecutor::ExecuteTernary<POINT_TYPE, PROJ_TYPE, PROJ_TYPE, POINT_TYPE>(
-		    args.data[0], args.data[2], args.data[3], result, args.size(),
+		    args.data[0], args.data[1], args.data[2], result, args.size(),
 		    [&](const POINT_TYPE &point_in, const PROJ_TYPE &source, const PROJ_TYPE target) {
 			    const auto source_str = source.val.GetString();
 			    const auto target_str = target.val.GetString();

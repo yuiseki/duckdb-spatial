@@ -191,7 +191,8 @@ struct GeometryCasts {
 		ExtensionUtil::RegisterCastFunction(db, geom_type, LogicalType::VARCHAR, BoundCastInfo(ToVarcharCast), 1);
 
 		// Geometry -> VARCHAR is implicitly castable
-		ExtensionUtil::RegisterCastFunction(db, LogicalType::VARCHAR, geom_type, BoundCastInfo(FromVarcharCast));
+		ExtensionUtil::RegisterCastFunction(db, LogicalType::VARCHAR, geom_type,
+		                                    BoundCastInfo(FromVarcharCast, nullptr, LocalState::InitCast));
 
 		// Geometry -> WKB is explicitly castable
 		ExtensionUtil::RegisterCastFunction(db, geom_type, wkb_type, BoundCastInfo(ToWKBCast));
@@ -489,33 +490,35 @@ struct PolygonCasts {
 			const auto tail = poly.get_last_part();
 			auto head = tail;
 
-			idx_t ring_idx = 0;
-			do {
-				D_ASSERT(ring_idx < poly_size);
-				head = head->get_next();
+			if (head) {
+				idx_t ring_idx = 0;
+				do {
+					D_ASSERT(ring_idx < poly_size);
+					head = head->get_next();
 
-				const auto ring_size = head->get_count();
-				const auto ring_entry = list_entry_t(total_coords, ring_size);
+					const auto ring_size = head->get_count();
+					const auto ring_entry = list_entry_t(total_coords, ring_size);
 
-				ListVector::Reserve(ring_vec, total_coords + ring_size);
+					ListVector::Reserve(ring_vec, total_coords + ring_size);
 
-				const auto ring_entries = ListVector::GetData(ring_vec);
-				auto &coord_vec = ListVector::GetEntry(ring_vec);
-				auto &coord_vec_children = StructVector::GetEntries(coord_vec);
-				const auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
-				const auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+					const auto ring_entries = ListVector::GetData(ring_vec);
+					auto &coord_vec = ListVector::GetEntry(ring_vec);
+					auto &coord_vec_children = StructVector::GetEntries(coord_vec);
+					const auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
+					const auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
 
-				ring_entries[total_rings + ring_idx] = ring_entry;
+					ring_entries[total_rings + ring_idx] = ring_entry;
 
-				for (idx_t j = 0; j < ring_size; j++) {
-					const auto vertext = head->get_vertex_xy(j);
-					x_data[ring_entry.offset + j] = vertext.x;
-					y_data[ring_entry.offset + j] = vertext.y;
-				}
-				total_coords += ring_size;
+					for (idx_t j = 0; j < ring_size; j++) {
+						const auto vertext = head->get_vertex_xy(j);
+						x_data[ring_entry.offset + j] = vertext.x;
+						y_data[ring_entry.offset + j] = vertext.y;
+					}
+					total_coords += ring_size;
 
-				ring_idx++;
-			} while (head != tail);
+					ring_idx++;
+				} while (head != tail);
+			}
 
 			total_rings += poly_size;
 

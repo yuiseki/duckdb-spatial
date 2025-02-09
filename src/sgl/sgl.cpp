@@ -1623,6 +1623,81 @@ double distance(const geometry* lhs_p, const geometry* rhs_p) {
 }
 
 
+//----------------------------------------------------------------------------------------------------------------------
+// Validity
+//----------------------------------------------------------------------------------------------------------------------
+
+bool is_valid(const sgl::geometry *geom) {
+	if(!geom) {
+		return false;
+	}
+
+	const auto root = geom->get_parent();
+	auto curr = geom;
+
+	while (true) {
+		switch(curr->get_type()) {
+			case sgl::geometry_type::POINT: {
+				// Points cant have more than one vertex
+				if(curr->get_count() > 1) {
+					return false;
+				}
+			} break;
+			case sgl::geometry_type::LINESTRING: {
+				// Linestrings must have zero or at least two vertices
+				if(curr->get_count() == 1) {
+					return false;
+				}
+			} break;
+			case sgl::geometry_type::POLYGON: {
+				const auto tail = curr->get_last_part();
+				auto head = tail;
+				if (!head) {
+					break;
+				}
+				do {
+					head = head->get_next();
+					// Polygon rings must have at least four vertices
+					if(head->get_count() < 4) {
+						return false;
+					}
+				} while (head != tail);
+			} break;
+			case sgl::geometry_type::MULTI_POINT:
+			case sgl::geometry_type::MULTI_LINESTRING:
+			case sgl::geometry_type::MULTI_POLYGON:
+			case sgl::geometry_type::MULTI_GEOMETRY: {
+				if(!curr->is_empty()) {
+					// Go downwards
+					curr = curr->get_first_part();
+					continue;
+				}
+			} break;
+			default:
+				// Just return false!
+				return false;
+		}
+
+		// Inner loop
+		while(true) {
+			const auto parent = curr->get_parent();
+			if(parent == root) {
+				// Done!
+				return true;
+			}
+			if(curr != parent->get_last_part()) {
+				// Go sideways
+				curr = curr->get_next();
+				break;
+			}
+			// Go upwards
+			curr = parent;
+		}
+	}
+}
+
+
+
 } // namespace ops
 
 } // namespace sgl

@@ -854,6 +854,10 @@ geometry extract_points(sgl::geometry *geom);
 geometry extract_linestrings(sgl::geometry *geom);
 geometry extract_polygons(sgl::geometry *geom);
 
+// TODO: this will only check that geometries have enough vertices to be valid.
+// It does NOT check topological validity.
+bool is_valid(const sgl::geometry *geom);
+
 } // namespace ops
 
 } // namespace sgl

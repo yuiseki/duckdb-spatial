@@ -2285,6 +2285,80 @@ struct ST_Extent {
 };
 
 //======================================================================================================================
+// ST_Extent_Approx
+//======================================================================================================================
+
+struct ST_Extent_Approx {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute
+	//------------------------------------------------------------------------------------------------------------------
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+
+		const auto count = args.size();
+		auto &input = args.data[0];
+
+		const auto &struct_vec = StructVector::GetEntries(result);
+		const auto min_x_data = FlatVector::GetData<float>(*struct_vec[0]);
+		const auto min_y_data = FlatVector::GetData<float>(*struct_vec[1]);
+		const auto max_x_data = FlatVector::GetData<float>(*struct_vec[2]);
+		const auto max_y_data = FlatVector::GetData<float>(*struct_vec[3]);
+
+		UnifiedVectorFormat input_vdata;
+		input.ToUnifiedFormat(count, input_vdata);
+		const auto input_data = UnifiedVectorFormat::GetData<geometry_t>(input_vdata);
+
+		for (idx_t i = 0; i < count; i++) {
+			const auto row_idx = input_vdata.sel->get_index(i);
+			if (input_vdata.validity.RowIsValid(row_idx)) {
+				auto &blob = input_data[row_idx];
+
+				// Try to get the cached bounding box from the blob
+				Box2D<double> bbox;
+				if (blob.TryGetCachedBounds(bbox)) {
+					min_x_data[i] = MathUtil::DoubleToFloatDown(bbox.min.x);
+					min_y_data[i] = MathUtil::DoubleToFloatDown(bbox.min.y);
+					max_x_data[i] = MathUtil::DoubleToFloatUp(bbox.max.x);
+					max_y_data[i] = MathUtil::DoubleToFloatUp(bbox.max.y);
+				} else {
+					// No bounding box, return null
+					FlatVector::SetNull(result, i, true);
+				}
+			} else {
+				// Null input, return null
+				FlatVector::SetNull(result, i, true);
+			}
+		}
+
+		if (input.GetVectorType() == VectorType::CONSTANT_VECTOR) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	// TODO: Add docs
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Extent_Approx", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::BOX_2DF());
+
+				variant.SetFunction(Execute);
+			});
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
+	}
+};
+
+//======================================================================================================================
 // ST_ExteriorRing
 //======================================================================================================================
 
@@ -7222,6 +7296,8 @@ struct PointAccessFunctionBase {
 };
 
 struct VertexMinAggOp {
+	static constexpr auto MIN_NOT_MAX = true;
+
 	static double Init() {
 		return std::numeric_limits<double>::max();
 	}
@@ -7231,6 +7307,8 @@ struct VertexMinAggOp {
 };
 
 struct VertexMaxAggOp {
+	static constexpr auto MIN_NOT_MAX = false;
+
 	static double Init() {
 		return std::numeric_limits<double>::lowest();
 	}
@@ -7290,6 +7368,126 @@ struct VertexAggFunctionBase {
 		    });
 	}
 
+	static void ExecutePoint(DataChunk &args, ExpressionState &, Vector &result) {
+		D_ASSERT(args.data.size() == 1);
+		auto &point = args.data[0];
+		auto &point_children = StructVector::GetEntries(point);
+
+		switch (OP::ORDINATE) {
+		case VertexOrdinate::X:
+			result.Reference(*point_children[0]);
+			break;
+		case VertexOrdinate::Y:
+			result.Reference(*point_children[1]);
+			break;
+		default:
+			D_ASSERT(false);
+			break;
+		}
+	}
+
+	static void ExecuteLineString(DataChunk &args, ExpressionState &, Vector &result) {
+		D_ASSERT(args.data.size() == 1);
+
+		auto &line_vec = args.data[0];
+		auto &line_coords = ListVector::GetEntry(line_vec);
+		auto &line_coords_vec = StructVector::GetEntries(line_coords);
+
+		const auto axis = OP::ORDINATE == VertexOrdinate::X ? 0 : 1;
+		auto ordinate_data = FlatVector::GetData<double>(*line_coords_vec[axis]);
+
+		UnaryExecutor::ExecuteWithNulls<list_entry_t, double>(
+		    line_vec, result, args.size(), [&](const list_entry_t &line, ValidityMask &mask, idx_t idx) {
+			    // Empty line, return NULL
+			    if (line.length == 0) {
+				    mask.SetInvalid(idx);
+				    return 0.0;
+			    }
+
+			    auto val = AGG::Init();
+			    for (idx_t i = line.offset; i < line.offset + line.length; i++) {
+				    auto ordinate = ordinate_data[i];
+				    val = AGG::Merge(val, ordinate);
+			    }
+			    return val;
+		    });
+
+		if (line_vec.GetVectorType() == VectorType::CONSTANT_VECTOR) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	static void ExecutePolygon(DataChunk &args, ExpressionState &, Vector &result) {
+		D_ASSERT(args.data.size() == 1);
+
+		auto input = args.data[0];
+		auto count = args.size();
+
+		UnifiedVectorFormat format;
+		input.ToUnifiedFormat(count, format);
+
+		auto &ring_vec = ListVector::GetEntry(input);
+		auto ring_entries = ListVector::GetData(ring_vec);
+		auto &vertex_vec = ListVector::GetEntry(ring_vec);
+		auto &vertex_vec_children = StructVector::GetEntries(vertex_vec);
+		const auto axis = OP::ORDINATE == VertexOrdinate::X ? 0 : 1;
+		auto ordinate_data = FlatVector::GetData<double>(*vertex_vec_children[axis]);
+
+		UnaryExecutor::ExecuteWithNulls<list_entry_t, double>(
+		    input, result, count, [&](const list_entry_t &polygon, ValidityMask &mask, idx_t idx) {
+			    auto polygon_offset = polygon.offset;
+
+			    // Empty polygon, return NULL
+			    if (polygon.length == 0) {
+				    mask.SetInvalid(idx);
+				    return 0.0;
+			    }
+
+			    // We only have to check the outer shell
+			    auto shell_ring = ring_entries[polygon_offset];
+			    auto ring_offset = shell_ring.offset;
+			    auto ring_length = shell_ring.length;
+
+			    // Polygon is invalid. This should never happen but just in case
+			    if (ring_length == 0) {
+				    mask.SetInvalid(idx);
+				    return 0.0;
+			    }
+
+			    auto val = AGG::Init();
+			    for (idx_t coord_idx = ring_offset; coord_idx < ring_offset + ring_length - 1; coord_idx++) {
+				    auto ordinate = ordinate_data[coord_idx];
+				    val = AGG::Merge(val, ordinate);
+			    }
+			    return val;
+		    });
+	}
+
+	static void ExecuteBox(DataChunk &args, ExpressionState &, Vector &result) {
+		auto &input = args.data[0];
+		auto &box_vec = StructVector::GetEntries(input);
+
+		switch (OP::ORDINATE) {
+		case VertexOrdinate::X:
+			if (AGG::MIN_NOT_MAX) {
+				result.Reference(*box_vec[0]);
+			} else {
+				result.Reference(*box_vec[2]);
+			}
+			break;
+		case VertexOrdinate::Y:
+			if (AGG::MIN_NOT_MAX) {
+				result.Reference(*box_vec[1]);
+			} else {
+				result.Reference(*box_vec[3]);
+			}
+			break;
+		default:
+			D_ASSERT(false);
+			break;
+		}
+	}
+
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, OP::NAME, [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -7298,10 +7496,49 @@ struct VertexAggFunctionBase {
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
-
-				variant.SetDescription(OP::DESCRIPTION);
-				variant.SetExample(OP::EXAMPLE);
 			});
+
+			// These are only defined for X/Y variants
+			if (OP::ORDINATE == VertexOrdinate::X || OP::ORDINATE == VertexOrdinate::Y) {
+				func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+					variant.AddParameter("point", GeoTypes::POINT_2D());
+					variant.SetReturnType(LogicalType::DOUBLE);
+
+					variant.SetFunction(ExecutePoint);
+				});
+
+				func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+					variant.AddParameter("line", GeoTypes::LINESTRING_2D());
+					variant.SetReturnType(LogicalType::DOUBLE);
+
+					variant.SetFunction(ExecuteLineString);
+				});
+
+				func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+					variant.AddParameter("polygon", GeoTypes::POLYGON_2D());
+					variant.SetReturnType(LogicalType::DOUBLE);
+
+					variant.SetFunction(ExecutePolygon);
+				});
+
+				func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+					variant.AddParameter("box", GeoTypes::BOX_2D());
+					variant.SetReturnType(LogicalType::DOUBLE);
+
+					variant.SetFunction(ExecuteBox);
+				});
+
+				func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+					variant.AddParameter("box", GeoTypes::BOX_2DF());
+					variant.SetReturnType(LogicalType::FLOAT);
+
+					variant.SetFunction(ExecuteBox);
+				});
+			}
+
+			func.SetDescription(OP::DESCRIPTION);
+			func.SetExample(OP::EXAMPLE);
+
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");
 		});
@@ -7416,6 +7653,7 @@ void RegisterSpatialScalarFunctions(DatabaseInstance &db) {
 	ST_Dump::Register(db);
 	ST_EndPoint::Register(db);
 	ST_Extent::Register(db);
+	ST_Extent_Approx::Register(db);
 	ST_ExteriorRing::Register(db);
 	ST_FlipCoordinates::Register(db);
 	ST_Force2D::Register(db);

@@ -7,6 +7,8 @@
 #include "spatial/util/function_builder.hpp"
 
 #include <duckdb/common/vector_operations/senary_executor.hpp>
+#include <sgl/sgl.hpp>
+#include <spatial/geometry/geometry_serialization.hpp>
 
 namespace duckdb {
 
@@ -25,7 +27,12 @@ public:
 
 	static LocalState &ResetAndGet(ExpressionState &state) {
 		auto &local_state = ExecuteFunctionState::GetFunctionState(state)->Cast<LocalState>();
+		local_state.arena.Reset();
 		return local_state;
+	}
+
+	ArenaAllocator &GetArena() {
+		return arena;
 	}
 
 	GEOSContextHandle_t GetContext() const {
@@ -35,7 +42,8 @@ public:
 	GeosGeometry Deserialize(const string_t &blob) const;
 	string_t Serialize(Vector &result, const GeosGeometry &geom) const;
 
-	explicit LocalState(ClientContext &context) {
+	// Most GEOS functions do not use an arena, so just use the default allocator
+	explicit LocalState(ClientContext &context) : arena(Allocator::Get(context)) {
 		ctx = GEOS_init_r();
 
 		GEOSContext_setErrorMessageHandler_r(
@@ -48,6 +56,7 @@ public:
 
 private:
 	GEOSContextHandle_t ctx;
+	ArenaAllocator arena;
 };
 
 string_t LocalState::Serialize(Vector &result, const GeosGeometry &geom) const {
@@ -879,9 +888,22 @@ struct ST_IsSimple {
 };
 
 struct ST_IsValid {
+
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		const auto &lstate = LocalState::ResetAndGet(state);
+		auto &lstate = LocalState::ResetAndGet(state);
 		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+			// GEOS can only construct geometries with a valid amount of vertices.
+			// Do a quick check with SGL first
+			// TODO: this is the only GEOS function that uses an arena, we shouldnt have to do this.
+			// In theory, we could just scan the serialized geom instead.
+			sgl::geometry sgl_geom(sgl::geometry_type::INVALID);
+			Serde::Deserialize(sgl_geom, lstate.GetArena(), geom_blob.GetData(), geom_blob.GetSize());
+
+			if (!sgl::ops::is_valid(&sgl_geom)) {
+				// GEOS cant construct this, so it cant't be valid.
+				return false;
+			}
+
 			const auto geom = lstate.Deserialize(geom_blob);
 			return geom.is_valid();
 		});
