@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <limits>
 #include <cmath>
 
 // Assert macro

@@ -3,6 +3,8 @@
 #include "spatial/geometry/bbox.hpp"
 #include "duckdb/execution/index/index_pointer.hpp"
 
+#include <algorithm>
+
 namespace duckdb {
 
 //-------------------------------------------------------------
