@@ -136,6 +136,9 @@ public:
 	template <class CALLBACK>
 	static void RegisterScalar(DatabaseInstance &db, const char *name, CALLBACK &&callback);
 
+	// TODO:
+	static void AddTableFunctionDocs(DatabaseInstance &db, const char *name, const char* desc, const char *example);
+
 private:
 	static void Register(DatabaseInstance &db, const char *name, ScalarFunctionBuilder &builder);
 };

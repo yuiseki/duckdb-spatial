@@ -26,6 +26,8 @@
 #include "cpl_vsi_virtual.h"
 #include "ogrsf_frmts.h"
 
+#include <spatial/util/function_builder.hpp>
+
 namespace duckdb {
 
 namespace {
@@ -1087,26 +1089,25 @@ struct ST_Read : ArrowTableFunction {
 	// Register
 	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
-		TableFunctionSet set("ST_Read");
-		TableFunction scan({LogicalType::VARCHAR}, Execute, Bind, InitGlobal, InitLocal);
+		TableFunction func("ST_Read", {LogicalType::VARCHAR}, Execute, Bind, InitGlobal, InitLocal);
 
-		scan.cardinality = Cardinality;
-		scan.get_partition_data = ArrowTableFunction::ArrowGetPartitionData;
+		func.cardinality = Cardinality;
+		func.get_partition_data = ArrowTableFunction::ArrowGetPartitionData;
 
-		scan.projection_pushdown = true;
+		func.projection_pushdown = true;
 
-		scan.named_parameters["open_options"] = LogicalType::LIST(LogicalType::VARCHAR);
-		scan.named_parameters["allowed_drivers"] = LogicalType::LIST(LogicalType::VARCHAR);
-		scan.named_parameters["sibling_files"] = LogicalType::LIST(LogicalType::VARCHAR);
-		scan.named_parameters["spatial_filter_box"] = GeoTypes::BOX_2D();
-		scan.named_parameters["spatial_filter"] = GeoTypes::WKB_BLOB();
-		scan.named_parameters["layer"] = LogicalType::VARCHAR;
-		scan.named_parameters["sequential_layer_scan"] = LogicalType::BOOLEAN;
-		scan.named_parameters["max_batch_size"] = LogicalType::INTEGER;
-		scan.named_parameters["keep_wkb"] = LogicalType::BOOLEAN;
-		set.AddFunction(scan);
+		func.named_parameters["open_options"] = LogicalType::LIST(LogicalType::VARCHAR);
+		func.named_parameters["allowed_drivers"] = LogicalType::LIST(LogicalType::VARCHAR);
+		func.named_parameters["sibling_files"] = LogicalType::LIST(LogicalType::VARCHAR);
+		func.named_parameters["spatial_filter_box"] = GeoTypes::BOX_2D();
+		func.named_parameters["spatial_filter"] = GeoTypes::WKB_BLOB();
+		func.named_parameters["layer"] = LogicalType::VARCHAR;
+		func.named_parameters["sequential_layer_scan"] = LogicalType::BOOLEAN;
+		func.named_parameters["max_batch_size"] = LogicalType::INTEGER;
+		func.named_parameters["keep_wkb"] = LogicalType::BOOLEAN;
+		ExtensionUtil::RegisterFunction(db, func);
 
-		ExtensionUtil::RegisterFunction(db, set);
+		FunctionBuilder::AddTableFunctionDocs(db, "ST_Read", DOCUMENTATION, EXAMPLE);
 
 		// Replacement scan
 		auto &config = DBConfig::GetConfig(db);
@@ -1305,14 +1306,14 @@ struct ST_Read_Meta {
 	//------------------------------------------------------------------------------------------------------------------
 	// static constexpr DocTag DOC_TAGS[] = {{"ext", "spatial"}};
 
-	static constexpr auto DOC_DESCRIPTION = R"(
+	static constexpr auto DESCRIPTION = R"(
 	    Read the metadata from a variety of geospatial file formats using the GDAL library.
 
 	    The `ST_Read_Meta` table function accompanies the `ST_Read` table function, but instead of reading the contents of a file, this function scans the metadata instead.
 	    Since the data model of the underlying GDAL library is quite flexible, most of the interesting metadata is within the returned `layers` column, which is a somewhat complex nested structure of DuckDB `STRUCT` and `LIST` types.
 	)";
 
-	static constexpr auto DOC_EXAMPLE = R"(
+	static constexpr auto EXAMPLE = R"(
 	    -- Find the coordinate reference system authority name and code for the first layers first geometry column in the file
 	    SELECT
 	        layers[1].geometry_fields[1].crs.auth_name as name,
@@ -1326,6 +1327,8 @@ struct ST_Read_Meta {
 	static void Register(DatabaseInstance &db) {
 		const TableFunction func("ST_Read_Meta", {}, Execute, Bind, Init);
 		ExtensionUtil::RegisterFunction(db, func);
+
+		FunctionBuilder::AddTableFunctionDocs(db, "ST_Read_Meta", DESCRIPTION, EXAMPLE);
 	}
 };
 
@@ -1444,8 +1447,9 @@ struct ST_Drivers {
 	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		const TableFunction func("ST_Drivers", {}, Execute, Bind, Init);
-
 		ExtensionUtil::RegisterFunction(db, func);
+
+		FunctionBuilder::AddTableFunctionDocs(db, "ST_Drivers", DESCRIPTION, EXAMPLE);
 	}
 };
 

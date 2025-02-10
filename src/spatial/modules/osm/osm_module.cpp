@@ -1,16 +1,17 @@
 #include "spatial/modules/osm/osm_module.hpp"
-#include "spatial/spatial_types.hpp"
 
-#include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/function/replacement_scan.hpp"
+#include "duckdb/main/database.hpp"
+#include "duckdb/main/extension_util.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
-#include "duckdb/main/extension_util.hpp"
-#include "duckdb/main/database.hpp"
-
+#include "duckdb/storage/buffer_manager.hpp"
 #include "protozero/pbf_reader.hpp"
+#include "spatial/spatial_types.hpp"
 #include "zlib.h"
+
+#include <spatial/util/function_builder.hpp>
 
 namespace duckdb {
 
@@ -899,7 +900,7 @@ void RegisterOSMModule(DatabaseInstance &db) {
 	read.table_scan_progress = Progress;
 
 	ExtensionUtil::RegisterFunction(db, read);
-	// DocUtil::AddDocumentation(db, "ST_ReadOSM", DOC_DESCRIPTION, DOC_EXAMPLE, DOC_TAGS);
+	FunctionBuilder::AddTableFunctionDocs(db, "ST_ReadOSM", DOC_DESCRIPTION, DOC_EXAMPLE);
 
 	// Replacement scan
 	auto &config = DBConfig::GetConfig(db);

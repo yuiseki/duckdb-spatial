@@ -3,6 +3,8 @@
 #include "duckdb/catalog/catalog_entry/function_entry.hpp"
 #include "duckdb/main/extension_util.hpp"
 
+#include <duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp>
+
 namespace duckdb {
 
 static string RemoveIndentAndTrailingWhitespace(const char *text) {
@@ -75,5 +77,25 @@ void FunctionBuilder::Register(DatabaseInstance &db, const char *name, ScalarFun
 		func_entry.tags = std::move(builder.tags);
 	}
 }
+
+void FunctionBuilder::AddTableFunctionDocs(DatabaseInstance &db, const char *name, const char* desc,
+                                           const char* exampl) {
+
+	auto &catalog = Catalog::GetSystemCatalog(db);
+	auto transaction = CatalogTransaction::GetSystemTransaction(db);
+	auto &schema = catalog.GetSchema(transaction, DEFAULT_SCHEMA);
+	auto catalog_entry = schema.GetEntry(transaction, CatalogType::TABLE_FUNCTION_ENTRY, name);
+	if (!catalog_entry) {
+		// This should not happen, we just registered the function
+		throw InternalException("Function with name \"%s\" not found in FunctionBuilder::AddScalar", name);
+	}
+
+	auto &func_entry = catalog_entry->Cast<TableFunctionCatalogEntry>();
+	FunctionDescription function_description;
+	function_description.description = desc;
+	function_description.examples.push_back(exampl);
+	func_entry.descriptions.push_back(function_description);
+}
+
 
 } // namespace duckdb
