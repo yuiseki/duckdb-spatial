@@ -1325,8 +1325,8 @@ struct ST_Read_Meta {
 	// Register
 	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
-		const TableFunction func("ST_Read_Meta", {}, Execute, Bind, Init);
-		ExtensionUtil::RegisterFunction(db, func);
+		const TableFunction func("ST_Read_Meta", {LogicalType::VARCHAR}, Execute, Bind, Init);
+		ExtensionUtil::RegisterFunction(db, MultiFileReader::CreateFunctionSet(func));
 
 		FunctionBuilder::AddTableFunctionDocs(db, "ST_Read_Meta", DESCRIPTION, EXAMPLE);
 	}
