@@ -5,7 +5,8 @@
 #include "spatial/util/function_builder.hpp"
 
 #include "duckdb/common/vector_operations/senary_executor.hpp"
-#include "duckdb/main/extension_util.hpp"
+
+#include "geos_c.h"
 
 namespace duckdb {
 
@@ -1451,11 +1452,16 @@ struct ST_Union_Agg : GeosUnaryAggFunction {
 	}
 
 	static void Register(DatabaseInstance &db) {
-		auto func = AggregateFunction::UnaryAggregateDestructor<GeosUnaryAggState, string_t, string_t, ST_Union_Agg>(
+		const auto agg = AggregateFunction::UnaryAggregateDestructor<GeosUnaryAggState, string_t, string_t, ST_Union_Agg>(
 		    GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY());
-		func.name = "ST_Union_Agg";
 
-		ExtensionUtil::RegisterFunction(db, func);
+		FunctionBuilder::RegisterAggregate(db, "ST_Union_Agg", [&](AggregateFunctionBuilder &func) {
+			func.SetFunction(agg);
+			func.SetDescription("Computes the union of a set of input geometries");
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
 	}
 };
 
@@ -1469,12 +1475,17 @@ struct ST_Intersection_Agg : GeosUnaryAggFunction {
 	}
 
 	static void Register(DatabaseInstance &db) {
-		auto func =
+		const auto agg =
 		    AggregateFunction::UnaryAggregateDestructor<GeosUnaryAggState, string_t, string_t, ST_Intersection_Agg>(
 		        GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY());
-		func.name = "ST_Intersection_Agg";
 
-		ExtensionUtil::RegisterFunction(db, func);
+		FunctionBuilder::RegisterAggregate(db, "ST_Intersection_Agg", [&](AggregateFunctionBuilder &func) {
+			func.SetFunction(agg);
+			func.SetDescription("Computes the intersection of a set of geometries");
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
 	}
 };
 

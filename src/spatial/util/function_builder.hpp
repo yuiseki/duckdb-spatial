@@ -128,6 +128,39 @@ void ScalarFunctionBuilder::AddVariant(CALLBACK &&callback) {
 }
 
 //------------------------------------------------------------------------------
+// Aggregate
+//------------------------------------------------------------------------------
+
+class AggregateFunctionBuilder {
+	friend class FunctionBuilder;
+public:
+	void SetTag(const string &key, const string &value);
+	void SetDescription(const string &desc);
+	void SetExample(const string &ex);
+	void SetFunction(const AggregateFunction &function);
+private:
+	explicit AggregateFunctionBuilder(const char *name) : set(name) { }
+	string description;
+	string example;
+	unordered_map<string, string> tags;
+	AggregateFunctionSet set;
+};
+
+inline void AggregateFunctionBuilder::SetFunction(const AggregateFunction &function) {
+	set.AddFunction(function);
+}
+
+inline void AggregateFunctionBuilder::SetDescription(const string &desc) {
+	description = desc;
+}
+inline void AggregateFunctionBuilder::SetExample(const string &ex) {
+	example = ex;
+}
+inline void AggregateFunctionBuilder::SetTag(const string &key, const string &value) {
+	tags[key] = value;
+}
+
+//------------------------------------------------------------------------------
 // Function Builder
 //------------------------------------------------------------------------------
 
@@ -136,11 +169,15 @@ public:
 	template <class CALLBACK>
 	static void RegisterScalar(DatabaseInstance &db, const char *name, CALLBACK &&callback);
 
+	template<class CALLBACK>
+	static void RegisterAggregate(DatabaseInstance &db, const char *name, CALLBACK &&callback);
+
 	// TODO:
 	static void AddTableFunctionDocs(DatabaseInstance &db, const char *name, const char* desc, const char *example);
 
 private:
 	static void Register(DatabaseInstance &db, const char *name, ScalarFunctionBuilder &builder);
+	static void Register(DatabaseInstance &db, const char *name, AggregateFunctionBuilder &builder);
 };
 
 template <class CALLBACK>
@@ -150,5 +187,13 @@ void FunctionBuilder::RegisterScalar(DatabaseInstance &db, const char *name, CAL
 
 	Register(db, name, builder);
 }
+
+template <class CALLBACK>
+void FunctionBuilder::RegisterAggregate(DatabaseInstance &db, const char *name, CALLBACK &&callback) {
+	AggregateFunctionBuilder builder(name);
+	callback(builder);
+	Register(db, name, builder);
+}
+
 
 } // namespace duckdb

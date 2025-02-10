@@ -78,6 +78,35 @@ void FunctionBuilder::Register(DatabaseInstance &db, const char *name, ScalarFun
 	}
 }
 
+void FunctionBuilder::Register(DatabaseInstance &db, const char *name, AggregateFunctionBuilder &builder) {
+	// Register the function
+	ExtensionUtil::RegisterFunction(db, std::move(builder.set));
+
+	// Also add the parameter names. We need to access the catalog entry for this.
+	auto &catalog = Catalog::GetSystemCatalog(db);
+	auto transaction = CatalogTransaction::GetSystemTransaction(db);
+	auto &schema = catalog.GetSchema(transaction, DEFAULT_SCHEMA);
+	auto catalog_entry = schema.GetEntry(transaction, CatalogType::AGGREGATE_FUNCTION_ENTRY, name);
+	if (!catalog_entry) {
+		// This should not happen, we just registered the function
+		throw InternalException("Function with name \"%s\" not found in FunctionBuilder::AddAggregate", name);
+	}
+
+	auto &func_entry = catalog_entry->Cast<FunctionEntry>();
+
+	// Insert all descriptions
+	const auto descr = RemoveIndentAndTrailingWhitespace(builder.description.c_str());
+	const auto exampl = RemoveIndentAndTrailingWhitespace(builder.example.c_str());
+	FunctionDescription function_description;
+	function_description.description = descr;
+	function_description.examples.push_back(exampl);
+	func_entry.descriptions.push_back(function_description);
+
+	if (!builder.tags.empty()) {
+		func_entry.tags = std::move(builder.tags);
+	}
+}
+
 void FunctionBuilder::AddTableFunctionDocs(DatabaseInstance &db, const char *name, const char* desc,
                                            const char* exampl) {
 
@@ -90,7 +119,7 @@ void FunctionBuilder::AddTableFunctionDocs(DatabaseInstance &db, const char *nam
 		throw InternalException("Function with name \"%s\" not found in FunctionBuilder::AddScalar", name);
 	}
 
-	auto &func_entry = catalog_entry->Cast<TableFunctionCatalogEntry>();
+	auto &func_entry = catalog_entry->Cast<FunctionEntry>();
 	FunctionDescription function_description;
 	function_description.description = desc;
 	function_description.examples.push_back(exampl);
