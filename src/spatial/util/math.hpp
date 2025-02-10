@@ -1,6 +1,7 @@
 #pragma once
 
 #include <limits>
+#include <cmath>
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/vector.hpp"
 
