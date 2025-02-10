@@ -7,6 +7,32 @@
 #include "duckdb/parser/parsed_data/create_function_info.hpp"
 
 namespace duckdb {
+
+//------------------------------------------------------------------------------
+// Function Builder
+//------------------------------------------------------------------------------
+
+class ScalarFunctionBuilder;
+class AggregateFunctionBuilder;
+
+class FunctionBuilder {
+public:
+	template <class CALLBACK>
+	static void RegisterScalar(DatabaseInstance &db, const char *name, CALLBACK &&callback);
+
+	template <class CALLBACK>
+	static void RegisterAggregate(DatabaseInstance &db, const char *name, CALLBACK &&callback);
+
+	// TODO:
+	static void AddTableFunctionDocs(DatabaseInstance &db, const char *name, const char *desc, const char *example);
+
+	static string RemoveIndentAndTrailingWhitespace(const char *str);
+
+private:
+	static void Register(DatabaseInstance &db, const char *name, ScalarFunctionBuilder &builder);
+	static void Register(DatabaseInstance &db, const char *name, AggregateFunctionBuilder &builder);
+};
+
 //------------------------------------------------------------------------------
 // Scalar Function Variant Builder
 //------------------------------------------------------------------------------
@@ -89,11 +115,11 @@ private:
 };
 
 inline void ScalarFunctionBuilder::SetDescription(const string &desc) {
-	default_description = desc;
+	default_description = FunctionBuilder::RemoveIndentAndTrailingWhitespace(desc.c_str());
 }
 
 inline void ScalarFunctionBuilder::SetExample(const string &ex) {
-	default_example = ex;
+	default_example = FunctionBuilder::RemoveIndentAndTrailingWhitespace(ex.c_str());
 }
 
 inline void ScalarFunctionBuilder::SetTag(const string &key, const string &value) {
@@ -114,15 +140,6 @@ void ScalarFunctionBuilder::AddVariant(CALLBACK &&callback) {
 	// Add the new variant to the set
 	set.AddFunction(std::move(builder.function));
 
-	// Add the default description if not set by the variant
-	if (builder.description.description.empty()) {
-		builder.description.description = default_description;
-	}
-
-	if (builder.description.examples.empty()) {
-		builder.description.examples.emplace_back(default_example);
-	}
-
 	// Add the description
 	descriptions.emplace_back(std::move(builder.description));
 }
@@ -133,13 +150,16 @@ void ScalarFunctionBuilder::AddVariant(CALLBACK &&callback) {
 
 class AggregateFunctionBuilder {
 	friend class FunctionBuilder;
+
 public:
 	void SetTag(const string &key, const string &value);
 	void SetDescription(const string &desc);
 	void SetExample(const string &ex);
 	void SetFunction(const AggregateFunction &function);
+
 private:
-	explicit AggregateFunctionBuilder(const char *name) : set(name) { }
+	explicit AggregateFunctionBuilder(const char *name) : set(name) {
+	}
 	string description;
 	string example;
 	unordered_map<string, string> tags;
@@ -161,24 +181,8 @@ inline void AggregateFunctionBuilder::SetTag(const string &key, const string &va
 }
 
 //------------------------------------------------------------------------------
-// Function Builder
+// Function Builder Methods
 //------------------------------------------------------------------------------
-
-class FunctionBuilder {
-public:
-	template <class CALLBACK>
-	static void RegisterScalar(DatabaseInstance &db, const char *name, CALLBACK &&callback);
-
-	template<class CALLBACK>
-	static void RegisterAggregate(DatabaseInstance &db, const char *name, CALLBACK &&callback);
-
-	// TODO:
-	static void AddTableFunctionDocs(DatabaseInstance &db, const char *name, const char* desc, const char *example);
-
-private:
-	static void Register(DatabaseInstance &db, const char *name, ScalarFunctionBuilder &builder);
-	static void Register(DatabaseInstance &db, const char *name, AggregateFunctionBuilder &builder);
-};
 
 template <class CALLBACK>
 void FunctionBuilder::RegisterScalar(DatabaseInstance &db, const char *name, CALLBACK &&callback) {
@@ -194,6 +198,5 @@ void FunctionBuilder::RegisterAggregate(DatabaseInstance &db, const char *name, 
 	callback(builder);
 	Register(db, name, builder);
 }
-
 
 } // namespace duckdb

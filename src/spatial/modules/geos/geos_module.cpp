@@ -1452,8 +1452,9 @@ struct ST_Union_Agg : GeosUnaryAggFunction {
 	}
 
 	static void Register(DatabaseInstance &db) {
-		const auto agg = AggregateFunction::UnaryAggregateDestructor<GeosUnaryAggState, string_t, string_t, ST_Union_Agg>(
-		    GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY());
+		const auto agg =
+		    AggregateFunction::UnaryAggregateDestructor<GeosUnaryAggState, string_t, string_t, ST_Union_Agg>(
+		        GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY());
 
 		FunctionBuilder::RegisterAggregate(db, "ST_Union_Agg", [&](AggregateFunctionBuilder &func) {
 			func.SetFunction(agg);

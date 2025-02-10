@@ -109,6 +109,7 @@ struct ST_GeneratePoints {
 	// Register
 	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
+		// TODO: Dont overload, make seed named parameter instead
 		TableFunctionSet set("ST_GeneratePoints");
 
 		TableFunction generate_points({GeoTypes::BOX_2D(), LogicalType::BIGINT}, Execute, Bind, Init);

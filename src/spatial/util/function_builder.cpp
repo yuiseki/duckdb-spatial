@@ -7,7 +7,7 @@
 
 namespace duckdb {
 
-static string RemoveIndentAndTrailingWhitespace(const char *text) {
+string FunctionBuilder::RemoveIndentAndTrailingWhitespace(const char *text) {
 	string result;
 	// Skip any empty first newlines if present
 	while (*text == '\n') {
@@ -65,9 +65,20 @@ void FunctionBuilder::Register(DatabaseInstance &db, const char *name, ScalarFun
 	// Insert all descriptions
 	for (auto &desc : builder.descriptions) {
 
-		desc.description = RemoveIndentAndTrailingWhitespace(desc.description.c_str());
-		for (auto &ex : desc.examples) {
-			ex = RemoveIndentAndTrailingWhitespace(ex.c_str());
+		// Add default description if none is set
+		if (desc.description.empty()) {
+			desc.description = builder.default_description;
+		} else {
+			desc.description = RemoveIndentAndTrailingWhitespace(desc.description.c_str());
+		}
+
+		// Add default example if none is set
+		if (desc.examples.empty()) {
+			desc.examples.push_back(builder.default_example);
+		} else {
+			for (auto &ex : desc.examples) {
+				ex = RemoveIndentAndTrailingWhitespace(ex.c_str());
+			}
 		}
 
 		func_entry.descriptions.push_back(desc);
@@ -107,8 +118,8 @@ void FunctionBuilder::Register(DatabaseInstance &db, const char *name, Aggregate
 	}
 }
 
-void FunctionBuilder::AddTableFunctionDocs(DatabaseInstance &db, const char *name, const char* desc,
-                                           const char* exampl) {
+void FunctionBuilder::AddTableFunctionDocs(DatabaseInstance &db, const char *name, const char *desc,
+                                           const char *example) {
 
 	auto &catalog = Catalog::GetSystemCatalog(db);
 	auto transaction = CatalogTransaction::GetSystemTransaction(db);
@@ -121,10 +132,9 @@ void FunctionBuilder::AddTableFunctionDocs(DatabaseInstance &db, const char *nam
 
 	auto &func_entry = catalog_entry->Cast<FunctionEntry>();
 	FunctionDescription function_description;
-	function_description.description = desc;
-	function_description.examples.push_back(exampl);
+	function_description.description = RemoveIndentAndTrailingWhitespace(desc);
+	function_description.examples.push_back(RemoveIndentAndTrailingWhitespace(example));
 	func_entry.descriptions.push_back(function_description);
 }
-
 
 } // namespace duckdb

@@ -91,7 +91,7 @@ struct ExtentAggFunction {
 			buf[9] = state.ymin;
 
 			auto ring = sgl::linestring::make_empty();
-			ring.set_vertex_data(reinterpret_cast<const char*>(buf), 5);
+			ring.set_vertex_data(reinterpret_cast<const char *>(buf), 5);
 
 			auto bbox = sgl::polygon::make_empty();
 			bbox.append_part(&ring);
@@ -129,7 +129,6 @@ static constexpr const char *DOC_ALIAS_DESCRIPTION = R"(
 	Computes the minimal-bounding-box polygon containing the set of input geometries.
 )";
 
-
 } // namespace
 
 //------------------------------------------------------------------------
@@ -139,10 +138,9 @@ void RegisterSpatialAggregateFunctions(DatabaseInstance &db) {
 
 	// TODO: Dont use geometry_t here
 	const auto agg = AggregateFunction::UnaryAggregate<ExtentAggState, geometry_t, geometry_t, ExtentAggFunction>(
-		GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY());
+	    GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY());
 
 	FunctionBuilder::RegisterAggregate(db, "ST_Extent_Agg", [&](AggregateFunctionBuilder &func) {
-
 		func.SetFunction(agg);
 		func.SetDescription(DOC_DESCRIPTION);
 		func.SetExample(DOC_EXAMPLE);
@@ -152,7 +150,6 @@ void RegisterSpatialAggregateFunctions(DatabaseInstance &db) {
 	});
 
 	FunctionBuilder::RegisterAggregate(db, "ST_Envelope_Agg", [&](AggregateFunctionBuilder &func) {
-
 		func.SetFunction(agg);
 		func.SetDescription(DOC_ALIAS_DESCRIPTION);
 		func.SetExample(DOC_EXAMPLE);

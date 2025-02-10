@@ -501,6 +501,69 @@ struct GeodesicLocalState final : FunctionLocalState {
 
 struct ST_Area_Spheroid {
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (POLYGON_2D)
+	//------------------------------------------------------------------------------------------------------------------
+
+	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 1);
+
+		auto &input = args.data[0];
+		auto count = args.size();
+
+		auto &ring_vec = ListVector::GetEntry(input);
+		auto ring_entries = ListVector::GetData(ring_vec);
+		auto &coord_vec = ListVector::GetEntry(ring_vec);
+		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
+		auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
+		auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+
+		geod_geodesic geod = {};
+		geod_init(&geod, EARTH_A, EARTH_F);
+
+		geod_polygon poly = {};
+		geod_polygon_init(&poly, 0);
+
+		UnaryExecutor::Execute<list_entry_t, double>(input, result, count, [&](list_entry_t polygon) {
+			const auto polygon_offset = polygon.offset;
+			const auto polygon_length = polygon.length;
+
+			bool first = true;
+			double area = 0;
+			for (idx_t ring_idx = polygon_offset; ring_idx < polygon_offset + polygon_length; ring_idx++) {
+				const auto ring = ring_entries[ring_idx];
+				const auto ring_offset = ring.offset;
+				const auto ring_length = ring.length;
+
+				geod_polygon_clear(&poly);
+				// Note: the last point is the same as the first point, but geographiclib doesn't know that,
+				// so skip it.
+				for (idx_t coord_idx = ring_offset; coord_idx < ring_offset + ring_length - 1; coord_idx++) {
+					geod_polygon_addpoint(&geod, &poly, x_data[coord_idx], y_data[coord_idx]);
+				}
+				double ring_area;
+				geod_polygon_compute(&geod, &poly, 0, 1, &ring_area, nullptr);
+
+				if (first) {
+					// Add outer ring
+					area += std::abs(ring_area);
+					first = false;
+				} else {
+					// Subtract holes
+					area -= std::abs(ring_area);
+				}
+			}
+			return std::abs(area);
+		});
+
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (GEOMETRY)
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
@@ -559,6 +622,9 @@ struct ST_Area_Spheroid {
 		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Area_Spheroid", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -568,6 +634,12 @@ struct ST_Area_Spheroid {
 				variant.SetInit(GeodesicLocalState::InitPolygon);
 				variant.SetFunction(Execute);
 			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("poly", GeoTypes::POLYGON_2D());
+				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetFunction(ExecutePolygon);
+			});
 		});
 	}
 };
@@ -575,8 +647,63 @@ struct ST_Area_Spheroid {
 //======================================================================================================================
 // ST_Perimeter_Spheroid
 //======================================================================================================================
+
 struct ST_Perimeter_Spheroid {
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (POLYGON_2D)
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 1);
+
+		auto &input = args.data[0];
+		auto count = args.size();
+
+		auto &ring_vec = ListVector::GetEntry(input);
+		auto ring_entries = ListVector::GetData(ring_vec);
+		auto &coord_vec = ListVector::GetEntry(ring_vec);
+		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
+		auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
+		auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+
+		geod_geodesic geod = {};
+		geod_init(&geod, EARTH_A, EARTH_F);
+
+		geod_polygon poly = {};
+		geod_polygon_init(&poly, 0);
+
+		UnaryExecutor::Execute<list_entry_t, double>(input, result, count, [&](list_entry_t polygon) {
+			const auto polygon_offset = polygon.offset;
+			const auto polygon_length = polygon.length;
+			double perimeter = 0;
+			for (idx_t ring_idx = polygon_offset; ring_idx < polygon_offset + polygon_length; ring_idx++) {
+				const auto ring = ring_entries[ring_idx];
+				const auto ring_offset = ring.offset;
+				const auto ring_length = ring.length;
+
+				geod_polygon_clear(&poly);
+				// Note: the last point is the same as the first point, but geographiclib doesn't know that,
+				// so skip it.
+				for (idx_t coord_idx = ring_offset; coord_idx < ring_offset + ring_length - 1; coord_idx++) {
+					geod_polygon_addpoint(&geod, &poly, x_data[coord_idx], y_data[coord_idx]);
+				}
+
+				double ring_perimeter;
+				geod_polygon_compute(&geod, &poly, 0, 1, nullptr, &ring_perimeter);
+
+				perimeter += ring_perimeter;
+			}
+			return perimeter;
+		});
+
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (GEOMETRY)
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
@@ -629,6 +756,9 @@ struct ST_Perimeter_Spheroid {
 		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Perimeter_Spheroid", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -637,6 +767,12 @@ struct ST_Perimeter_Spheroid {
 
 				variant.SetInit(GeodesicLocalState::InitPolygon);
 				variant.SetFunction(Execute);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("poly", GeoTypes::POLYGON_2D());
+				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetFunction(ExecutePolygon);
 			});
 		});
 	}
@@ -648,6 +784,49 @@ struct ST_Perimeter_Spheroid {
 
 struct ST_Length_Spheroid {
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (LINESTRING)
+	//------------------------------------------------------------------------------------------------------------------
+
+	static void ExecuteLineString(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 1);
+
+		auto &line_vec = args.data[0];
+		auto count = args.size();
+
+		auto &coord_vec = ListVector::GetEntry(line_vec);
+		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
+		auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
+		auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+
+		geod_geodesic geod = {};
+		geod_init(&geod, EARTH_A, EARTH_F);
+
+		geod_polygon poly = {};
+		geod_polygon_init(&poly, 1);
+
+		UnaryExecutor::Execute<list_entry_t, double>(line_vec, result, count, [&](list_entry_t line) {
+			geod_polygon_clear(&poly);
+
+			const auto offset = line.offset;
+			const auto length = line.length;
+			// Loop over the segments
+			for (idx_t j = offset; j < offset + length; j++) {
+				geod_polygon_addpoint(&geod, &poly, x_data[j], y_data[j]);
+			}
+			double linestring_length;
+			geod_polygon_compute(&geod, &poly, 0, 1, &linestring_length, nullptr);
+			return linestring_length;
+		});
+
+		if (count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (GEOMETRY)
+	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
@@ -689,6 +868,9 @@ struct ST_Length_Spheroid {
 		});
 	}
 
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Length_Spheroid", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -697,6 +879,12 @@ struct ST_Length_Spheroid {
 
 				variant.SetInit(GeodesicLocalState::InitLine);
 				variant.SetFunction(Execute);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("line", GeoTypes::LINESTRING_2D());
+				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetFunction(ExecuteLineString);
 			});
 		});
 	}

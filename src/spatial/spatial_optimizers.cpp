@@ -103,13 +103,13 @@ public:
 					return;
 				}
 
-				if(bound_function.children.size() != 2) {
+				if (bound_function.children.size() != 2) {
 					return;
 				}
 
 				// It has to be on raw geometry types
-				if(bound_function.children[0]->return_type != GeoTypes::GEOMETRY() ||
-				   bound_function.children[1]->return_type != GeoTypes::GEOMETRY()) {
+				if (bound_function.children[0]->return_type != GeoTypes::GEOMETRY() ||
+				    bound_function.children[1]->return_type != GeoTypes::GEOMETRY()) {
 					return;
 				}
 
@@ -182,8 +182,7 @@ public:
 				auto &right_arg_type = right_pred_expr->return_type;
 
 				auto extent_func_left = extent_func_set.functions.GetFunctionByArguments(context, {left_arg_type});
-				auto extent_func_right =
-				    extent_func_set.functions.GetFunctionByArguments(context, {right_arg_type});
+				auto extent_func_right = extent_func_set.functions.GetFunctionByArguments(context, {right_arg_type});
 
 				auto xmin_func_left =
 				    xmin_func_set.functions.GetFunctionByArguments(context, {extent_func_left.return_type});
@@ -206,13 +205,13 @@ public:
 				// Create the new join condition
 				vector<unique_ptr<Expression>> left_extent_args;
 				left_extent_args.push_back(left_pred_expr->Copy());
-				auto left_extent = make_uniq<BoundFunctionExpression>(
-				    GeoTypes::BOX_2D(), std::move(extent_func_left), std::move(left_extent_args), nullptr);
+				auto left_extent = make_uniq<BoundFunctionExpression>(GeoTypes::BOX_2D(), std::move(extent_func_left),
+				                                                      std::move(left_extent_args), nullptr);
 
 				vector<unique_ptr<Expression>> right_extent_args;
 				right_extent_args.push_back(right_pred_expr->Copy());
-				auto right_extent = make_uniq<BoundFunctionExpression>(
-				    GeoTypes::BOX_2D(), std::move(extent_func_right), std::move(right_extent_args), nullptr);
+				auto right_extent = make_uniq<BoundFunctionExpression>(GeoTypes::BOX_2D(), std::move(extent_func_right),
+				                                                       std::move(right_extent_args), nullptr);
 
 				// Left
 				vector<unique_ptr<Expression>> left_xmin_args;

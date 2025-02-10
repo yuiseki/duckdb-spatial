@@ -2276,7 +2276,7 @@ struct ST_Extent {
 		reader.stack_buf = recursion_stack;
 		reader.stack_cap = MAX_STACK_DEPTH;
 
-		for(idx_t out_idx = 0; out_idx < count; out_idx++) {
+		for (idx_t out_idx = 0; out_idx < count; out_idx++) {
 			const auto row_idx = input_vdata.sel->get_index(out_idx);
 
 			if (!input_vdata.validity.RowIsValid(row_idx)) {
@@ -2291,12 +2291,12 @@ struct ST_Extent {
 
 			sgl::box_xy bbox = {};
 			size_t vertex_count = 0;
-			if(!sgl::ops::wkb_reader_try_parse_stats(&reader, &bbox, &vertex_count)) {
+			if (!sgl::ops::wkb_reader_try_parse_stats(&reader, &bbox, &vertex_count)) {
 				const auto error = sgl::ops::wkb_reader_get_error_message(&reader);
 				throw InvalidInputException("Failed to parse WKB: %s", error);
 			}
 
-			if(vertex_count == 0) {
+			if (vertex_count == 0) {
 				// no vertices -> no extent -> return null
 				FlatVector::SetNull(result, out_idx, true);
 				continue;
@@ -2309,7 +2309,7 @@ struct ST_Extent {
 			max_y_data[out_idx] = bbox.max.y;
 		}
 
-		if(args.AllConstant()) {
+		if (args.AllConstant()) {
 			result.SetVectorType(VectorType::CONSTANT_VECTOR);
 		}
 	}
@@ -3919,7 +3919,7 @@ struct ST_GeomFromWKB {
 			if (!sgl::ops::wkb_reader_try_parse(&reader, &geom)) {
 				const auto error = sgl::ops::wkb_reader_get_error_message(&reader);
 				auto msg = "Could not parse WKB input:" + error;
-				if(reader.error == sgl::ops::SGL_WKB_READER_UNSUPPORTED_TYPE) {
+				if (reader.error == sgl::ops::SGL_WKB_READER_UNSUPPORTED_TYPE) {
 					msg += "\n(You can use TRY_CAST instead to replace invalid geometries with NULL)";
 				}
 				throw InvalidInputException(msg);
@@ -4437,7 +4437,7 @@ struct ST_ZMFlag {
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
+		UnaryExecutor::Execute<string_t, uint8_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
 			const auto geom = lstate.Deserialize(blob);
 			const auto has_z = geom.has_z();
 			const auto has_m = geom.has_m();
@@ -4459,7 +4459,7 @@ struct ST_ZMFlag {
 	// WKB
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteWKB(DataChunk &args, ExpressionState &state, Vector &result) {
-		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(), [](const string_t &wkb) {
+		UnaryExecutor::Execute<string_t, uint8_t>(args.data[0], result, args.size(), [](const string_t &wkb) {
 			BinaryReader cursor(wkb.GetData(), wkb.GetSize());
 
 			const auto le = cursor.Read<uint8_t>();
@@ -4523,7 +4523,7 @@ struct ST_ZMFlag {
 		FunctionBuilder::RegisterScalar(db, "ST_ZMFlag", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("geom", GeoTypes::GEOMETRY());
-				variant.SetReturnType(LogicalType::INTEGER);
+				variant.SetReturnType(LogicalType::UTINYINT);
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(ExecuteGeometry);
@@ -4531,7 +4531,7 @@ struct ST_ZMFlag {
 
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("wkb", GeoTypes::WKB_BLOB());
-				variant.SetReturnType(LogicalType::INTEGER);
+				variant.SetReturnType(LogicalType::UTINYINT);
 
 				variant.SetFunction(ExecuteWKB);
 			});
@@ -7350,6 +7350,18 @@ struct PointAccessFunctionBase {
 		    });
 	}
 
+	static void ExecutePoint(DataChunk &args, ExpressionState &state, Vector &result) {
+		D_ASSERT(args.data.size() == 1);
+
+		// Only defined for X and Y
+		D_ASSERT(OP::ORDINATE == VertexOrdinate::X || OP::ORDINATE == VertexOrdinate::Y);
+
+		auto &point = args.data[0];
+		auto &point_children = StructVector::GetEntries(point);
+		auto &n_child = point_children[OP::ORDINATE == VertexOrdinate::X ? 0 : 1];
+		result.Reference(*n_child);
+	}
+
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, OP::NAME, [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -7365,6 +7377,22 @@ struct PointAccessFunctionBase {
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");
 		});
+
+		if (OP::ORDINATE == VertexOrdinate::X || OP::ORDINATE == VertexOrdinate::Y) {
+			FunctionBuilder::RegisterScalar(db, OP::NAME, [](ScalarFunctionBuilder &func) {
+				func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+					variant.AddParameter("point", GeoTypes::POINT_2D());
+					variant.SetReturnType(LogicalType::DOUBLE);
+
+					variant.SetFunction(ExecutePoint);
+
+					variant.SetDescription(OP::DESCRIPTION);
+					variant.SetExample(OP::EXAMPLE);
+				});
+				func.SetTag("ext", "spatial");
+				func.SetTag("category", "property");
+			});
+		}
 	}
 };
 
