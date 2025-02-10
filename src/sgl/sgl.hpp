@@ -836,6 +836,9 @@ struct wkb_reader {
 bool wkb_reader_try_parse(wkb_reader *state, geometry *out);
 std::string wkb_reader_get_error_message(const wkb_reader *state);
 
+// Does not require an allocator
+bool wkb_reader_try_parse_stats(wkb_reader *state, box_xy *out_extent, size_t *out_vertex_count);
+
 struct wkt_reader {
 	// Set by the user
 	allocator *alloc;

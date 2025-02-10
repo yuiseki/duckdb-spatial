@@ -4,6 +4,7 @@
 
 #include "sgl/sgl.hpp"
 
+#include <sys/stat.h>
 #include <vector>
 
 namespace sgl {
@@ -294,6 +295,13 @@ void force_zm(allocator &alloc, geometry *geom, bool set_z, bool set_m, double d
 //------------------------------------------------------------------------------
 // WKB Parsing
 //------------------------------------------------------------------------------
+static void wkb_reader_skip(wkb_reader *state, size_t size) {
+	if (state->pos + size > state->end) {
+		state->error = SGL_WKB_READER_OUT_OF_BOUNDS;
+		return;
+	}
+	state->pos += size;
+}
 
 static uint8_t wkb_reader_read_u8(wkb_reader *state) {
 	if (state->pos + sizeof(uint8_t) > state->end) {
@@ -440,8 +448,9 @@ bool wkb_reader_try_parse(wkb_reader *state, geometry *out) {
 // clang-format off
 #define read_u8(state) wkb_reader_read_u8(state); if (state->error) { return false; }
 #define read_u32(state) wkb_reader_read_u32(state); if (state->error) { return false; }
-#define read_u64(state) wkb_reader_read_u64(state); if (state->error) { return false; }
+#define read_f64(state) wkb_reader_read_f64(state); if (state->error) { return false; }
 #define read_verts(state, vcount, vsize) wkb_reader_read_vertices(state, vcount, vsize); if (state->error) { return false; }
+#define read_skip(state, size) wkb_reader_skip(state, size); if (state->error) { return false; }
 	// clang-format on
 
 	SGL_ASSERT(state);
@@ -606,10 +615,163 @@ bool wkb_reader_try_parse(wkb_reader *state, geometry *out) {
 		}
 	}
 
+}
+
+bool wkb_reader_try_parse_stats(wkb_reader *state, box_xy *out_extent, size_t *out_vertex_count) {
+
+	SGL_ASSERT(state);
+	SGL_ASSERT(state->buf);
+	SGL_ASSERT(state->end);
+	SGL_ASSERT(state->stack_buf);
+	SGL_ASSERT(state->stack_cap > 0);
+
+	// Setup state
+	state->pos = state->buf;
+	state->error = SGL_WKB_READER_OK;
+	state->depth = 0;
+	state->le = false;
+	state->type_id = 0;
+	state->has_any_m = false;
+	state->has_any_z = false;
+
+	uint32_t vertex_count = 0;
+	box_xy extent = {0, 0, 0, 0};
+
+	while(true) {
+		state->le = read_u8(state);
+		state->type_id = read_u32(state);
+
+		const auto type = static_cast<sgl::geometry_type>((state->type_id & 0xffff) % 1000);
+		const auto flags = (state->type_id & 0xffff) / 1000;
+		const auto has_z = (flags == 1) || (flags == 3) || ((state->type_id & 0x80000000) != 0);
+		const auto has_m = (flags == 2) || (flags == 3) || ((state->type_id & 0x40000000) != 0);
+		const auto has_srid = (state->type_id & 0x20000000) != 0;
+
+		if (has_srid) {
+			// skip the SRID
+			const auto srid = read_u32(state);
+			(void)srid;
+		}
+
+		switch (type) {
+		case geometry_type::POINT: {
+			bool all_nan = true;
+			const auto x = read_f64(state);
+			all_nan = all_nan && std::isnan(x);
+			const auto y = read_f64(state);
+			all_nan = all_nan && std::isnan(y);
+			if (has_z) {
+				const auto z = read_f64(state);
+				all_nan = all_nan && std::isnan(z);
+			}
+			if (has_m) {
+				const auto m = read_f64(state);
+				all_nan = all_nan && std::isnan(m);
+			}
+			// For points, all NaN is usually interpreted as an empty point
+			if(state->nan_as_empty && all_nan) {
+				break;
+			}
+			extent.min.x = std::min(extent.min.x, x);
+			extent.min.y = std::min(extent.min.y, y);
+			extent.max.x = std::max(extent.max.x, x);
+			extent.max.y = std::max(extent.max.y, y);
+			vertex_count++;
+		} break;
+		case geometry_type::LINESTRING: {
+			const auto num_points = read_u32(state);
+			for(uint32_t i = 0; i < num_points; i++) {
+				const auto x = read_f64(state);
+				const auto y = read_f64(state);
+				if(has_z) {
+					read_skip(state, sizeof(double));
+				}
+				if(has_m) {
+					read_skip(state, sizeof(double));
+				}
+				extent.min.x = std::min(extent.min.x, x);
+				extent.min.y = std::min(extent.min.y, y);
+				extent.max.x = std::max(extent.max.x, x);
+				extent.max.y = std::max(extent.max.y, y);
+			}
+			vertex_count += num_points;
+		} break;
+		case geometry_type::POLYGON: {
+			const auto num_rings = read_u32(state);
+			for(uint32_t i = 0; i < num_rings; i++) {
+				const auto num_points = read_u32(state);
+				for(uint32_t j = 0; j < num_points; j++) {
+					const auto x = read_f64(state);
+					const auto y = read_f64(state);
+					if(has_z) {
+						read_skip(state, sizeof(double));
+					}
+					if(has_m) {
+						read_skip(state, sizeof(double));
+					}
+					extent.min.x = std::min(extent.min.x, x);
+					extent.min.y = std::min(extent.min.y, y);
+					extent.max.x = std::max(extent.max.x, x);
+					extent.max.y = std::max(extent.max.y, y);
+				}
+				vertex_count += num_points;
+			}
+		} break;
+		case geometry_type::MULTI_POINT:
+		case geometry_type::MULTI_LINESTRING:
+		case geometry_type::MULTI_POLYGON:
+		case geometry_type::MULTI_GEOMETRY: {
+			// Check stack depth
+			if (state->depth >= state->stack_cap) {
+				state->error = SGL_WKB_READER_RECURSION_LIMIT;
+				return false;
+			}
+
+			// Read the count
+			const auto count = read_u32(state);
+			if (count == 0) {
+				break;
+			}
+
+			// Push the count to the stack, go downwards and continue
+			state->stack_buf[state->depth++] = count;
+			continue;
+		}
+		default:
+			state->error = SGL_WKB_READER_UNSUPPORTED_TYPE;
+			return false;
+		}
+
+		while(true) {
+			if (state->depth == 0) {
+				// We reached the bottom, return!
+				if (out_vertex_count) {
+					*out_vertex_count = vertex_count;
+				}
+				if (out_extent) {
+					*out_extent = extent;
+				}
+				return true;
+			}
+
+			// Decrement current remaining count
+			state->stack_buf[state->depth - 1]--;
+
+			// Are there still more parts to read, then break out and continue
+			if (state->stack_buf[state->depth - 1] > 0) {
+				break;
+			}
+
+			// Otherwise, go upwards
+			state->depth--;
+		}
+	}
+
 #undef read_u8
 #undef read_u32
 #undef read_u64
 #undef read_verts
+#undef read_skip
 }
 
 std::string wkb_reader_get_error_message(const wkb_reader *state) {

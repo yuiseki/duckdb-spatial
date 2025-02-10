@@ -2200,7 +2200,6 @@ struct ST_Dump {
 //======================================================================================================================
 // ST_Extent
 //======================================================================================================================
-// TODO: WKB Implementation
 
 struct ST_Extent {
 
@@ -2253,6 +2252,69 @@ struct ST_Extent {
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
+	// Execute (WKB)
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteWKB(DataChunk &args, ExpressionState &state, Vector &result) {
+		const auto count = args.size();
+		auto &input = args.data[0];
+
+		UnifiedVectorFormat input_vdata;
+		input.ToUnifiedFormat(count, input_vdata);
+
+		const auto &struct_vec = StructVector::GetEntries(result);
+		const auto min_x_data = FlatVector::GetData<double>(*struct_vec[0]);
+		const auto min_y_data = FlatVector::GetData<double>(*struct_vec[1]);
+		const auto max_x_data = FlatVector::GetData<double>(*struct_vec[2]);
+		const auto max_y_data = FlatVector::GetData<double>(*struct_vec[3]);
+
+		static constexpr auto MAX_STACK_DEPTH = 128;
+		uint32_t recursion_stack[MAX_STACK_DEPTH] = {};
+
+		sgl::ops::wkb_reader reader = {};
+		reader.allow_mixed_zm = true;
+		reader.nan_as_empty = true;
+		reader.stack_buf = recursion_stack;
+		reader.stack_cap = MAX_STACK_DEPTH;
+
+		for(idx_t out_idx = 0; out_idx < count; out_idx++) {
+			const auto row_idx = input_vdata.sel->get_index(out_idx);
+
+			if (!input_vdata.validity.RowIsValid(row_idx)) {
+				FlatVector::SetNull(result, out_idx, true);
+				continue;
+			}
+
+			const auto &blob = UnifiedVectorFormat::GetData<string_t>(input_vdata)[row_idx];
+
+			reader.buf = blob.GetDataUnsafe();
+			reader.end = reader.buf + blob.GetSize();
+
+			sgl::box_xy bbox = {};
+			size_t vertex_count = 0;
+			if(!sgl::ops::wkb_reader_try_parse_stats(&reader, &bbox, &vertex_count)) {
+				const auto error = sgl::ops::wkb_reader_get_error_message(&reader);
+				throw InvalidInputException(error);
+			}
+
+			if(vertex_count == 0) {
+				// no vertices -> no extent -> return null
+				FlatVector::SetNull(result, out_idx, true);
+				continue;
+			}
+
+			// Else, write the bounding box
+			min_x_data[out_idx] = bbox.min.x;
+			min_y_data[out_idx] = bbox.min.y;
+			max_x_data[out_idx] = bbox.max.x;
+			max_y_data[out_idx] = bbox.max.y;
+		}
+
+		if(args.AllConstant()) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
 	// Documentation
 	//------------------------------------------------------------------------------------------------------------------
 	static constexpr auto DESCRIPTION = R"(
@@ -2273,6 +2335,13 @@ struct ST_Extent {
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("wkb", GeoTypes::WKB_BLOB());
+				variant.SetReturnType(GeoTypes::BOX_2D());
+
+				variant.SetFunction(ExecuteWKB);
 			});
 
 			func.SetDescription(DESCRIPTION);
