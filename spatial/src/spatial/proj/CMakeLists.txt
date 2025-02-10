@@ -1,8 +1,0 @@
-
-set(EXTENSION_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/module.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/proj_db.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/functions.cpp
-    ${EXTENSION_SOURCES}
-    PARENT_SCOPE
-)
