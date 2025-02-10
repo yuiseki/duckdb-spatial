@@ -635,7 +635,7 @@ bool wkb_reader_try_parse_stats(wkb_reader *state, box_xy *out_extent, size_t *o
 	state->has_any_z = false;
 
 	uint32_t vertex_count = 0;
-	box_xy extent = {0, 0, 0, 0};
+	box_xy extent = box_xy::smallest();
 
 	while(true) {
 		state->le = read_u8(state);
@@ -778,7 +778,6 @@ std::string wkb_reader_get_error_message(const wkb_reader *state) {
 	if (!state || state->error == SGL_WKB_READER_OK) {
 		return "";
 	}
-
 	switch (state->error) {
 	case SGL_WKB_READER_OUT_OF_BOUNDS: {
 		return "Out of bounds read (is the WKB corrupt?)";
@@ -791,8 +790,63 @@ std::string wkb_reader_get_error_message(const wkb_reader *state) {
 	}
 	case SGL_WKB_READER_UNSUPPORTED_TYPE: {
 		// Try to fish out the type anyway
-		return "Unsupported geometry type";
+		const auto type = ((state->type_id & 0xffff) % 1000);
+		const auto flags = (state->type_id & 0xffff) / 1000;
+		const auto has_z = (flags == 1) || (flags == 3) || ((state->type_id & 0x80000000) != 0);
+		const auto has_m = (flags == 2) || (flags == 3) || ((state->type_id & 0x40000000) != 0);
+		const auto has_srid = (state->type_id & 0x20000000) != 0;
+
+		auto guessed_type = "UNKNOWN";
+		switch (type) {
+			case 1: guessed_type = "POINT"; break;
+			case 2: guessed_type = "LINESTRING"; break;
+			case 3: guessed_type = "POLYGON"; break;
+			case 4: guessed_type = "MULTIPOINT"; break;
+			case 5: guessed_type = "MULTILINESTRING"; break;
+			case 6: guessed_type = "MULTIPOLYGON"; break;
+			case 7: guessed_type = "GEOMETRYCOLLECTION"; break;
+			case 8: guessed_type = "CIRCULARSTRING"; break;
+			case 9: guessed_type = "COMPOUNDCURVE"; break;
+			case 10: guessed_type = "CURVEPOLYGON"; break;
+			case 11: guessed_type = "MULTICURVE"; break;
+			case 12: guessed_type = "MULTISURFACE"; break;
+			case 13: guessed_type = "CURVE"; break;
+			case 14: guessed_type = "SURFACE"; break;
+			case 15: guessed_type = "POLYHEDRALSURFACE"; break;
+			case 16: guessed_type = "TIN"; break;
+			case 17: guessed_type = "TRIANGLE"; break;
+			case 18: guessed_type = "CIRCLE"; break;
+			case 19: guessed_type = "GEODESICSTRING"; break;
+			case 20: guessed_type = "ELLIPTICALCURVE"; break;
+			case 21: guessed_type = "NURBSCURVE"; break;
+			case 22: guessed_type = "CLOTHOID"; break;
+			case 23: guessed_type = "SPIRALCURVE"; break;
+			case 24: guessed_type = "COMPOUNDSURFACE"; break;
+			case 25: guessed_type = "ORIENTABLESURFACE"; break;
+			case 102: guessed_type = "AFFINEPLACEMENT"; break;
+			default:
+				break;
+		}
+
+		std::string msg = "WKB type '";
+		msg += guessed_type;
+		if(has_z || has_m) {
+			msg += " ";
+		}
+		if(has_z) {
+			msg += "Z";
+		}
+		if(has_m) {
+			msg += "M";
+		}
+		msg += "' is not supported!";
+		msg += " (type id: " + std::to_string(state->type_id) + ")";
+		if(has_srid) {
+			msg += " (SRID present)";
+		}
+		return msg;
 	}
+
 	case SGL_WKB_INVALID_CHILD_TYPE: {
 		return "Invalid child type";
 	}

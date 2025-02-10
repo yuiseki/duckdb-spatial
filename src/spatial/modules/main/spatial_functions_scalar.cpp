@@ -2293,7 +2293,7 @@ struct ST_Extent {
 			size_t vertex_count = 0;
 			if(!sgl::ops::wkb_reader_try_parse_stats(&reader, &bbox, &vertex_count)) {
 				const auto error = sgl::ops::wkb_reader_get_error_message(&reader);
-				throw InvalidInputException(error);
+				throw InvalidInputException("Failed to parse WKB: %s", error);
 			}
 
 			if(vertex_count == 0) {
@@ -3918,7 +3918,11 @@ struct ST_GeomFromWKB {
 			sgl::geometry geom(sgl::geometry_type::INVALID);
 			if (!sgl::ops::wkb_reader_try_parse(&reader, &geom)) {
 				const auto error = sgl::ops::wkb_reader_get_error_message(&reader);
-				throw InvalidInputException("Could not parse WKB input: %s", error);
+				auto msg = "Could not parse WKB input:" + error;
+				if(reader.error == sgl::ops::SGL_WKB_READER_UNSUPPORTED_TYPE) {
+					msg += "\n(You can use TRY_CAST instead to replace invalid geometries with NULL)";
+				}
+				throw InvalidInputException(msg);
 			}
 
 			if (reader.has_mixed_zm) {
