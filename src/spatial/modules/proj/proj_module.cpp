@@ -140,6 +140,8 @@ struct ProjFunctionLocalState final : FunctionLocalState {
 	}
 
 	~ProjFunctionLocalState() override {
+		// We need to clear the cache so that the unique_ptrs are destroyed before the context
+		crs_cache.clear();
 		proj_context_destroy(proj_ctx);
 	}
 

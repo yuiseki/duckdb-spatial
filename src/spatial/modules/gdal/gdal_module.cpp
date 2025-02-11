@@ -441,7 +441,7 @@ GDALClientContextState::~GDALClientContextState() {
 
 void GDALClientContextState::QueryEnd() {
 
-};
+}
 
 string GDALClientContextState::GetPrefix(const string &value) const {
 	// If the user explicitly asked for a VSI prefix, we don't add our own
