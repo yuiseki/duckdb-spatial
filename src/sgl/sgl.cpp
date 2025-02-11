@@ -365,7 +365,7 @@ static double wkb_reader_read_f64(wkb_reader *state) {
 }
 
 static bool wkb_reader_read_point(wkb_reader *state, geometry *geom) {
-	const auto dims = 2 + geom->has_z() + geom->has_m();
+	const size_t dims = 2 + geom->has_z() + geom->has_m();
 
 	bool all_nan = true;
 	double coords[4];
@@ -1242,7 +1242,7 @@ bool wkt_reader_try_parse(wkt_reader *state, geometry *out) {
 			return false;
 		}
 
-		const auto vertex_stride = 2 + geom->has_z() + geom->has_m();
+		const size_t vertex_stride = 2 + geom->has_z() + geom->has_m();
 
 		// Parse EMPTY
 		if (!match_token(state, "EMPTY")) {

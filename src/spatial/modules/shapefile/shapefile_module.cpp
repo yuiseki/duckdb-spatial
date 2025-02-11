@@ -596,7 +596,7 @@ struct ST_ReadSHP {
 					const auto ring_mem = arena.AllocateAligned(sizeof(sgl::geometry));
 					const auto ring_ptr = new (ring_mem) sgl::geometry(sgl::geometry_type::LINESTRING);
 
-					const auto vertex_mem = arena.AllocateAligned(sizeof(double) * 2 * (end - start));
+					const auto vertex_mem = arena.AllocateAligned(sizeof(double) * 2 * ring_size);
 					const auto vertex_ptr = reinterpret_cast<double *>(vertex_mem);
 
 					for (int j = 0; j < ring_size; j++) {
@@ -829,7 +829,7 @@ struct ST_ReadSHP {
 		// Calculate how many record we can fit in the output
 		const auto output_size = std::min<int>(STANDARD_VECTOR_SIZE, bind_data.shape_count - gstate.shape_idx);
 		const auto record_start = gstate.shape_idx;
-		for (auto col_idx = 0; col_idx < output.ColumnCount(); col_idx++) {
+		for (idx_t col_idx = 0; col_idx < output.ColumnCount(); col_idx++) {
 
 			// Projected column indices
 			const auto projected_col_idx = gstate.column_ids[col_idx];
@@ -1029,7 +1029,7 @@ struct Shapefile_Meta {
 			SHPGetInfo(shp_handle.get(), &record_count, &shape_type, min_bound, max_bound);
 			file_name_data[out_idx] = StringVector::AddString(file_name_vector, file_name);
 			shape_type_data[out_idx] = 0;
-			for (auto shape_type_idx = 0; shape_type_idx < sizeof(shape_type_map) / sizeof(ShapeTypeEntry);
+			for (size_t shape_type_idx = 0; shape_type_idx < sizeof(shape_type_map) / sizeof(ShapeTypeEntry);
 			     shape_type_idx++) {
 				if (shape_type_map[shape_type_idx].shp_type == shape_type) {
 					shape_type_data[out_idx] = shape_type_idx;

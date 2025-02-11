@@ -679,7 +679,7 @@ inline geometry make_empty(bool has_z = false, bool has_m = false) {
 	return geometry(geometry_type::MULTI_POINT, has_z, has_m);
 }
 
-}; // namespace multi_point
+} // namespace multi_point
 
 namespace multi_linestring {
 inline geometry make_empty(bool has_z = false, bool has_m = false) {
@@ -777,7 +777,7 @@ inline double area(const geometry *geom);
 inline double length(const geometry *geom);
 inline double perimeter(const geometry *geom);
 
-}; // namespace multi_geometry
+} // namespace multi_geometry
 
 namespace ops {
 
@@ -792,8 +792,8 @@ double distance(const geometry* lhs, const geometry* rhs);
 typedef void (*visit_func)(void *state, const geometry *part);
 void visit_by_dimension(const geometry *geom, int surface_dimension, void *state, visit_func func);
 
-typedef void (*map_vertex_xy_func)(void *state, vertex_xy *vertex);
-void replace_vertices_xy(geometry *geom, void *state, map_vertex_xy_func callback);
+typedef void (*map_vertex_func)(void *state, vertex_xyzm *vertex);
+void replace_vertices(allocator *alloc, geometry *geom, void *state, map_vertex_func callback);
 
 box_xy extent_xy(const geometry *geom);
 void force_zm(allocator &alloc, geometry *geom, bool has_z, bool has_m, double default_z, double default_m);
@@ -1074,7 +1074,7 @@ inline void visit_by_dimension(const geometry *geom, int surface_dimension, void
 	}
 }
 
-inline void replace_vertices_xy(geometry *geom, void *state, map_vertex_xy_func callback) {
+inline void replace_vertices(allocator *alloc, geometry *geom, void *state, map_vertex_func callback) {
 	if (!geom) {
 		return;
 	}
@@ -1086,11 +1086,21 @@ inline void replace_vertices_xy(geometry *geom, void *state, map_vertex_xy_func 
 		switch (part->get_type()) {
 		case geometry_type::POINT:
 		case geometry_type::LINESTRING: {
-			for (uint32_t i = 0; i < part->get_count(); i++) {
-				vertex_xy vertex = part->get_vertex_xy(i);
-				callback(state, &vertex);
-				part->set_vertex_xy(i, vertex);
+			const auto vertex_count =  part->get_count();
+			if(vertex_count == 0) {
+				break;
 			}
+			const auto vertex_size = part->get_vertex_size();
+			const auto old_vertex_data = part->get_vertex_data();
+			const auto new_vertex_data = static_cast<uint8_t*>(alloc->alloc(part->get_count() * vertex_size));
+
+			vertex_xyzm vertex = {0, 0, 0, 0};
+			for(uint32_t v_idx = 0; v_idx < part->get_count(); v_idx++) {
+				memcpy(&vertex, old_vertex_data + v_idx * vertex_size, vertex_size);
+				callback(state, &vertex);
+				memcpy(new_vertex_data + v_idx * vertex_size, &vertex, vertex_size);
+			}
+			part->set_vertex_data(new_vertex_data, vertex_count);
 		} break;
 		case geometry_type::POLYGON:
 		case geometry_type::MULTI_POINT:

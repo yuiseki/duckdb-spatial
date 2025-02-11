@@ -121,12 +121,22 @@ struct ProjFunctionLocalState final : FunctionLocalState {
 
 	PJ_CONTEXT *proj_ctx;
 	ArenaAllocator arena;
+	GeometryAllocator allocator;
 
 	// Cache for PJ* objects
 	unordered_map<std::pair<string, string>, ProjCRS> crs_cache;
 
+	// Not copyable
+	ProjFunctionLocalState(const ProjFunctionLocalState &) = delete;
+	ProjFunctionLocalState &operator=(const ProjFunctionLocalState &) = delete;
+
+	// Not movable
+	ProjFunctionLocalState(ProjFunctionLocalState &&) = delete;
+	ProjFunctionLocalState &operator=(ProjFunctionLocalState &&) = delete;
+
 	explicit ProjFunctionLocalState(ClientContext &context)
-	    : proj_ctx(ProjModule::GetThreadProjContext()), arena(BufferAllocator::Get(context)) {
+	    : proj_ctx(ProjModule::GetThreadProjContext()), arena(BufferAllocator::Get(context)),
+	allocator(arena) {
 	}
 
 	~ProjFunctionLocalState() override {
@@ -288,7 +298,7 @@ struct ST_Transform {
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = ProjFunctionLocalState::ResetAndGet(state);
-
+		auto &alloc = lstate.allocator;
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		const auto &info = func_expr.bind_info->Cast<BindData>();
 
@@ -302,9 +312,9 @@ struct ST_Transform {
 
 			    auto geom = lstate.Deserialize(input_geom);
 
-			    sgl::ops::replace_vertices_xy(&geom, crs, [](void *arg, sgl::vertex_xy *vertex) {
+			    sgl::ops::replace_vertices(&alloc, &geom, crs, [](void *arg, sgl::vertex_xyzm *vertex) {
 				    const auto crs_ptr = static_cast<PJ *>(arg);
-				    const auto transformed = proj_trans(crs_ptr, PJ_FWD, proj_coord(vertex->x, vertex->y, 0, 0)).xy;
+				    const auto transformed = proj_trans(crs_ptr, PJ_FWD, proj_coord(vertex->x, vertex->y, vertex->zm, 0)).xy;
 				    vertex->x = transformed.x;
 				    vertex->y = transformed.y;
 			    });
@@ -602,7 +612,7 @@ struct ST_Area_Spheroid {
 					geod_polygon_clear(&sstate.poly);
 
 					// Dont add the last vertex
-					for (auto i = 0; i < vertex_count - 1; i++) {
+					for (uint32_t i = 0; i < vertex_count - 1; i++) {
 						const auto vertex = ring->get_vertex_xy(i);
 						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
 					}
@@ -760,7 +770,7 @@ struct ST_Perimeter_Spheroid {
 					geod_polygon_clear(&sstate.poly);
 
 					// Dont add the last vertex
-					for (auto i = 0; i < vertex_count - 1; i++) {
+					for (uint32_t i = 0; i < vertex_count - 1; i++) {
 						const auto vertex = ring->get_vertex_xy(i);
 						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
 					}
@@ -894,7 +904,7 @@ struct ST_Length_Spheroid {
 
 				geod_polygon_clear(&sstate.poly);
 
-				for (auto i = 0; i < vertex_count; i++) {
+				for (uint32_t i = 0; i < vertex_count; i++) {
 					const auto vertex = part->get_vertex_xy(i);
 					geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
 				}
