@@ -23,16 +23,17 @@ if(EMSCRIPTEN
   set(SPATIAL_USE_NETWORK OFF)
 endif()
 
-include_directories(spatial/include)
-add_subdirectory(spatial/src)
+add_subdirectory(src/spatial)
+add_subdirectory(src/sgl)
+include_directories(src)
 
-include_directories(spatial/third_party/yyjson/include)
-add_subdirectory(spatial/third_party/yyjson)
+include_directories(src/third_party/yyjson/include)
+add_subdirectory(src/third_party/yyjson)
 
-include_directories(spatial/third_party/protozero/include)
+include_directories(src/third_party/protozero/include)
 
-include_directories(spatial/third_party/shapelib)
-add_subdirectory(spatial/third_party/shapelib)
+include_directories(src/third_party/shapelib)
+add_subdirectory(src/third_party/shapelib)
 
 add_library(${EXTENSION_NAME} STATIC ${EXTENSION_SOURCES})
 
@@ -47,8 +48,7 @@ if(NOT EXISTS ${CMAKE_BINARY_DIR}/deps)
     COMMAND
       ${CMAKE_COMMAND} -G ${CMAKE_GENERATOR}
       -DCMAKE_CXX_COMPILER='${CMAKE_CXX_COMPILER}'
-      -DCMAKE_C_COMPILER='${CMAKE_C_COMPILER}'
-      -DDUCKDB_ENABLE_DEPRECATED_API=1
+      -DCMAKE_C_COMPILER='${CMAKE_C_COMPILER}' -DDUCKDB_ENABLE_DEPRECATED_API=1
       -DWASM_LOADABLE_EXTENSIONS=1 -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
       -DOSX_BUILD_ARCH=${OSX_BUILD_ARCH}
       -DSPATIAL_USE_NETWORK=${SPATIAL_USE_NETWORK}
@@ -96,7 +96,6 @@ find_package(SQLite3 REQUIRED)
 find_package(GEOS REQUIRED)
 find_package(GDAL REQUIRED)
 find_package(EXPAT REQUIRED)
-find_package(GeographicLib REQUIRED)
 
 # Important: The link order matters, its the reverse order of dependency
 set(EXTENSION_DEPENDENCIES
@@ -106,8 +105,7 @@ set(EXTENSION_DEPENDENCIES
     EXPAT::EXPAT
     SQLite::SQLite3
     ZLIB::ZLIB
-    ${SQLITE3_MEMVFS}
-    ${GeographicLib_LIBRARIES})
+    ${SQLITE3_MEMVFS})
 
 if(SPATIAL_USE_NETWORK)
   message(STATUS "Building with network functionality")
@@ -129,9 +127,6 @@ if((NOT EMSCRIPTEN) AND (NOT IOS))
          ${SystemConfiguration_Library})
   endif()
 endif()
-
-# Geographiclib is special
-include_directories(${GeographicLib_INCLUDE_DIRS})
 
 # Add dependencies to extension
 target_link_libraries(${EXTENSION_NAME} PUBLIC ${EXTENSION_DEPENDENCIES})

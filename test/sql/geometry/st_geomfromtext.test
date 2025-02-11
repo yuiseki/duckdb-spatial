@@ -21,10 +21,10 @@ POINT (0 1)
 statement error
 SELECT ST_AsText(ST_GeomFromText('POINT Z (1 2)'));
 ----
-Invalid Input Error: WKT Parser: Expected double at position 12 near: 'POINT Z (1 2)'|<---
+Invalid Input Error: Expected number at position '12' near: 'POINT Z (1 2)'|<---
 
 # Mixed dimensionality not allowed
 statement error
 SELECT ST_AsText(ST_GeomFromText('GEOMETRYCOLLECTION ZM (POINT Z (1 2 3))'));
 ----
-Invalid Input Error: WKT Parser: GeometryCollection with mixed Z and M types are not supported, mismatch at position 31 near: 'GEOMETRYCOLLECTION ZM (POINT Z ('|<---
+Invalid Input Error: Mixed Z and M values are not supported at position '31' near: 'GEOMETRYCOLLECTION ZM (POINT Z ('|<---

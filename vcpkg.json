@@ -2,7 +2,6 @@
   "dependencies": [
     "openssl",
     "zlib",
-    "geographiclib",
     "geos",
     "expat",
     {
