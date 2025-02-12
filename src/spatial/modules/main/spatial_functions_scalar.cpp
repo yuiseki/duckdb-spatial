@@ -1,19 +1,18 @@
-#include "spatial/modules/main/spatial_functions.hpp"
-
-#include "spatial/spatial_types.hpp"
-#include "spatial/util/function_builder.hpp"
-#include "spatial/util/math.hpp"
-#include "spatial/util/binary_reader.hpp"
+#include "duckdb/common/types/blob.hpp"
+#include "duckdb/common/vector_operations/generic_executor.hpp"
+#include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "spatial/geometry/geometry_serialization.hpp"
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/geometry/wkb_writer.hpp"
-
-#include "duckdb/common/vector_operations/generic_executor.hpp"
-#include "duckdb/common/types/blob.hpp"
-#include "duckdb/planner/expression/bound_function_expression.hpp"
-#include "duckdb/execution/expression_executor.hpp"
-
+#include "spatial/modules/main/spatial_functions.hpp"
+#include "spatial/spatial_types.hpp"
+#include "spatial/util/binary_reader.hpp"
+#include "spatial/util/function_builder.hpp"
+#include "spatial/util/math.hpp"
 #include "yyjson.h"
+
+#include <sys/stat.h>
 
 namespace duckdb {
 
@@ -4426,6 +4425,204 @@ struct ST_HasM {
 };
 
 //======================================================================================================================
+// ST_LineInterpolatePoint
+//======================================================================================================================
+
+struct ST_LineInterpolatePoint {
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		BinaryExecutor::Execute<string_t, double, string_t>(args.data[0], args.data[1],
+			result, args.size(), [&](const string_t &blob, const double faction) {
+
+			const auto geom = lstate.Deserialize(blob);
+			if (geom.get_type() != sgl::geometry_type::LINESTRING) {
+				throw InvalidInputException("ST_LineInterpolatePoint: input is not a LINESTRING");
+			}
+
+			sgl::vertex_xyzm out_vertex = {0, 0, 0, 0};
+			if(sgl::linestring::interpolate(&geom, faction, &out_vertex)) {
+				auto point = sgl::point::make_empty(geom.has_z(), geom.has_m());
+				point.set_vertex_data(reinterpret_cast<uint8_t*>(&out_vertex), 1);
+
+				return lstate.Serialize(result, point);
+			}
+
+			const auto empty = sgl::point::make_empty(geom.has_z(), geom.has_m());
+			return lstate.Serialize(result, empty);
+		});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Returns a point interpolated along a line at a fraction of total 2D length.
+	)";
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_LineInterpolatePoint", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("line", GeoTypes::GEOMETRY());
+				variant.AddParameter("fraction", LogicalType::DOUBLE);
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteGeometry);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "referencing");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_LineInterpolatePoints
+//======================================================================================================================
+
+struct ST_LineInterpolatePoints {
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		auto &alloc = lstate.GetAllocator();
+
+		TernaryExecutor::Execute<string_t, double, bool, string_t>(
+			args.data[0], args.data[1], args.data[2], result, args.size(),
+			[&](const string_t &blob, const double fraction, const bool repeat) {
+
+				const auto geom = lstate.Deserialize(blob);
+				if (geom.get_type() != sgl::geometry_type::LINESTRING) {
+					throw InvalidInputException("ST_LineInterpolatePoints: input is not a LINESTRING");
+				}
+
+				// equivalent to ST_LineInterpolatePoint
+				if(!repeat || fraction > 0.5) {
+					sgl::vertex_xyzm out_vertex = {0, 0, 0, 0};
+
+					if(sgl::linestring::interpolate(&geom, fraction, &out_vertex)) {
+						auto point = sgl::point::make_empty(geom.has_z(), geom.has_m());
+						point.set_vertex_data(reinterpret_cast<uint8_t*>(&out_vertex), 1);
+
+						return lstate.Serialize(result, point);
+					}
+
+					const auto empty = sgl::point::make_empty(geom.has_z(), geom.has_m());
+					return lstate.Serialize(result, empty);
+				}
+
+				const auto mpoint = sgl::linestring::interpolate_points(&alloc, &geom, fraction);
+				return lstate.Serialize(result, mpoint);
+			});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Returns a multi-point interpolated along a line at a fraction of total 2D length.
+
+		if repeat is false, the result is a single point, (and equivalent to ST_LineInterpolatePoint),
+		otherwise, the result is a multi-point with points repeated at the fraction interval.
+	)";
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_LineInterpolatePoints", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("line", GeoTypes::GEOMETRY());
+				variant.AddParameter("fraction", LogicalType::DOUBLE);
+				variant.AddParameter("repeat", LogicalType::BOOLEAN);
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetFunction(ExecuteGeometry);
+				variant.SetInit(LocalState::Init);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "referencing");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_LineSubstring
+//======================================================================================================================
+
+struct ST_LineSubstring {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		auto &alloc = lstate.GetAllocator();
+
+		TernaryExecutor::Execute<string_t, double, double, string_t>(
+			args.data[0], args.data[1], args.data[2], result, args.size(),
+			[&](const string_t &blob, const double start_fraction, const double end_fraction) {
+
+				const auto geom = lstate.Deserialize(blob);
+				if (geom.get_type() != sgl::geometry_type::LINESTRING) {
+					throw InvalidInputException("ST_LineSubstring: input is not a LINESTRING");
+				}
+
+				const auto sline = sgl::linestring::substring(&alloc, &geom, start_fraction, end_fraction);
+				return lstate.Serialize(result, sline);
+			});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Returns a substring of a line between two fractions of total 2D length.
+	)";
+	static constexpr auto EXAMPLE = "";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_LineSubstring", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("line", GeoTypes::GEOMETRY());
+				variant.AddParameter("start_fraction", LogicalType::DOUBLE);
+				variant.AddParameter("end_fraction", LogicalType::DOUBLE);
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetFunction(ExecuteGeometry);
+				variant.SetInit(LocalState::Init);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "referencing");
+		});
+	}
+};
+
+//======================================================================================================================
 // ST_ZMFlag
 //======================================================================================================================
 
@@ -7768,6 +7965,9 @@ void RegisterSpatialScalarFunctions(DatabaseInstance &db) {
 	ST_GeomFromWKB::Register(db);
 	ST_HasZ::Register(db);
 	ST_HasM::Register(db);
+	ST_LineInterpolatePoint::Register(db);
+	ST_LineInterpolatePoints::Register(db);
+	ST_LineSubstring::Register(db);
 	ST_ZMFlag::Register(db);
 	ST_Distance_Sphere::Register(db);
 	ST_Hilbert::Register(db);
