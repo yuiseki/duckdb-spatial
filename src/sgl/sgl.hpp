@@ -596,6 +596,14 @@ inline double length(const geometry *geom) {
 	return length;
 }
 
+// geom must be a non-empty linestring
+// returns false if empty
+bool interpolate(const sgl::geometry *geom, double frac, vertex_xyzm *out);
+
+// returns a multipoint with interpolated points
+sgl::geometry interpolate_points(sgl::allocator *alloc, const sgl::geometry *geom, double frac);
+sgl::geometry substring(sgl::allocator *alloc, const sgl::geometry *geom, double beg_frac, double end_frac);
+
 } // namespace linestring
 
 namespace polygon {

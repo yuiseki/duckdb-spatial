@@ -9,6 +9,285 @@
 
 namespace sgl {
 
+namespace linestring {
+bool interpolate(const sgl::geometry *geom, double frac, vertex_xyzm *out) {
+
+	SGL_ASSERT(geom);
+	if(geom->get_type() != sgl::geometry_type::LINESTRING) {
+		return false;
+	}
+	if(geom->is_empty()) {
+		return false;
+	}
+	if(geom->get_count() == 1) {
+		memcpy(out, geom->get_vertex_data(), geom->get_vertex_size());
+		return true;
+	}
+
+	// Clamp the fraction to [0, 1]
+	frac = std::min(std::max(frac, 0.0), 1.0);
+
+	const auto vertex_stride = geom->get_vertex_size();
+	const auto vertex_data = geom->get_vertex_data();
+	const auto vertex_count = geom->get_count();
+
+	// Special cases
+	if(frac == 0) {
+		memcpy(out, vertex_data, vertex_stride);
+		return true;
+	}
+
+	if(frac == 1) {
+		memcpy(out, vertex_data + (vertex_count - 1) * vertex_stride, vertex_stride);
+		return true;
+	}
+
+	const auto actual_length = linestring::length(geom);
+	const auto target_length = actual_length * frac;
+
+	// Compute the length of each segment, stop when we reach the target length
+	double length = 0.0;
+	vertex_xyzm prev = {0, 0, 0, 0};
+	vertex_xyzm next = {0, 0, 0, 0};
+
+	memcpy(&prev, vertex_data, vertex_stride);
+
+	for(size_t i = 1; i < vertex_count; i++) {
+		memcpy(&next, vertex_data + i * vertex_stride, vertex_stride);
+		const auto dx = next.x - prev.x;
+		const auto dy = next.y - prev.y;
+
+		const auto segment_length = std::hypot(dx, dy);
+
+		if(length + segment_length >= target_length) {
+			const auto remaining = target_length - length;
+			const auto sfrac = remaining / segment_length;
+			out->x = prev.x + sfrac * (next.x - prev.x);
+			out->y = prev.y + sfrac * (next.y - prev.y);
+			out->zm = prev.zm + sfrac * (next.zm - prev.zm);
+			out->m = prev.m + sfrac * (next.m - prev.m);
+			return true;
+		}
+		length += segment_length;
+		prev = next;
+	}
+
+	return false;
+}
+
+sgl::geometry interpolate_points(sgl::allocator *alloc, const sgl::geometry *geom, double frac) {
+
+	SGL_ASSERT(geom);
+	if(geom->get_type() != sgl::geometry_type::LINESTRING) {
+		return point::make_empty(geom->has_z(), geom->has_m());
+	}
+	if(geom->is_empty()) {
+		return point::make_empty(geom->has_z(), geom->has_m());
+	}
+
+	if(geom->get_count() == 1) {
+		auto point = point::make_empty(geom->has_z(), geom->has_m());
+		point.set_vertex_data(geom->get_vertex_data(), 1);
+		return point;
+	}
+
+	// Clamp the fraction to [0, 1]
+	frac = std::min(std::max(frac, 0.0), 1.0);
+
+	const auto vertex_stride = geom->get_vertex_size();
+	const auto vertex_data = geom->get_vertex_data();
+	const auto vertex_count = geom->get_count();
+
+	// Special cases
+	if(frac == 0) {
+		auto point = point::make_empty(geom->has_z(), geom->has_m());
+		point.set_vertex_data(vertex_data, 1);
+	}
+
+	if(frac == 1) {
+		auto point = point::make_empty(geom->has_z(), geom->has_m());
+		point.set_vertex_data(vertex_data + (vertex_count - 1) * vertex_stride, 1);
+	}
+
+
+	auto mpoint = multi_point::make_empty(geom->has_z(), geom->has_m());
+
+	const auto actual_length = linestring::length(geom);
+	double total_length = 0.0;
+	double next_target = frac * actual_length;
+
+	vertex_xyzm prev = {0, 0, 0, 0};
+	vertex_xyzm next = {0, 0, 0, 0};
+
+	memcpy(&prev, vertex_data, vertex_stride);
+
+	// Each target length, we add a point
+	for (size_t i = 1; i < vertex_count; i++) {
+		memcpy(&next, vertex_data + i * vertex_stride, vertex_stride);
+		const auto dx = next.x - prev.x;
+		const auto dy = next.y - prev.y;
+
+		const auto segment_length = std::hypot(dx, dy);
+
+		// There can be multiple points on the same segment, so we need to loop here
+		while (total_length + segment_length >= next_target) {
+			const auto remaining = next_target - total_length;
+			const auto sfrac = remaining / segment_length;
+
+			vertex_xyzm point = {};
+			point.x = prev.x + sfrac * (next.x - prev.x);
+			point.y = prev.y + sfrac * (next.y - prev.y);
+			point.zm = prev.zm + sfrac * (next.zm - prev.zm);
+			point.m = prev.m + sfrac * (next.m - prev.m);
+
+
+			// Allocate memory for the point vertex
+			const auto data_mem = static_cast<char *>(alloc->alloc(vertex_stride));
+			memcpy(data_mem, &point, vertex_stride);
+
+			// Allocate memory for the point geometry
+			auto point_mem = static_cast<char *>(alloc->alloc(sizeof(sgl::geometry)));
+			auto point_ptr = new (point_mem) sgl::geometry(geometry_type::POINT, geom->has_z(), geom->has_m());
+
+			// Set the vertex data and append it to the multi-point
+			point_ptr->set_vertex_data(data_mem, 1);
+			mpoint.append_part(point_ptr);
+
+			// Update the target length
+			next_target += frac * actual_length;
+		}
+		total_length += segment_length;
+		prev = next;
+	}
+
+	return mpoint;
+}
+
+sgl::geometry substring(sgl::allocator *alloc, const sgl::geometry *geom, double beg_frac, double end_frac) {
+	auto line = linestring::make_empty(geom->has_z(), geom->has_m());
+	if(geom->get_type() != sgl::geometry_type::LINESTRING) {
+		return line;
+	}
+	if(geom->is_empty()) {
+		if(beg_frac == end_frac) {
+			line.set_type(geometry_type::POINT);
+		}
+		return line;
+	}
+
+	if(beg_frac > end_frac) {
+		return line;
+	}
+
+	beg_frac = std::min(std::max(beg_frac, 0.0), 1.0);
+	end_frac = std::min(std::max(end_frac, 0.0), 1.0);
+
+	const auto vertex_data = geom->get_vertex_data();
+	const auto vertex_count = geom->get_count();
+	const auto vertex_size = geom->get_vertex_size();
+
+	// Reference the whole line
+	if(beg_frac == 0 && end_frac == 1) {
+		line.set_vertex_data(vertex_data, vertex_count);
+		return line;
+	}
+
+	if(beg_frac == end_frac) {
+		// Just interpolate once
+		vertex_xyzm point = {};
+
+		// Make it a point instead!
+		line.set_type(geometry_type::POINT);
+
+		if(interpolate(geom, beg_frac, &point)) {
+			const auto mem = static_cast<char *>(alloc->alloc(vertex_size));
+			memcpy(mem, &point, vertex_size);
+			line.set_vertex_data(mem, 1);
+		}
+
+		return line;
+	}
+
+	vertex_xyzm beg = {};
+	size_t beg_idx = 0;
+	vertex_xyzm end = {};
+	size_t end_idx = 0;
+
+	const double total_length = linestring::length(geom);
+	const double beg_length = total_length * beg_frac;
+	const double end_length = total_length * end_frac;
+	double length = 0.0;
+
+	vertex_xyzm prev = {0, 0, 0, 0};
+	vertex_xyzm next = {0, 0, 0, 0};
+
+	memcpy(&prev, vertex_data, vertex_size);
+
+	// First look for the beg point
+	size_t vertex_idx = 1;
+
+	for(; vertex_idx < vertex_count; vertex_idx++) {
+		memcpy(&next, vertex_data + vertex_idx * vertex_size, vertex_size);
+		const auto dx = next.x - prev.x;
+		const auto dy = next.y - prev.y;
+		const auto segment_length = std::hypot(dx, dy);
+
+		if(length + segment_length >= beg_length) {
+			const auto remaining = beg_length - length;
+			const auto sfrac = remaining / segment_length;
+			beg.x = prev.x + sfrac * (next.x - prev.x);
+			beg.y = prev.y + sfrac * (next.y - prev.y);
+			beg.zm = prev.zm + sfrac * (next.zm - prev.zm);
+			beg.m = prev.m + sfrac * (next.m - prev.m);
+
+			beg_idx = vertex_idx - 1;
+			break;
+		}
+		length += segment_length;
+		prev = next;
+	}
+
+	// Now look for the end point
+	for(; vertex_idx < vertex_count; vertex_idx++) {
+		memcpy(&next, vertex_data + vertex_idx * vertex_size, vertex_size);
+		const auto dx = next.x - prev.x;
+		const auto dy = next.y - prev.y;
+		const auto segment_length = std::hypot(dx, dy);
+
+		if(length + segment_length >= end_length) {
+			const auto remaining = end_length - length;
+			const auto sfrac = remaining / segment_length;
+			end.x = prev.x + sfrac * (next.x - prev.x);
+			end.y = prev.y + sfrac * (next.y - prev.y);
+			end.zm = prev.zm + sfrac * (next.zm - prev.zm);
+			end.m = prev.m + sfrac * (next.m - prev.m);
+
+			end_idx = vertex_idx - 1;
+			break;
+		}
+		length += segment_length;
+		prev = next;
+	}
+
+	// Now create a new line containing beg, all the points in between, and end
+	const auto new_vertex_count = end_idx - beg_idx + 2;
+	const auto new_vertex_size = new_vertex_count * vertex_size;
+	const auto new_vertex_data = static_cast<char *>(alloc->alloc(new_vertex_size));
+
+	// Copy the beg point
+	memcpy(new_vertex_data, &beg, vertex_size);
+	// Copy the points in between
+	memcpy(new_vertex_data + vertex_size, vertex_data + (beg_idx + 1) * vertex_size, (new_vertex_count - 2) * vertex_size);
+	// Copy the end point
+	memcpy(new_vertex_data + (new_vertex_count - 1) * vertex_size, &end, vertex_size);
+
+	line.set_vertex_data(new_vertex_data, new_vertex_count);
+	return line;
+}
+
+
+} // namespace linestring
+
 namespace ops {
 
 static uint8_t *resize_vertices(allocator &alloc, geometry *geom, bool set_z, bool set_m, double default_z,

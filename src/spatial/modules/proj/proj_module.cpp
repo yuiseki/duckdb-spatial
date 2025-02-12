@@ -135,8 +135,7 @@ struct ProjFunctionLocalState final : FunctionLocalState {
 	ProjFunctionLocalState &operator=(ProjFunctionLocalState &&) = delete;
 
 	explicit ProjFunctionLocalState(ClientContext &context)
-	    : proj_ctx(ProjModule::GetThreadProjContext()), arena(BufferAllocator::Get(context)),
-	allocator(arena) {
+	    : proj_ctx(ProjModule::GetThreadProjContext()), arena(BufferAllocator::Get(context)), allocator(arena) {
 	}
 
 	~ProjFunctionLocalState() override {
@@ -316,7 +315,8 @@ struct ST_Transform {
 
 			    sgl::ops::replace_vertices(&alloc, &geom, crs, [](void *arg, sgl::vertex_xyzm *vertex) {
 				    const auto crs_ptr = static_cast<PJ *>(arg);
-				    const auto transformed = proj_trans(crs_ptr, PJ_FWD, proj_coord(vertex->x, vertex->y, vertex->zm, 0)).xy;
+				    const auto transformed =
+				        proj_trans(crs_ptr, PJ_FWD, proj_coord(vertex->x, vertex->y, vertex->zm, 0)).xy;
 				    vertex->x = transformed.x;
 				    vertex->y = transformed.y;
 			    });
@@ -1072,7 +1072,6 @@ struct ST_DWithin_Spheroid {
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "relation");
 			func.SetTag("category", "spheroid");
-
 		});
 	}
 };

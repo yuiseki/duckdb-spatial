@@ -1,0 +1,225 @@
+require spatial
+
+query I
+SELECT ST_LineInterpolatePoint(
+  ST_GeomFromText('LINESTRING(0 0, 10 10, 20 20)'),
+  0.5
+);
+----
+POINT (10 10)
+
+query I
+SELECT ST_LineInterpolatePoint(
+  ST_GeomFromText('LINESTRING(0 0, 10 10, 20 20)'),
+  13
+);
+----
+POINT (20 20)
+
+query I
+SELECT ST_LineInterpolatePoint(
+  ST_GeomFromText('LINESTRING(0 0, 10 10, 20 20)'),
+  -20
+);
+----
+POINT (0 0)
+
+query I
+SELECT ST_AsText(ST_LineInterpolatePoint(
+  ST_GeomFromText('LINESTRING(0 0, 10 10, 20 20)'),
+  0.99
+));
+----
+POINT (19.8 19.8)
+
+# With Z and M values
+query I
+SELECT ST_AsText(ST_LineInterpolatePoint(
+  ST_GeomFromText('LINESTRING ZM(0 0 0 0, 10 10 10 10, 20 20 20 20)'),
+  0.5
+));
+----
+POINT ZM (10 10 10 10)
+
+# With Z and M values, where Z and M are different from eachother.
+query I
+SELECT ST_AsText(ST_LineInterpolatePoint(
+  ST_GeomFromText('LINESTRING ZM(0 5 0 0, 10 5 10 20, 20 5 20 25)'),
+  0.5
+));
+----
+POINT ZM (10 5 10 20)
+
+query I
+SELECT ST_AsText(ST_LineInterpolatePoint(
+  ST_GeomFromText('LINESTRING ZM(0 5 0 0, 10 5 10 20, 20 5 20 25)'),
+  0.75
+));
+----
+POINT ZM (15 5 15 22.5)
+
+query I
+SELECT ST_AsText(ST_LineInterpolatePoint(
+  ST_GeomFromText('LINESTRING ZM(0 5 0 0, 10 5 10 20, 20 5 20 25)'),
+  0
+));
+----
+POINT ZM (0 5 0 0)
+
+# Test with empty line
+query I
+SELECT ST_AsText(ST_LineInterpolatePoint(
+  ST_GeomFromText('LINESTRING EMPTY'),
+  0.5
+));
+----
+POINT EMPTY
+
+# Test with empty line and zm
+query I
+SELECT ST_AsText(ST_LineInterpolatePoint(
+  ST_GeomFromText('LINESTRING ZM EMPTY'),
+  0.5
+));
+----
+POINT ZM EMPTY
+
+
+#--------------------------------------------------------------------------------------------------
+# Test  ST_LineInterpolatePoints
+#--------------------------------------------------------------------------------------------------
+query I
+SELECT ST_AsText(ST_LineInterpolatePoints(
+  ST_GeomFromText('LINESTRING(0 0, 10 10, 20 20)'),
+  0.5, true
+));
+----
+MULTIPOINT (10 10, 20 20)
+
+query I
+SELECT ST_AsText(ST_LineInterpolatePoints(
+  ST_GeomFromText('LINESTRING(0 0, 10 10, 20 20)'),
+  0.51, true
+));
+----
+POINT (10.2 10.2)
+
+query I
+SELECT ST_AsText(ST_LineInterpolatePoints(
+  ST_GeomFromText('LINESTRING(0 0, 10 10, 20 20)'),
+  0.25, true
+));
+----
+MULTIPOINT (5 5, 10 10, 15 15, 20 20)
+
+query I
+SELECT ST_AsText(ST_LineInterpolatePoints(
+  ST_GeomFromText('LINESTRING(0 0, 10 10, 20 20)'),
+  0.25, false
+));
+----
+POINT (5 5)
+
+# Test with empty line
+query I
+SELECT ST_AsText(ST_LineInterpolatePoints(
+  ST_GeomFromText('LINESTRING EMPTY'),
+  0.5, true
+));
+----
+POINT EMPTY
+
+#---------------------------------------------------------------------------------------
+# Test ST_LineSubstring
+#---------------------------------------------------------------------------------------
+
+query I
+SELECT ST_AsText(ST_LineSubstring(
+  ST_GeomFromText('LINESTRING(0 0, 10 10, 20 20)'),
+  0.25, 0.75
+));
+----
+LINESTRING (5 5, 10 10, 15 15)
+
+query I
+SELECT ST_AsText(ST_LineSubstring(
+  ST_GeomFromText('LINESTRING(0 0, 10 10)'),
+  0.25, 0.75
+));
+----
+LINESTRING (2.5 2.5, 7.5 7.5)
+
+
+query I
+SELECT ST_AsText(ST_LineSubstring(
+  ST_GeomFromText('LINESTRING(0 0)'),
+  0.25, 0.75
+));
+----
+LINESTRING (0 0, 0 0)
+
+query I
+SELECT ST_AsText(ST_LineSubstring(
+  ST_GeomFromText('LINESTRING(0 0, 10 10, 10 10, 20 20)'),
+  0.25, 0.75
+));
+----
+LINESTRING (5 5, 10 10, 10 10, 15 15)
+
+query I
+SELECT ST_AsText(ST_LineSubstring(
+  ST_GeomFromText('LINESTRING(0 0, 10 10, 10 10)'),
+  0.25, 0.75
+));
+----
+LINESTRING (2.5 2.5, 7.5 7.5)
+
+query I
+SELECT ST_AsText(ST_LineSubstring(
+  ST_GeomFromText('LINESTRING EMPTY'),
+  0.25, 0.75
+));
+----
+LINESTRING EMPTY
+
+query I
+SELECT ST_AsText(ST_LineSubstring(
+  ST_GeomFromText('LINESTRING(0 0, 10 10, 10 10)'),
+  0.5, 0.5
+));
+----
+POINT (5 5)
+
+query I
+SELECT ST_AsText(ST_LineSubstring(
+  ST_GeomFromText('LINESTRING(0 0, 10 10, 10 10)'),
+  0, 1
+));
+----
+LINESTRING (0 0, 10 10, 10 10)
+
+query I
+SELECT ST_AsText(ST_LineSubstring(
+  ST_GeomFromText('LINESTRING(0 0, 10 10, 10 10)'),
+  0, 0
+));
+----
+POINT (0 0)
+
+query I
+SELECT ST_AsText(ST_LineSubstring(
+  ST_GeomFromText('LINESTRING(0 0, 10 10, 10 10)'),
+  1, 1
+));
+----
+POINT (10 10)
+
+query I
+SELECT ST_AsText(ST_LineSubstring(
+  ST_GeomFromText('LINESTRING EMPTY'),
+  1, 1
+));
+----
+POINT EMPTY
+
+

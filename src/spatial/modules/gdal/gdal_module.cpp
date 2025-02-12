@@ -440,7 +440,6 @@ GDALClientContextState::~GDALClientContextState() {
 }
 
 void GDALClientContextState::QueryEnd() {
-
 }
 
 string GDALClientContextState::GetPrefix(const string &value) const {
