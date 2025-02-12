@@ -12,8 +12,6 @@
 #include "spatial/util/math.hpp"
 #include "yyjson.h"
 
-#include <sys/stat.h>
-
 namespace duckdb {
 
 namespace {
@@ -4435,25 +4433,24 @@ struct ST_LineInterpolatePoint {
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
-		BinaryExecutor::Execute<string_t, double, string_t>(args.data[0], args.data[1],
-			result, args.size(), [&](const string_t &blob, const double faction) {
+		BinaryExecutor::Execute<string_t, double, string_t>(
+		    args.data[0], args.data[1], result, args.size(), [&](const string_t &blob, const double faction) {
+			    const auto geom = lstate.Deserialize(blob);
+			    if (geom.get_type() != sgl::geometry_type::LINESTRING) {
+				    throw InvalidInputException("ST_LineInterpolatePoint: input is not a LINESTRING");
+			    }
 
-			const auto geom = lstate.Deserialize(blob);
-			if (geom.get_type() != sgl::geometry_type::LINESTRING) {
-				throw InvalidInputException("ST_LineInterpolatePoint: input is not a LINESTRING");
-			}
+			    sgl::vertex_xyzm out_vertex = {0, 0, 0, 0};
+			    if (sgl::linestring::interpolate(&geom, faction, &out_vertex)) {
+				    auto point = sgl::point::make_empty(geom.has_z(), geom.has_m());
+				    point.set_vertex_data(reinterpret_cast<uint8_t *>(&out_vertex), 1);
 
-			sgl::vertex_xyzm out_vertex = {0, 0, 0, 0};
-			if(sgl::linestring::interpolate(&geom, faction, &out_vertex)) {
-				auto point = sgl::point::make_empty(geom.has_z(), geom.has_m());
-				point.set_vertex_data(reinterpret_cast<uint8_t*>(&out_vertex), 1);
+				    return lstate.Serialize(result, point);
+			    }
 
-				return lstate.Serialize(result, point);
-			}
-
-			const auto empty = sgl::point::make_empty(geom.has_z(), geom.has_m());
-			return lstate.Serialize(result, empty);
-		});
+			    const auto empty = sgl::point::make_empty(geom.has_z(), geom.has_m());
+			    return lstate.Serialize(result, empty);
+		    });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -4500,32 +4497,31 @@ struct ST_LineInterpolatePoints {
 		auto &alloc = lstate.GetAllocator();
 
 		TernaryExecutor::Execute<string_t, double, bool, string_t>(
-			args.data[0], args.data[1], args.data[2], result, args.size(),
-			[&](const string_t &blob, const double fraction, const bool repeat) {
+		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    [&](const string_t &blob, const double fraction, const bool repeat) {
+			    const auto geom = lstate.Deserialize(blob);
+			    if (geom.get_type() != sgl::geometry_type::LINESTRING) {
+				    throw InvalidInputException("ST_LineInterpolatePoints: input is not a LINESTRING");
+			    }
 
-				const auto geom = lstate.Deserialize(blob);
-				if (geom.get_type() != sgl::geometry_type::LINESTRING) {
-					throw InvalidInputException("ST_LineInterpolatePoints: input is not a LINESTRING");
-				}
+			    // equivalent to ST_LineInterpolatePoint
+			    if (!repeat || fraction > 0.5) {
+				    sgl::vertex_xyzm out_vertex = {0, 0, 0, 0};
 
-				// equivalent to ST_LineInterpolatePoint
-				if(!repeat || fraction > 0.5) {
-					sgl::vertex_xyzm out_vertex = {0, 0, 0, 0};
+				    if (sgl::linestring::interpolate(&geom, fraction, &out_vertex)) {
+					    auto point = sgl::point::make_empty(geom.has_z(), geom.has_m());
+					    point.set_vertex_data(reinterpret_cast<uint8_t *>(&out_vertex), 1);
 
-					if(sgl::linestring::interpolate(&geom, fraction, &out_vertex)) {
-						auto point = sgl::point::make_empty(geom.has_z(), geom.has_m());
-						point.set_vertex_data(reinterpret_cast<uint8_t*>(&out_vertex), 1);
+					    return lstate.Serialize(result, point);
+				    }
 
-						return lstate.Serialize(result, point);
-					}
+				    const auto empty = sgl::point::make_empty(geom.has_z(), geom.has_m());
+				    return lstate.Serialize(result, empty);
+			    }
 
-					const auto empty = sgl::point::make_empty(geom.has_z(), geom.has_m());
-					return lstate.Serialize(result, empty);
-				}
-
-				const auto mpoint = sgl::linestring::interpolate_points(&alloc, &geom, fraction);
-				return lstate.Serialize(result, mpoint);
-			});
+			    const auto mpoint = sgl::linestring::interpolate_points(&alloc, &geom, fraction);
+			    return lstate.Serialize(result, mpoint);
+		    });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -4577,17 +4573,16 @@ struct ST_LineSubstring {
 		auto &alloc = lstate.GetAllocator();
 
 		TernaryExecutor::Execute<string_t, double, double, string_t>(
-			args.data[0], args.data[1], args.data[2], result, args.size(),
-			[&](const string_t &blob, const double start_fraction, const double end_fraction) {
+		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    [&](const string_t &blob, const double start_fraction, const double end_fraction) {
+			    const auto geom = lstate.Deserialize(blob);
+			    if (geom.get_type() != sgl::geometry_type::LINESTRING) {
+				    throw InvalidInputException("ST_LineSubstring: input is not a LINESTRING");
+			    }
 
-				const auto geom = lstate.Deserialize(blob);
-				if (geom.get_type() != sgl::geometry_type::LINESTRING) {
-					throw InvalidInputException("ST_LineSubstring: input is not a LINESTRING");
-				}
-
-				const auto sline = sgl::linestring::substring(&alloc, &geom, start_fraction, end_fraction);
-				return lstate.Serialize(result, sline);
-			});
+			    const auto sline = sgl::linestring::substring(&alloc, &geom, start_fraction, end_fraction);
+			    return lstate.Serialize(result, sline);
+		    });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------

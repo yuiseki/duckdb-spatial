@@ -270,12 +270,10 @@ sgl::geometry substring(sgl::allocator *alloc, const sgl::geometry *geom, double
 	}
 
 	// Now create a new line containing beg, all the points in between, and end
-
 	const auto new_vertex_count = end_idx - beg_idx + 2;
 	const auto new_vertex_size = new_vertex_count * vertex_size;
 	const auto new_vertex_data = static_cast<char *>(alloc->alloc(new_vertex_size));
 
-	// TODO: This seems iffy...
 	// Copy the beg point
 	memcpy(new_vertex_data, &beg, vertex_size);
 	// Copy the points in between
