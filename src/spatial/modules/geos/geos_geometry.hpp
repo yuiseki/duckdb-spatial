@@ -37,9 +37,11 @@ public:
 	GeosGeometry get_centroid() const;
 	GeosGeometry get_convex_hull() const;
 	GeosGeometry get_envelope() const;
+	GeosGeometry get_minimum_rotated_rectangle() const;
 	GeosGeometry get_reversed() const;
 	GeosGeometry get_point_on_surface() const;
 	GeosGeometry get_made_valid() const;
+	GeosGeometry get_voronoi_diagram() const;
 
 	bool contains(const GeosGeometry &other) const;
 	bool covers(const GeosGeometry &other) const;
@@ -67,6 +69,7 @@ public:
 	GeosGeometry get_without_repeated_points(double tolerance) const;
 	GeosGeometry get_reduced_precision(double tolerance) const;
 	GeosGeometry get_linemerged(bool directed) const;
+	GeosGeometry get_concave_hull(const double ratio, const bool allowHoles) const;
 	GeosGeometry get_buffer(double distance, int quadsegs) const;
 	GeosGeometry get_buffer_style(double distance, int quadsegs, int endcap_style, int join_style,
 	                              double mitre_limit) const;
@@ -204,6 +207,10 @@ inline GeosGeometry GeosGeometry::get_centroid() const {
 	return GeosGeometry(handle, GEOSGetCentroid_r(handle, geom));
 }
 
+inline GeosGeometry GeosGeometry::get_concave_hull(const double ratio, const bool allowHoles) const {
+	return GeosGeometry(handle, GEOSConcaveHull_r(handle, geom, ratio, allowHoles));
+}
+
 inline GeosGeometry GeosGeometry::get_convex_hull() const {
 	return GeosGeometry(handle, GEOSConvexHull_r(handle, geom));
 }
@@ -222,6 +229,14 @@ inline GeosGeometry GeosGeometry::get_point_on_surface() const {
 
 inline GeosGeometry GeosGeometry::get_made_valid() const {
 	return GeosGeometry(handle, GEOSMakeValid_r(handle, geom));
+}
+
+inline GeosGeometry GeosGeometry::get_minimum_rotated_rectangle() const {
+	return GeosGeometry(handle, GEOSMinimumRotatedRectangle_r(handle, geom));
+}
+
+inline GeosGeometry GeosGeometry::get_voronoi_diagram() const {
+	return GeosGeometry(handle, GEOSVoronoiDiagram_r(handle, geom, nullptr, 0, 0));
 }
 
 inline bool GeosGeometry::contains(const GeosGeometry &other) const {
