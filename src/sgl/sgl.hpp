@@ -870,6 +870,8 @@ geometry extract_polygons(sgl::geometry *geom);
 // It does NOT check topological validity.
 bool is_valid(const sgl::geometry *geom);
 
+bool get_centroid(const sgl::geometry *geom, vertex_xyzm *out);
+
 } // namespace ops
 
 } // namespace sgl

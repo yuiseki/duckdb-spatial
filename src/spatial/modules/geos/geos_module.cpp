@@ -351,34 +351,6 @@ struct ST_Buffer {
 	}
 };
 
-struct ST_Centroid {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		const auto &lstate = LocalState::ResetAndGet(state);
-
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
-			const auto geom = lstate.Deserialize(geom_blob);
-			const auto centroid = geom.get_centroid();
-			return lstate.Serialize(result, centroid);
-		});
-	}
-
-	static void Register(DatabaseInstance &db) {
-		FunctionBuilder::RegisterScalar(db, "ST_Centroid", [](ScalarFunctionBuilder &func) {
-			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-				variant.AddParameter("geom", GeoTypes::GEOMETRY());
-				variant.SetReturnType(GeoTypes::GEOMETRY());
-
-				variant.SetInit(LocalState::Init);
-				variant.SetFunction(Execute);
-			});
-
-			func.SetDescription("Returns the centroid of a geometry");
-			func.SetTag("ext", "spatial");
-			func.SetTag("category", "construction");
-		});
-	}
-};
-
 struct ST_Contains : AsymmetricPreparedBinaryFunction<ST_Contains> {
 	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
 		return lhs.contains(rhs);
@@ -439,12 +411,12 @@ struct ST_ConcaveHull {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
 		TernaryExecutor::Execute<string_t, double, bool, string_t>(
-		    	args.data[0],args.data[1],args.data[2], result, args.size(),
-		    	[&](const string_t &geom_blob, const double ratio, const bool  allowHoles) {
-			const auto geom = lstate.Deserialize(geom_blob);
-			const auto hull = geom.get_concave_hull(ratio, allowHoles);
-			return lstate.Serialize(result, hull);
-		});
+		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    [&](const string_t &geom_blob, const double ratio, const bool allowHoles) {
+			    const auto geom = lstate.Deserialize(geom_blob);
+			    const auto hull = geom.get_concave_hull(ratio, allowHoles);
+			    return lstate.Serialize(result, hull);
+		    });
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -459,7 +431,11 @@ struct ST_ConcaveHull {
 				variant.SetFunction(Execute);
 			});
 
-			func.SetDescription("Returns the 'concave' hull of the input geometry, containing all of the source input's points, and which can be used to create polygons from points. The ratio parameter dictates the level of concavity; 1.0 returns the convex hull; and 0 indicates to return the most concave hull possible. Set allowHoles to a non-zero value to allow output containing holes.");
+			func.SetDescription(
+			    "Returns the 'concave' hull of the input geometry, containing all of the source input's points, and "
+			    "which can be used to create polygons from points. The ratio parameter dictates the level of "
+			    "concavity; 1.0 returns the convex hull; and 0 indicates to return the most concave hull possible. Set "
+			    "allowHoles to a non-zero value to allow output containing holes.");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
 		});
@@ -1022,7 +998,7 @@ struct ST_MinimumRotatedRectangle {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob ) {
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
 			const auto geom = lstate.Deserialize(geom_blob);
 			const auto mrr = geom.get_minimum_rotated_rectangle();
 			return lstate.Serialize(result, mrr);
@@ -1039,7 +1015,9 @@ struct ST_MinimumRotatedRectangle {
 				variant.SetFunction(Execute);
 			});
 
-			func.SetDescription("Returns the minimum rotated rectangle that bounds the input geometry, finding the surrounding box that has the lowest area by using a rotated rectangle, rather than taking the lowest and highest coordinate values as per ST_Envelope().");
+			func.SetDescription("Returns the minimum rotated rectangle that bounds the input geometry, finding the "
+			                    "surrounding box that has the lowest area by using a rotated rectangle, rather than "
+			                    "taking the lowest and highest coordinate values as per ST_Envelope().");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
 		});
@@ -1378,7 +1356,7 @@ struct ST_VoronoiDiagram {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob ) {
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
 			const auto geom = lstate.Deserialize(geom_blob);
 			const auto mrr = geom.get_voronoi_diagram();
 			return lstate.Serialize(result, mrr);
@@ -1589,7 +1567,6 @@ void RegisterGEOSModule(DatabaseInstance &db) {
 	// Scalar Functions
 	ST_Boundary::Register(db);
 	ST_Buffer::Register(db);
-	ST_Centroid::Register(db);
 	ST_Contains::Register(db);
 	ST_ContainsProperly::Register(db);
 	ST_ConcaveHull::Register(db);

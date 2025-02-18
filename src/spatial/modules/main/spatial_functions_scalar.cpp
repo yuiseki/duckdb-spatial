@@ -1041,6 +1041,31 @@ struct ST_AsSVG {
 struct ST_Centroid {
 
 	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
+			const auto geom = lstate.Deserialize(blob);
+
+			sgl::vertex_xyzm centroid = {0, 0, 0, 0};
+			if (!sgl::ops::get_centroid(&geom, &centroid)) {
+				// Couldnt get the centroid, return an empty geometrycollection.
+				const auto empty = sgl::multi_geometry::make_empty(geom.has_z(), geom.has_m());
+				return lstate.Serialize(result, empty);
+			}
+
+			// Otherwise, create a point geometry with the centroid
+			auto point = sgl::point::make_empty(geom.has_z(), geom.has_m());
+			point.set_vertex_data(reinterpret_cast<const char *>(&centroid), 1);
+
+			// Serialize the point
+			return lstate.Serialize(result, point);
+		});
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
 	// POINT_2D
 	//------------------------------------------------------------------------------------------------------------------
 	// Provided for completeness sake
@@ -1236,6 +1261,14 @@ struct ST_Centroid {
 	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
 		FunctionBuilder::RegisterScalar(db, "ST_Centroid", [&](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteGeometry);
+			});
+
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("point", GeoTypes::POINT_2D());
 				variant.SetReturnType(GeoTypes::POINT_2D());

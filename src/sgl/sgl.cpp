@@ -289,9 +289,8 @@ sgl::geometry substring(sgl::allocator *alloc, const sgl::geometry *geom, double
 } // namespace linestring
 
 namespace ops {
-
 static uint8_t *resize_vertices(allocator &alloc, geometry *geom, bool set_z, bool set_m, double default_z,
-                                double default_m) {
+								double default_m) {
 
 	const auto has_z = geom->has_z();
 	const auto has_m = geom->has_m();
@@ -451,7 +450,7 @@ static uint8_t *resize_vertices(allocator &alloc, geometry *geom, bool set_z, bo
 				memcpy(target_data + target_offset, source_data + source_offset, sizeof(double) * 2);
 				memcpy(target_data + target_offset + sizeof(double) * 2, &default_z, sizeof(double));
 				memcpy(target_data + target_offset + sizeof(double) * 3,
-				       source_data + source_offset + sizeof(double) * 2, sizeof(double));
+					   source_data + source_offset + sizeof(double) * 2, sizeof(double));
 			}
 
 			return target_data;
@@ -497,7 +496,7 @@ static uint8_t *resize_vertices(allocator &alloc, geometry *geom, bool set_z, bo
 				const auto target_offset = i * target_size;
 				memcpy(target_data + target_offset, source_data + source_offset, sizeof(double) * 2);
 				memcpy(target_data + target_offset + sizeof(double) * 2,
-				       source_data + source_offset + sizeof(double) * 3, sizeof(double));
+					   source_data + source_offset + sizeof(double) * 3, sizeof(double));
 			}
 
 			return target_data;
@@ -724,7 +723,7 @@ static bool wkb_reader_read_line(wkb_reader *state, geometry *geom) {
 // TODO: Also collect stats?
 bool wkb_reader_try_parse(wkb_reader *state, geometry *out) {
 
-// clang-format off
+	// clang-format off
 #define read_u8(state) wkb_reader_read_u8(state); if (state->error) { return false; }
 #define read_u32(state) wkb_reader_read_u32(state); if (state->error) { return false; }
 #define read_f64(state) wkb_reader_read_f64(state); if (state->error) { return false; }
@@ -1077,34 +1076,34 @@ std::string wkb_reader_get_error_message(const wkb_reader *state) {
 
 		auto guessed_type = "UNKNOWN";
 		switch (type) {
-			case 1: guessed_type = "POINT"; break;
-			case 2: guessed_type = "LINESTRING"; break;
-			case 3: guessed_type = "POLYGON"; break;
-			case 4: guessed_type = "MULTIPOINT"; break;
-			case 5: guessed_type = "MULTILINESTRING"; break;
-			case 6: guessed_type = "MULTIPOLYGON"; break;
-			case 7: guessed_type = "GEOMETRYCOLLECTION"; break;
-			case 8: guessed_type = "CIRCULARSTRING"; break;
-			case 9: guessed_type = "COMPOUNDCURVE"; break;
-			case 10: guessed_type = "CURVEPOLYGON"; break;
-			case 11: guessed_type = "MULTICURVE"; break;
-			case 12: guessed_type = "MULTISURFACE"; break;
-			case 13: guessed_type = "CURVE"; break;
-			case 14: guessed_type = "SURFACE"; break;
-			case 15: guessed_type = "POLYHEDRALSURFACE"; break;
-			case 16: guessed_type = "TIN"; break;
-			case 17: guessed_type = "TRIANGLE"; break;
-			case 18: guessed_type = "CIRCLE"; break;
-			case 19: guessed_type = "GEODESICSTRING"; break;
-			case 20: guessed_type = "ELLIPTICALCURVE"; break;
-			case 21: guessed_type = "NURBSCURVE"; break;
-			case 22: guessed_type = "CLOTHOID"; break;
-			case 23: guessed_type = "SPIRALCURVE"; break;
-			case 24: guessed_type = "COMPOUNDSURFACE"; break;
-			case 25: guessed_type = "ORIENTABLESURFACE"; break;
-			case 102: guessed_type = "AFFINEPLACEMENT"; break;
-			default:
-				break;
+		case 1: guessed_type = "POINT"; break;
+		case 2: guessed_type = "LINESTRING"; break;
+		case 3: guessed_type = "POLYGON"; break;
+		case 4: guessed_type = "MULTIPOINT"; break;
+		case 5: guessed_type = "MULTILINESTRING"; break;
+		case 6: guessed_type = "MULTIPOLYGON"; break;
+		case 7: guessed_type = "GEOMETRYCOLLECTION"; break;
+		case 8: guessed_type = "CIRCULARSTRING"; break;
+		case 9: guessed_type = "COMPOUNDCURVE"; break;
+		case 10: guessed_type = "CURVEPOLYGON"; break;
+		case 11: guessed_type = "MULTICURVE"; break;
+		case 12: guessed_type = "MULTISURFACE"; break;
+		case 13: guessed_type = "CURVE"; break;
+		case 14: guessed_type = "SURFACE"; break;
+		case 15: guessed_type = "POLYHEDRALSURFACE"; break;
+		case 16: guessed_type = "TIN"; break;
+		case 17: guessed_type = "TRIANGLE"; break;
+		case 18: guessed_type = "CIRCLE"; break;
+		case 19: guessed_type = "GEODESICSTRING"; break;
+		case 20: guessed_type = "ELLIPTICALCURVE"; break;
+		case 21: guessed_type = "NURBSCURVE"; break;
+		case 22: guessed_type = "CLOTHOID"; break;
+		case 23: guessed_type = "SPIRALCURVE"; break;
+		case 24: guessed_type = "COMPOUNDSURFACE"; break;
+		case 25: guessed_type = "ORIENTABLESURFACE"; break;
+		case 102: guessed_type = "AFFINEPLACEMENT"; break;
+		default:
+			break;
 		}
 
 		std::string msg = "WKB type '";
@@ -1235,28 +1234,28 @@ size_t to_wkb_size(const geometry *geom) {
 size_t to_wkb(const geometry *geom, uint8_t *buffer, size_t size) {
 
 #define WKB_WRITE_U8(PTR, VAL)                                                                                         \
-	do {                                                                                                               \
-		uint8_t v = VAL;                                                                                               \
-		memcpy(PTR, &v, sizeof(uint8_t));                                                                              \
-		PTR += sizeof(uint8_t);                                                                                        \
-	} while (0)
+do {                                                                                                               \
+uint8_t v = VAL;                                                                                               \
+memcpy(PTR, &v, sizeof(uint8_t));                                                                              \
+PTR += sizeof(uint8_t);                                                                                        \
+} while (0)
 #define WKB_WRITE_U32(PTR, VAL)                                                                                        \
-	do {                                                                                                               \
-		uint32_t v = VAL;                                                                                              \
-		memcpy(PTR, &v, sizeof(uint32_t));                                                                             \
-		PTR += sizeof(uint32_t);                                                                                       \
-	} while (0)
+do {                                                                                                               \
+uint32_t v = VAL;                                                                                              \
+memcpy(PTR, &v, sizeof(uint32_t));                                                                             \
+PTR += sizeof(uint32_t);                                                                                       \
+} while (0)
 #define WKB_WRITE_DOUBLE(PTR, VAL)                                                                                     \
-	do {                                                                                                               \
-		double v = VAL;                                                                                                \
-		memcpy(PTR, &v, sizeof(double));                                                                               \
-		PTR += sizeof(double);                                                                                         \
-	} while (0)
+do {                                                                                                               \
+double v = VAL;                                                                                                \
+memcpy(PTR, &v, sizeof(double));                                                                               \
+PTR += sizeof(double);                                                                                         \
+} while (0)
 #define WKB_WRITE_DATA(PTR, SRC, SIZE)                                                                                 \
-	do {                                                                                                               \
-		memcpy(PTR, SRC, SIZE);                                                                                        \
-		PTR += SIZE;                                                                                                   \
-	} while (0)
+do {                                                                                                               \
+memcpy(PTR, SRC, SIZE);                                                                                        \
+PTR += SIZE;                                                                                                   \
+} while (0)
 
 	auto ptr = buffer;
 
@@ -1736,6 +1735,271 @@ std::string wkt_reader_get_error_message(const wkt_reader *state) {
 	const auto msg = err + " at position '" + pos + "' near: '" + range + "'|<---";
 
 	return msg;
+}
+
+//------------------------------------------------------------------------------
+// Centroid
+//------------------------------------------------------------------------------
+static bool get_point_centroid(const sgl::geometry *geom, vertex_xyzm *out) {
+
+	uint32_t total_count = 0;
+	vertex_xyzm centroid = {0, 0, 0, 0};
+
+	const auto root = geom->get_parent();
+	auto curr = geom;
+
+	while (true) {
+		switch (curr->get_type()) {
+		case geometry_type::POINT: {
+			if (curr->is_empty()) {
+				break;
+			}
+
+			const auto vertex = curr->get_vertex_xyzm(0);
+			centroid.x += vertex.x;
+			centroid.y += vertex.y;
+			centroid.zm += vertex.zm;
+			centroid.m += vertex.m;
+			total_count++;
+		} break;
+		case geometry_type::MULTI_POINT:
+		case geometry_type::MULTI_GEOMETRY: {
+			if (!curr->is_empty()) {
+				curr = curr->get_first_part();
+				continue;
+			}
+		} break;
+		default:
+			break;
+		}
+
+		while (true) {
+			const auto parent = curr->get_parent();
+			if (parent == root) {
+				// Done!
+				if (total_count > 0) {
+					centroid.x /= total_count;
+					centroid.y /= total_count;
+					centroid.zm /= total_count;
+					centroid.m /= total_count;
+
+					*out = centroid;
+					return true;
+				}
+				return false;
+			}
+
+			if (curr != parent->get_last_part()) {
+				// Go sideways
+				curr = curr->get_next();
+				break;
+			}
+
+			// Go upwards
+			curr = parent;
+		}
+	}
+}
+
+static bool get_line_centroid(const sgl::geometry *geom, vertex_xyzm *out) {
+
+	double total_length = 0;
+	vertex_xyzm centroid = {0, 0, 0, 0};
+
+	const auto root = geom->get_parent();
+	auto curr = geom;
+
+	while (true) {
+		switch (curr->get_type()) {
+			case geometry_type::LINESTRING: {
+				if(curr->is_empty()) {
+					break;
+				}
+
+				const auto vertex_data = curr->get_vertex_data();
+				const auto vertex_count = curr->get_count();
+				const auto vertex_stride = curr->get_vertex_size();
+
+				vertex_xyzm prev_v = {0, 0, 0, 0};
+				vertex_xyzm curr_v = {0, 0, 0, 0};
+
+				memcpy(&prev_v, vertex_data, vertex_stride);
+				for(uint32_t i = 1; i < vertex_count; i++) {
+					memcpy(&curr_v, vertex_data + i * vertex_stride, vertex_stride);
+
+					const auto dx = curr_v.x - prev_v.x;
+					const auto dy = curr_v.y - prev_v.y;
+
+					const auto segment_length = std::hypot(dx, dy);
+
+					centroid.x += (curr_v.x + prev_v.x) * segment_length;
+					centroid.y += (curr_v.y + prev_v.y) * segment_length;
+					centroid.zm += (curr_v.zm + prev_v.zm) * segment_length;
+					centroid.m += (curr_v.m + prev_v.m) * segment_length;
+
+					total_length += segment_length;
+					prev_v = curr_v;
+				}
+
+			} break;
+			case geometry_type::MULTI_LINESTRING:
+			case geometry_type::MULTI_GEOMETRY: {
+				if (!curr->is_empty()) {
+					curr = curr->get_first_part();
+					continue;
+				}
+			} break;
+			default:
+				break;
+		}
+
+		while (true) {
+			const auto parent = curr->get_parent();
+			if (parent == root) {
+				// Done!
+				if (total_length != 0) {
+					centroid.x /= 2.0 * total_length;
+					centroid.y /= 2.0 * total_length;
+					centroid.zm /= 2.0 * total_length;
+					centroid.m /= 2.0 * total_length;
+					*out = centroid;
+					return true;
+				}
+				return false;
+			}
+
+			if (curr != parent->get_last_part()) {
+				// Go sideways
+				curr = curr->get_next();
+				break;
+			}
+
+			// Go upwards
+			curr = parent;
+		}
+	}
+}
+
+static bool get_polygon_centroid(const sgl::geometry *geom, vertex_xyzm *out) {
+
+	double total_area = 0;
+	vertex_xyzm centroid = {0, 0, 0, 0};
+
+	const auto root = geom->get_parent();
+	auto curr = geom;
+
+	while (true) {
+		switch (curr->get_type()) {
+		case geometry_type::POLYGON: {
+			const auto tail = curr->get_last_part();
+			if(!tail) {
+				break;
+			}
+			auto head = tail;
+			do {
+				head = head->get_next();
+				if (head->is_empty()) {
+					continue;
+				}
+
+				const auto vertex_data = head->get_vertex_data();
+				const auto vertex_count = head->get_count();
+				const auto vertex_stride = head->get_vertex_size();
+
+				vertex_xyzm prev_v = {0, 0, 0, 0};
+				vertex_xyzm curr_v = {0, 0, 0, 0};
+
+				double ring_area = 0;
+				vertex_xyzm ring_centroid = {0, 0, 0, 0};
+
+				// TODO: Do robustness trick here
+				memcpy(&prev_v, vertex_data, vertex_stride);
+				for (uint32_t i = 1; i < vertex_count; i++) {
+					memcpy(&curr_v, vertex_data + i * vertex_stride, vertex_stride);
+
+					const auto segment_area = prev_v.x * curr_v.y - curr_v.x * prev_v.y;
+
+					ring_centroid.x += (curr_v.x + prev_v.x) * segment_area;
+					ring_centroid.y += (curr_v.y + prev_v.y) * segment_area;
+					ring_centroid.zm += (curr_v.zm + prev_v.zm) * segment_area;
+					ring_centroid.m += (curr_v.m + prev_v.m) * segment_area;
+
+					ring_area += segment_area;
+					prev_v = curr_v;
+				}
+
+				ring_area *= 0.5;
+
+				if(head == tail->get_next()) {
+					// The first ring is the outer ring
+					total_area += ring_area;
+					centroid.x += ring_centroid.x;
+					centroid.y += ring_centroid.y;
+					centroid.zm += ring_centroid.zm;
+					centroid.m += ring_centroid.m;
+				} else {
+					// The following rings are holes
+					total_area -= ring_area;
+					centroid.x -= ring_centroid.x;
+					centroid.y -= ring_centroid.y;
+					centroid.zm -= ring_centroid.zm;
+					centroid.m -= ring_centroid.m;
+				}
+			} while (head != tail);
+		} break;
+		case geometry_type::MULTI_POLYGON:
+		case geometry_type::MULTI_GEOMETRY: {
+			if (!curr->is_empty()) {
+				curr = curr->get_first_part();
+				continue;
+			}
+		} break;
+		default:
+			break;
+		}
+
+		while (true) {
+			const auto parent = curr->get_parent();
+			if (parent == root) {
+				// Done!
+				if (total_area != 0) {
+					centroid.x /= total_area * 6.0;
+					centroid.y /= total_area * 6.0;
+					centroid.zm /= total_area * 6.0;
+					centroid.m /= total_area * 6.0;
+					*out = centroid;
+					return true;
+				}
+				return false;
+			}
+
+			if (curr != parent->get_last_part()) {
+				// Go sideways
+				curr = curr->get_next();
+				break;
+			}
+
+			// Go upwards
+			curr = parent;
+		}
+	}
+}
+
+bool get_centroid(const sgl::geometry *geom, vertex_xyzm *out) {
+	if (!geom || geom->is_empty()) {
+		return false;
+	}
+	if (sgl::ops::vertex_count(geom) == 0) {
+		return false;
+	}
+	// TODO: return -1 if the geometry is empty
+	const auto dim = sgl::ops::max_surface_dimension(geom, true);
+	switch(dim) {
+		case 0: return get_point_centroid(geom, out);
+		case 1: return get_line_centroid(geom, out);
+		case 2: return get_polygon_centroid(geom, out);
+		default: return false;
+	}
 }
 
 //------------------------------------------------------------------------------
