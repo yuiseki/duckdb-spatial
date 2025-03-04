@@ -210,8 +210,8 @@ public:
 
 				vector<unique_ptr<Expression>> right_extent_args;
 				right_extent_args.push_back(right_pred_expr->Copy());
-				auto right_extent = make_uniq<BoundFunctionExpression>(GeoTypes::BOX_2DF(), std::move(extent_func_right),
-				                                                       std::move(right_extent_args), nullptr);
+				auto right_extent = make_uniq<BoundFunctionExpression>(
+				    GeoTypes::BOX_2DF(), std::move(extent_func_right), std::move(right_extent_args), nullptr);
 
 				// Left
 				vector<unique_ptr<Expression>> left_xmin_args;

@@ -34,7 +34,8 @@ public:
 	static LocalState &ResetAndGet(ExpressionState &state);
 
 	// De/Serialize geometries
-	sgl::geometry Deserialize(const string_t &blob);
+	void Deserialize(const string_t &blob, sgl::geometry &geom);
+	sgl::geometry *DeserializeToHeap(const string_t &blob);
 	string_t Serialize(Vector &vector, const sgl::geometry &geom);
 
 	ArenaAllocator &GetArena() {
@@ -60,9 +61,14 @@ LocalState &LocalState::ResetAndGet(ExpressionState &state) {
 	return local_state;
 }
 
-sgl::geometry LocalState::Deserialize(const string_t &blob) {
-	sgl::geometry geom;
+void LocalState::Deserialize(const string_t &blob, sgl::geometry &geom) {
 	Serde::Deserialize(geom, arena, blob.GetDataUnsafe(), blob.GetSize());
+}
+
+sgl::geometry *LocalState::DeserializeToHeap(const string_t &blob) {
+	const auto mem = arena.AllocateAligned(sizeof(sgl::geometry));
+	const auto geom = new (mem) sgl::geometry();
+	Serde::Deserialize(*geom, arena, blob.GetDataUnsafe(), blob.GetSize());
 	return geom;
 }
 
@@ -95,7 +101,8 @@ struct ST_Area {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &blob) {
-			const auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
 			return sgl::ops::area(&geom);
 		});
 	}
@@ -496,7 +503,8 @@ struct ST_AsGeoJSON {
 		JSONAllocator allocator(lstate.GetArena());
 
 		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](string_t &blob) {
-			const auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
 
 			const auto doc = yyjson_mut_doc_new(allocator.GetYYJSONAllocator());
 			const auto obj = yyjson_mut_obj(doc);
@@ -980,7 +988,8 @@ struct ST_AsSVG {
 			    buffer.clear();
 
 			    // Deserialize geometry
-			    const auto geom = lstate.Deserialize(blob);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
 
 			    FormatRecursive(&geom, buffer, max_digits, rel);
 
@@ -1299,7 +1308,7 @@ struct ST_Collect {
 			    const auto length = entry.length;
 
 			    if (length == 0) {
-				    const auto empty = sgl::multi_geometry::make_empty();
+				    const sgl::geometry empty(sgl::geometry_type::MULTI_GEOMETRY, false, false);
 				    return lstate.Serialize(result, empty);
 			    }
 
@@ -1317,7 +1326,8 @@ struct ST_Collect {
 				    auto &blob = UnifiedVectorFormat::GetData<string_t>(input_vdata)[row_idx];
 
 				    // TODO: Peek dont deserialize
-				    const auto geom = lstate.Deserialize(blob);
+				    sgl::geometry geom;
+				    lstate.Deserialize(blob, geom);
 				    has_z = has_z || geom.has_z();
 				    has_m = has_m || geom.has_m();
 			    }
@@ -1335,31 +1345,30 @@ struct ST_Collect {
 				    }
 
 				    auto &blob = UnifiedVectorFormat::GetData<string_t>(input_vdata)[row_idx];
-				    // TODO: Deserialize to heap immediately
-				    auto geom = lstate.Deserialize(blob);
+
+				    // Deserialize and allocate on heap
+				    auto geom = lstate.DeserializeToHeap(blob);
 
 				    // TODO: Peek dont deserialize
-				    if (geom.is_empty()) {
+				    if (geom->is_empty()) {
 					    continue;
 				    }
 
-				    all_points = all_points && geom.get_type() == sgl::geometry_type::POINT;
-				    all_lines = all_lines && geom.get_type() == sgl::geometry_type::LINESTRING;
-				    all_polygons = all_polygons && geom.get_type() == sgl::geometry_type::POLYGON;
+				    all_points = all_points && geom->get_type() == sgl::geometry_type::POINT;
+				    all_lines = all_lines && geom->get_type() == sgl::geometry_type::LINESTRING;
+				    all_polygons = all_polygons && geom->get_type() == sgl::geometry_type::POLYGON;
 
 				    // Force Z and M so that the dimensions match
-				    sgl::ops::force_zm(lstate.GetAllocator(), &geom, has_z, has_m, 0, 0);
-
-				    const auto mem = lstate.GetArena().Allocate(sizeof(sgl::geometry));
-				    const auto part = new (mem) sgl::geometry(geom);
+				    sgl::ops::force_zm(lstate.GetAllocator(), geom, has_z, has_m, 0, 0);
 
 				    // Append to collection
-				    collection.append_part(part);
+				    collection.append_part(geom);
 			    }
 
 			    if (collection.is_empty()) {
 				    // NULL's and EMPTY do not contribute to the result.
-				    return lstate.Serialize(result, sgl::multi_geometry::make_empty());
+				    sgl::geometry empty(sgl::geometry_type::MULTI_GEOMETRY, has_z, has_m);
+				    return lstate.Serialize(result, empty);
 			    }
 
 			    // Figure out the type of the collection
@@ -1459,11 +1468,15 @@ struct ST_CollectionExtract {
 
 		BinaryExecutor::Execute<string_t, int32_t, string_t>(
 		    args.data[0], args.data[1], result, args.size(), [&](const string_t &blob, int32_t requested_type) {
-			    auto geom = lstate.Deserialize(blob);
-			    const auto type = geom.get_type();
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
 
+			    const auto type = geom.get_type();
 			    const auto has_z = geom.has_z();
 			    const auto has_m = geom.has_m();
+
+			    // The output geometry to fill with the extracted geometries
+			    sgl::geometry output(sgl::geometry_type::INVALID, has_z, has_m);
 
 			    switch (requested_type) {
 			    case 1:
@@ -1473,14 +1486,16 @@ struct ST_CollectionExtract {
 					    return blob;
 				    case sgl::geometry_type::MULTI_GEOMETRY: {
 					    // collect all points
-					    const auto points = sgl::ops::extract_points(&geom);
-					    return lstate.Serialize(result, points);
+					    sgl::ops::extract_points(&output, &geom);
+					    return lstate.Serialize(result, output);
 				    }
 				    case sgl::geometry_type::MULTI_LINESTRING:
 				    case sgl::geometry_type::MULTI_POLYGON:
-					    return lstate.Serialize(result, sgl::multi_point::make_empty(has_z, has_m));
+					    output.set_type(sgl::geometry_type::MULTI_POINT);
+					    return lstate.Serialize(result, output);
 				    default:
-					    return lstate.Serialize(result, sgl::point::make_empty(has_z, has_m));
+					    output.set_type(sgl::geometry_type::POINT);
+					    return lstate.Serialize(result, output);
 				    }
 				    break;
 			    case 2:
@@ -1490,14 +1505,16 @@ struct ST_CollectionExtract {
 					    return blob;
 				    case sgl::geometry_type::MULTI_GEOMETRY: {
 					    // collect all lines
-					    const auto lines = sgl::ops::extract_linestrings(&geom);
-					    return lstate.Serialize(result, lines);
+					    sgl::ops::extract_linestrings(&output, &geom);
+					    return lstate.Serialize(result, output);
 				    }
 				    case sgl::geometry_type::MULTI_POINT:
 				    case sgl::geometry_type::MULTI_POLYGON:
-					    return lstate.Serialize(result, sgl::multi_linestring::make_empty(has_z, has_m));
+					    output.set_type(sgl::geometry_type::MULTI_LINESTRING);
+					    return lstate.Serialize(result, output);
 				    default:
-					    return lstate.Serialize(result, sgl::linestring::make_empty(has_z, has_m));
+					    output.set_type(sgl::geometry_type::LINESTRING);
+					    return lstate.Serialize(result, output);
 				    }
 				    break;
 			    case 3:
@@ -1507,14 +1524,16 @@ struct ST_CollectionExtract {
 					    return blob;
 				    case sgl::geometry_type::MULTI_GEOMETRY: {
 					    // collect all polygons
-					    const auto polygons = sgl::ops::extract_polygons(&geom);
-					    return lstate.Serialize(result, polygons);
+					    sgl::ops::extract_polygons(&output, &geom);
+					    return lstate.Serialize(result, output);
 				    }
 				    case sgl::geometry_type::MULTI_POINT:
 				    case sgl::geometry_type::MULTI_LINESTRING:
-					    return lstate.Serialize(result, sgl::multi_polygon::make_empty(has_z, has_m));
+					    output.set_type(sgl::geometry_type::MULTI_POLYGON);
+					    return lstate.Serialize(result, output);
 				    default:
-					    return lstate.Serialize(result, sgl::polygon::make_empty(has_z, has_m));
+					    output.set_type(sgl::geometry_type::POLYGON);
+					    return lstate.Serialize(result, output);
 				    }
 				    break;
 			    default:
@@ -1532,7 +1551,8 @@ struct ST_CollectionExtract {
 
 		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &input) {
 			// TODO: Peek without deserialize
-			auto geom = lstate.Deserialize(input);
+			sgl::geometry geom;
+			lstate.Deserialize(input, geom);
 
 			if (geom.get_type() != sgl::geometry_type::MULTI_GEOMETRY) {
 				return input;
@@ -1544,21 +1564,24 @@ struct ST_CollectionExtract {
 			// Find the highest dimension of the geometries in the collection
 			// Empty geometries are ignored
 			const auto dim = sgl::ops::max_surface_dimension(&geom, true);
+
+			sgl::geometry multi;
+
 			switch (dim) {
 			// Point case
 			case 0: {
-				const auto mpoint = sgl::ops::extract_points(&geom);
-				return lstate.Serialize(result, mpoint);
+				sgl::ops::extract_points(&multi, &geom);
+				return lstate.Serialize(result, multi);
 			}
 			// LineString case
 			case 1: {
-				const auto mline = sgl::ops::extract_linestrings(&geom);
-				return lstate.Serialize(result, mline);
+				sgl::ops::extract_linestrings(&multi, &geom);
+				return lstate.Serialize(result, multi);
 			}
 			// Polygon case
 			case 2: {
-				const auto mpoly = sgl::ops::extract_polygons(&geom);
-				return lstate.Serialize(result, mpoly);
+				sgl::ops::extract_polygons(&multi, &geom);
+				return lstate.Serialize(result, multi);
 			}
 			default: {
 				throw InternalException("Invalid dimension in collection extract");
@@ -1798,7 +1821,9 @@ struct ST_Dimension {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
-			const auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
 			return sgl::ops::max_surface_dimension(&geom, false);
 		});
 	}
@@ -2048,7 +2073,9 @@ struct ST_Dump {
 			}
 
 			auto &blob = UnifiedVectorFormat::GetData<string_t>(geom_format)[in_row_idx];
-			auto geom = lstate.Deserialize(blob);
+
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
 
 			// Traverse the geometries
 			// TODO: Move this to SGL
@@ -2227,7 +2254,8 @@ struct ST_Extent {
 			}
 
 			const auto &blob = input_data[row_idx];
-			const auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
 
 			auto bbox = sgl::box_xy::smallest();
 
@@ -2439,7 +2467,8 @@ struct ST_ExteriorRing {
 		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
 		    args.data[0], result, args.size(), [&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
 			    // TODO: Peek dont deserialize
-			    const auto geom = lstate.Deserialize(blob);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
 
 			    if (geom.get_type() != sgl::geometry_type::POLYGON) {
 				    mask.SetInvalid(idx);
@@ -2447,7 +2476,7 @@ struct ST_ExteriorRing {
 			    }
 
 			    if (geom.is_empty()) {
-				    const auto empty = sgl::linestring::make_empty(geom.has_z(), geom.has_m());
+				    const sgl::geometry empty(sgl::geometry_type::LINESTRING, geom.has_z(), geom.has_m());
 				    return lstate.Serialize(result, empty);
 			    }
 
@@ -2838,7 +2867,9 @@ struct ST_FlipCoordinates {
 			auto &arena = lstate.GetArena();
 
 			// Deserialize the geometry
-			auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
 			// Flip the coordinates
 			FlipRecursive(arena, &geom);
 
@@ -2935,7 +2966,8 @@ struct ST_ForceBase {
 
 			TernaryExecutor::Execute<string_t, double, double, string_t>(
 			    input, z_values, m_values, result, count, [&](const string_t &blob, double z, double m) {
-				    auto geom = lstate.Deserialize(blob);
+				    sgl::geometry geom;
+				    lstate.Deserialize(blob, geom);
 				    sgl::ops::force_zm(alloc, &geom, true, true, z, m);
 				    return lstate.Serialize(result, geom);
 			    });
@@ -2951,7 +2983,8 @@ struct ST_ForceBase {
 				    const auto def_z = has_z ? zm : 0;
 				    const auto def_m = has_m ? zm : 0;
 
-				    auto geom = lstate.Deserialize(blob);
+				    sgl::geometry geom;
+				    lstate.Deserialize(blob, geom);
 				    sgl::ops::force_zm(alloc, &geom, has_z, has_m, def_z, def_m);
 				    return lstate.Serialize(result, geom);
 			    });
@@ -2960,7 +2993,8 @@ struct ST_ForceBase {
 		}
 
 		UnaryExecutor::Execute<string_t, string_t>(input, result, count, [&](const string_t &blob) {
-			auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
 			sgl::ops::force_zm(alloc, &geom, false, false, 0, 0);
 			return lstate.Serialize(result, geom);
 		});
@@ -3098,7 +3132,9 @@ struct ST_GeometryType {
 		UnaryExecutor::Execute<string_t, uint8_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
 			// TODO: Peek dont deserialize
 
-			const auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
 			switch (geom.get_type()) {
 			case sgl::geometry_type::POINT:
 				return LEGACY_POINT_TYPE;
@@ -4275,7 +4311,9 @@ struct ST_HasZ {
 
 		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [&](const string_t &blob) {
 			// TODO: Peek without deserializing!
-			const auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
 			return geom.has_z();
 		});
 	}
@@ -4366,7 +4404,9 @@ struct ST_HasM {
 
 		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [&](const string_t &blob) {
 			// TODO: Peek without deserializing!
-			const auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
 			return geom.has_m();
 		});
 	}
@@ -4456,20 +4496,21 @@ struct ST_LineInterpolatePoint {
 
 		BinaryExecutor::Execute<string_t, double, string_t>(
 		    args.data[0], args.data[1], result, args.size(), [&](const string_t &blob, const double faction) {
-			    const auto geom = lstate.Deserialize(blob);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
+
 			    if (geom.get_type() != sgl::geometry_type::LINESTRING) {
 				    throw InvalidInputException("ST_LineInterpolatePoint: input is not a LINESTRING");
 			    }
 
 			    sgl::vertex_xyzm out_vertex = {0, 0, 0, 0};
 			    if (sgl::linestring::interpolate(&geom, faction, &out_vertex)) {
-				    auto point = sgl::point::make_empty(geom.has_z(), geom.has_m());
+				    sgl::geometry point(sgl::geometry_type::POINT, geom.has_z(), geom.has_m());
 				    point.set_vertex_data(reinterpret_cast<uint8_t *>(&out_vertex), 1);
-
 				    return lstate.Serialize(result, point);
 			    }
 
-			    const auto empty = sgl::point::make_empty(geom.has_z(), geom.has_m());
+			    sgl::geometry empty(sgl::geometry_type::POINT, geom.has_z(), geom.has_m());
 			    return lstate.Serialize(result, empty);
 		    });
 	}
@@ -4520,7 +4561,9 @@ struct ST_LineInterpolatePoints {
 		TernaryExecutor::Execute<string_t, double, bool, string_t>(
 		    args.data[0], args.data[1], args.data[2], result, args.size(),
 		    [&](const string_t &blob, const double fraction, const bool repeat) {
-			    const auto geom = lstate.Deserialize(blob);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
+
 			    if (geom.get_type() != sgl::geometry_type::LINESTRING) {
 				    throw InvalidInputException("ST_LineInterpolatePoints: input is not a LINESTRING");
 			    }
@@ -4530,17 +4573,17 @@ struct ST_LineInterpolatePoints {
 				    sgl::vertex_xyzm out_vertex = {0, 0, 0, 0};
 
 				    if (sgl::linestring::interpolate(&geom, fraction, &out_vertex)) {
-					    auto point = sgl::point::make_empty(geom.has_z(), geom.has_m());
+					    sgl::geometry point(sgl::geometry_type::POINT, geom.has_z(), geom.has_m());
 					    point.set_vertex_data(reinterpret_cast<uint8_t *>(&out_vertex), 1);
-
 					    return lstate.Serialize(result, point);
 				    }
 
-				    const auto empty = sgl::point::make_empty(geom.has_z(), geom.has_m());
+				    sgl::geometry empty(sgl::geometry_type::POINT, geom.has_z(), geom.has_m());
 				    return lstate.Serialize(result, empty);
 			    }
 
-			    const auto mpoint = sgl::linestring::interpolate_points(&alloc, &geom, fraction);
+			    sgl::geometry mpoint;
+			    sgl::linestring::interpolate_points(&mpoint, &alloc, &geom, fraction);
 			    return lstate.Serialize(result, mpoint);
 		    });
 	}
@@ -4596,12 +4639,15 @@ struct ST_LineSubstring {
 		TernaryExecutor::Execute<string_t, double, double, string_t>(
 		    args.data[0], args.data[1], args.data[2], result, args.size(),
 		    [&](const string_t &blob, const double start_fraction, const double end_fraction) {
-			    const auto geom = lstate.Deserialize(blob);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
+
 			    if (geom.get_type() != sgl::geometry_type::LINESTRING) {
 				    throw InvalidInputException("ST_LineSubstring: input is not a LINESTRING");
 			    }
 
-			    const auto sline = sgl::linestring::substring(&alloc, &geom, start_fraction, end_fraction);
+			    sgl::geometry sline;
+			    sgl::linestring::substring(&sline, &alloc, &geom, start_fraction, end_fraction);
 			    return lstate.Serialize(result, sline);
 		    });
 	}
@@ -4651,7 +4697,8 @@ struct ST_ZMFlag {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, uint8_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
-			const auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
 			const auto has_z = geom.has_z();
 			const auto has_m = geom.has_m();
 
@@ -4772,8 +4819,11 @@ struct ST_Distance_Sphere {
 
 		BinaryExecutor::Execute<string_t, string_t, double>(
 		    args.data[0], args.data[1], result, args.size(), [&](const string_t &l_blob, const string_t &r_blob) {
-			    const auto lhs = lstate.Deserialize(l_blob);
-			    const auto rhs = lstate.Deserialize(r_blob);
+			    sgl::geometry lhs;
+			    sgl::geometry rhs;
+
+			    lstate.Deserialize(l_blob, lhs);
+			    lstate.Deserialize(r_blob, rhs);
 
 			    if (lhs.get_type() != sgl::geometry_type::POINT || rhs.get_type() != sgl::geometry_type::POINT) {
 				    throw InvalidInputException("ST_Distance_Sphere only accepts POINT geometries");
@@ -5032,7 +5082,8 @@ struct ST_Hilbert {
 		    args.data[0], args.data[1], result, args.size(), [&](const GEOM_TYPE &geom_type, const BOX_TYPE &bounds) {
 			    const auto blob = geom_type.val;
 
-			    const auto geom = lstate.Deserialize(blob);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
 
 			    // TODO: Dont deserialize, just get the bounds from blob instead.
 			    sgl::box_xy geom_bounds = {};
@@ -5191,15 +5242,16 @@ struct ST_IntersectsExtent {
 		                                                  [&](const string_t &lhs_blob, const string_t &rhs_blob) {
 			                                                  // TODO: In the future we should store if the geom is
 			                                                  // empty/vertex count in the blob
-
-			                                                  const auto lhs_geom = lstate.Deserialize(lhs_blob);
+			                                                  sgl::geometry lhs_geom;
+			                                                  lstate.Deserialize(lhs_blob, lhs_geom);
 
 			                                                  sgl::box_xy lhs_ext = {};
 			                                                  if (!sgl::ops::try_get_extent_xy(&lhs_geom, &lhs_ext)) {
 				                                                  return false;
 			                                                  }
 
-			                                                  const auto rhs_geom = lstate.Deserialize(rhs_blob);
+			                                                  sgl::geometry rhs_geom;
+			                                                  lstate.Deserialize(rhs_blob, rhs_geom);
 
 			                                                  sgl::box_xy rhs_ext = {};
 			                                                  if (!sgl::ops::try_get_extent_xy(&rhs_geom, &rhs_ext)) {
@@ -5256,7 +5308,9 @@ struct ST_IsClosed {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [&](const string_t &blob) {
-			const auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
 			switch (geom.get_type()) {
 			case sgl::geometry_type::LINESTRING:
 				return sgl::linestring::is_closed(&geom);
@@ -5311,7 +5365,9 @@ struct ST_IsEmpty {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [&](const string_t &blob) {
-			const auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
 			const auto vertex_count = sgl::ops::vertex_count(&geom);
 			return vertex_count == 0;
 		});
@@ -5390,7 +5446,9 @@ struct ST_Length {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &blob) {
-			const auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
 			return sgl::ops::length(&geom);
 		});
 	}
@@ -5499,10 +5557,10 @@ struct ST_MakeEnvelope {
 			    // This is pretty cool, we dont even need to allocate anything
 			    const double buffer[10] = {min_x, min_y, min_x, max_y, max_x, max_y, max_x, min_y, min_x, min_y};
 
-			    auto ring = sgl::linestring::make_empty(false, false);
+			    sgl::geometry ring(sgl::geometry_type::LINESTRING, false, false);
 			    ring.set_vertex_data(reinterpret_cast<const char *>(buffer), 5);
 
-			    auto poly = sgl::polygon::make_empty();
+			    sgl::geometry poly(sgl::geometry_type::POLYGON, false, false);
 			    poly.append_part(&ring);
 
 			    return lstate.Serialize(result, poly);
@@ -5576,7 +5634,9 @@ struct ST_MakeLine {
 				    auto &blob = UnifiedVectorFormat::GetData<string_t>(format)[mapped_idx];
 
 				    // TODO: Peek without deserializing
-				    const auto geom = lstate.Deserialize(blob);
+				    sgl::geometry geom;
+				    lstate.Deserialize(blob, geom);
+
 				    if (geom.get_type() != sgl::geometry_type::POINT) {
 					    throw InvalidInputException("ST_MakeLine only accepts POINT geometries");
 				    }
@@ -5596,7 +5656,8 @@ struct ST_MakeLine {
 
 			    if (line_length == 0) {
 				    // Empty line
-				    return lstate.Serialize(result, sgl::linestring::make_empty(false, false));
+				    sgl::geometry empty(sgl::geometry_type::LINESTRING, false, false);
+				    return lstate.Serialize(result, empty);
 			    }
 
 			    if (line_length == 1) {
@@ -5616,7 +5677,9 @@ struct ST_MakeLine {
 				    }
 				    auto &blob = UnifiedVectorFormat::GetData<string_t>(format)[mapped_idx];
 
-				    const auto point = lstate.Deserialize(blob);
+				    sgl::geometry point;
+				    lstate.Deserialize(blob, point);
+
 				    const auto point_data = point.get_vertex_data();
 
 				    memcpy(line_data + vertex_idx * 2 * sizeof(double), point_data, 2 * sizeof(double));
@@ -5625,7 +5688,7 @@ struct ST_MakeLine {
 
 			    D_ASSERT(vertex_idx == line_length);
 
-			    auto line = sgl::linestring::make_empty(false, false);
+			    sgl::geometry line(sgl::geometry_type::LINESTRING, false, false);
 			    line.set_vertex_data(line_data, line_length);
 
 			    return lstate.Serialize(result, line);
@@ -5640,15 +5703,19 @@ struct ST_MakeLine {
 
 		BinaryExecutor::Execute<string_t, string_t, string_t>(
 		    args.data[0], args.data[1], result, args.size(), [&](const string_t &l_blob, const string_t &r_blob) {
-			    const auto l_geom = lstate.Deserialize(l_blob);
-			    const auto r_geom = lstate.Deserialize(r_blob);
+			    sgl::geometry l_geom;
+			    sgl::geometry r_geom;
+
+			    lstate.Deserialize(l_blob, l_geom);
+			    lstate.Deserialize(r_blob, r_geom);
 
 			    if (l_geom.get_type() != sgl::geometry_type::POINT || r_geom.get_type() != sgl::geometry_type::POINT) {
 				    throw InvalidInputException("ST_MakeLine only accepts POINT geometries");
 			    }
 
 			    if (l_geom.is_empty() && r_geom.is_empty()) {
-				    return lstate.Serialize(result, sgl::linestring::make_empty(false, false));
+				    sgl::geometry empty(sgl::geometry_type::LINESTRING, false, false);
+				    return lstate.Serialize(result, empty);
 			    }
 
 			    if (l_geom.is_empty() || r_geom.is_empty()) {
@@ -5658,7 +5725,7 @@ struct ST_MakeLine {
 			    const auto has_z = l_geom.has_z() || r_geom.has_z();
 			    const auto has_m = l_geom.has_m() || r_geom.has_m();
 
-			    auto linestring = sgl::linestring::make_empty(has_z, has_m);
+			    sgl::geometry linestring(sgl::geometry_type::LINESTRING, has_z, has_m);
 
 			    // Create a buffer large enough to store two vertices
 			    double buffer[8] = {0};
@@ -5759,7 +5826,8 @@ struct ST_MakePolygon {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
-			auto line = lstate.Deserialize(blob);
+			sgl::geometry line;
+			lstate.Deserialize(blob, line);
 
 			if (line.get_type() != sgl::geometry_type::LINESTRING) {
 				throw InvalidInputException("ST_MakePolygon only accepts LINESTRING geometries");
@@ -5773,7 +5841,7 @@ struct ST_MakePolygon {
 				throw std::runtime_error("ST_MakePolygon shell must be closed (first and last vertex must be equal)");
 			}
 
-			auto polygon = sgl::polygon::make_empty(line.has_z(), line.has_m());
+			sgl::geometry polygon(sgl::geometry_type::POLYGON, line.has_z(), line.has_m());
 			polygon.append_part(&line);
 
 			return lstate.Serialize(result, polygon);
@@ -5795,7 +5863,10 @@ struct ST_MakePolygon {
 		BinaryExecutor::Execute<string_t, list_entry_t, string_t>(
 		    args.data[0], args.data[1], result, args.size(), [&](const string_t &blob, const list_entry_t &hole_list) {
 			    // First, setup shell
-			    auto shell = lstate.Deserialize(blob);
+
+			    sgl::geometry shell;
+			    lstate.Deserialize(blob, shell);
+
 			    if (shell.get_type() != sgl::geometry_type::LINESTRING) {
 				    throw InvalidInputException("ST_MakePolygon only accepts LINESTRING geometries");
 			    }
@@ -5812,7 +5883,7 @@ struct ST_MakePolygon {
 			    }
 
 			    // Make a polygon!
-			    auto polygon = sgl::polygon::make_empty(false, false);
+			    sgl::geometry polygon(sgl::geometry_type::POLYGON, false, false);
 
 			    // Append the shell
 			    polygon.append_part(&shell);
@@ -5830,11 +5901,7 @@ struct ST_MakePolygon {
 				    const auto &hole_blob = UnifiedVectorFormat::GetData<string_t>(child_format)[mapped_idx];
 
 				    // Allocate a new hole and deserialize into the memory
-				    auto hole_mem = lstate.GetArena().AllocateAligned(sizeof(sgl::geometry));
-				    const auto hole = new (hole_mem) sgl::geometry();
-
-				    // TODO: Make this nicer... Add a deserialize in place method to the context
-				    *hole = lstate.Deserialize(hole_blob);
+				    auto hole = lstate.DeserializeToHeap(hole_blob);
 
 				    if (hole->get_type() != sgl::geometry_type::LINESTRING) {
 					    throw InvalidInputException("ST_MakePolygon hole #%lu is not a LINESTRING geometry",
@@ -5913,23 +5980,25 @@ struct ST_Multi {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
-			auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
 			const auto has_z = geom.has_z();
 			const auto has_m = geom.has_m();
 
 			switch (geom.get_type()) {
 			case sgl::geometry_type::POINT: {
-				auto mpoint = sgl::multi_point::make_empty(has_z, has_m);
+				sgl::geometry mpoint(sgl::geometry_type::MULTI_POINT, has_z, has_m);
 				mpoint.append_part(&geom);
 				return lstate.Serialize(result, mpoint);
 			}
 			case sgl::geometry_type::LINESTRING: {
-				auto mline = sgl::multi_linestring::make_empty(has_z, has_m);
+				sgl::geometry mline(sgl::geometry_type::MULTI_LINESTRING, has_z, has_m);
 				mline.append_part(&geom);
 				return lstate.Serialize(result, mline);
 			}
 			case sgl::geometry_type::POLYGON: {
-				auto mpoly = sgl::multi_polygon::make_empty(has_z, has_m);
+				sgl::geometry mpoly(sgl::geometry_type::MULTI_POLYGON, has_z, has_m);
 				mpoly.append_part(&geom);
 				return lstate.Serialize(result, mpoly);
 			}
@@ -5998,7 +6067,9 @@ struct ST_NGeometries {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
-			const auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
 			switch (geom.get_type()) {
 			case sgl::geometry_type::POINT:
 			case sgl::geometry_type::LINESTRING:
@@ -6068,7 +6139,8 @@ struct ST_NInteriorRings {
 
 		UnaryExecutor::ExecuteWithNulls<string_t, int32_t>(
 		    args.data[0], result, args.size(), [&](const string_t &blob, ValidityMask &validity, idx_t idx) {
-			    const auto geom = lstate.Deserialize(blob);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
 
 			    if (geom.get_type() != sgl::geometry_type::POLYGON) {
 				    validity.SetInvalid(idx);
@@ -6201,7 +6273,8 @@ struct ST_NPoints {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
-			const auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
 			return sgl::ops::vertex_count(&geom);
 		});
 	}
@@ -6335,7 +6408,8 @@ struct ST_Perimeter {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &blob) {
-			const auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
 			return sgl::ops::perimeter(&geom);
 		});
 	}
@@ -6589,7 +6663,9 @@ struct ST_PointN {
 		    args.data[0], args.data[1], result, args.size(),
 		    [&](const string_t &blob, const int32_t index, ValidityMask &mask, const idx_t row_idx) {
 			    // TODO: peek type without deserializing
-			    const auto geom = lstate.Deserialize(blob);
+
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
 
 			    if (geom.get_type() != sgl::geometry_type::LINESTRING) {
 				    mask.SetInvalid(row_idx);
@@ -6725,12 +6801,14 @@ struct ST_Points {
 
 		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
 			// Deserialize the geometry
-			const auto geom = lstate.Deserialize(blob);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
 			const auto has_z = geom.has_z();
 			const auto has_m = geom.has_m();
 
 			// Create a new result multipoint
-			auto mpoint = sgl::multi_point::make_empty(has_z, has_m);
+			sgl::geometry mpoint(sgl::geometry_type::MULTI_POINT, has_z, has_m);
 
 			sgl::ops::visit_vertices(&geom, [&](const uint8_t *vertex_data) {
 				// Allocate a new point
@@ -6835,7 +6913,9 @@ struct ST_QuadKey {
 				    throw InvalidInputException("ST_QuadKey: Level must be between 1 and 23");
 			    }
 
-			    const auto point = lstate.Deserialize(blob);
+			    sgl::geometry point;
+			    lstate.Deserialize(blob, point);
+
 			    if (point.get_type() != sgl::geometry_type::POINT) {
 				    throw InvalidInputException("ST_QuadKey: Only POINT geometries are supported");
 			    }
@@ -7235,7 +7315,8 @@ struct ST_StartPoint {
 		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
 		    args.data[0], result, args.size(), [&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
 			    // TODO: Peek without deserializing!
-			    const auto geom = lstate.Deserialize(blob);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
 
 			    if (geom.get_type() != sgl::geometry_type::LINESTRING) {
 				    mask.SetInvalid(idx);
@@ -7248,7 +7329,8 @@ struct ST_StartPoint {
 			    }
 
 			    const auto vertex_data = geom.get_vertex_data();
-			    auto point = sgl::geometry(sgl::geometry_type::POINT, geom.has_z(), geom.has_m());
+
+			    sgl::geometry point(sgl::geometry_type::POINT, geom.has_z(), geom.has_m());
 			    point.set_vertex_data(vertex_data, 1);
 
 			    return lstate.Serialize(result, point);
@@ -7353,7 +7435,8 @@ struct ST_EndPoint {
 		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
 		    args.data[0], result, args.size(), [&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
 			    // TODO: Peek without deserializing!
-			    const auto geom = lstate.Deserialize(blob);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
 
 			    if (geom.get_type() != sgl::geometry_type::LINESTRING) {
 				    mask.SetInvalid(idx);
@@ -7371,7 +7454,7 @@ struct ST_EndPoint {
 
 			    const auto point_data = vertex_data + ((vertex_count - 1) * vertex_size);
 
-			    auto point = sgl::geometry(sgl::geometry_type::POINT, geom.has_z(), geom.has_m());
+			    sgl::geometry point(sgl::geometry_type::POINT, geom.has_z(), geom.has_m());
 			    point.set_vertex_data(point_data, 1);
 
 			    return lstate.Serialize(result, point);
@@ -7533,7 +7616,8 @@ struct PointAccessFunctionBase {
 
 		UnaryExecutor::ExecuteWithNulls<string_t, double>(
 		    args.data[0], result, args.size(), [&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
-			    const auto geom = lstate.Deserialize(blob);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
 
 			    if (geom.get_type() != sgl::geometry_type::POINT) {
 				    throw InvalidInputException("%s only supports POINT geometries", OP::NAME);
@@ -7652,7 +7736,8 @@ struct VertexAggFunctionBase {
 		auto &lstate = LocalState::ResetAndGet(state);
 		UnaryExecutor::ExecuteWithNulls<string_t, double>(
 		    args.data[0], result, args.size(), [&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
-			    const auto geom = lstate.Deserialize(blob);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
 
 			    if (geom.is_empty()) {
 				    mask.SetInvalid(idx);

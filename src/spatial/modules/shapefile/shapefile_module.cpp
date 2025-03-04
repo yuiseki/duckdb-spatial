@@ -452,10 +452,10 @@ struct ST_ReadSHP {
 	// Geometry Conversion
 	//------------------------------------------------------------------------------------------------------------------
 	struct ConvertPoint {
-		static sgl::geometry Convert(const SHPObjectPtr &shape, ArenaAllocator &arena) {
+		static void Convert(sgl::geometry &point, const SHPObjectPtr &shape, ArenaAllocator &arena) {
 
 			// Create a point
-			auto point = sgl::point::make_empty();
+			point.set_type(sgl::geometry_type::POINT);
 
 			// Allocate memory for the vertex
 			const auto vertex_mem = arena.AllocateAligned(sizeof(double) * 2);
@@ -466,17 +466,14 @@ struct ST_ReadSHP {
 			vertex_ptr[1] = shape->padfY[0];
 
 			point.set_vertex_data(vertex_mem, 1);
-
-			// Return the point
-			return point;
 		}
 	};
 
 	struct ConvertLineString {
-		static sgl::geometry Convert(const SHPObjectPtr &shape, ArenaAllocator &arena) {
+		static void Convert(sgl::geometry &line, const SHPObjectPtr &shape, ArenaAllocator &arena) {
 			if (shape->nParts == 1) {
 				// Create a line
-				auto line = sgl::linestring::make_empty();
+				line.set_type(sgl::geometry_type::LINESTRING);
 
 				// Allocate memory for the vertices
 				const auto vertex_mem = arena.AllocateAligned(sizeof(double) * 2 * shape->nVertices);
@@ -490,11 +487,11 @@ struct ST_ReadSHP {
 				line.set_vertex_data(vertex_mem, shape->nVertices);
 
 				// Return the line
-				return line;
+				return;
 			}
 
 			// Else, create a multi-line
-			auto mline = sgl::multi_linestring::make_empty();
+			line.set_type(sgl::geometry_type::MULTI_LINESTRING);
 
 			auto start = shape->panPartStart[0];
 			for (int i = 0; i < shape->nParts; i++) {
@@ -518,17 +515,15 @@ struct ST_ReadSHP {
 
 				// Set the vertex data and append to the multi-line
 				line_ptr->set_vertex_data(vertex_mem, line_size);
-				mline.append_part(line_ptr);
+				line.append_part(line_ptr);
 
 				start = end;
 			}
-
-			return mline;
 		}
 	};
 
 	struct ConvertPolygon {
-		static sgl::geometry Convert(const SHPObjectPtr &shape, ArenaAllocator &arena) {
+		static void Convert(sgl::geometry &poly, const SHPObjectPtr &shape, ArenaAllocator &arena) {
 			// First off, check if there are more than one polygon.
 			// Each polygon is identified by a part with clockwise winding order
 			// we calculate the winding order by checking the sign of the area
@@ -544,11 +539,12 @@ struct ST_ReadSHP {
 					polygon_part_starts.push_back(i);
 				}
 			}
+
 			if (polygon_part_starts.size() < 2) {
 				// Single polygon, every part is an interior ring
 				// Even if the polygon is counter-clockwise (which should not happen for shapefiles).
 				// we still fall back and convert it to a single polygon.
-				auto poly = sgl::polygon::make_empty();
+				poly.set_type(sgl::geometry_type::POLYGON);
 
 				auto start = shape->panPartStart[0];
 				for (int i = 0; i < shape->nParts; i++) {
@@ -573,11 +569,12 @@ struct ST_ReadSHP {
 					start = end;
 				}
 
-				return poly;
+				return;
 			}
 
 			// Else, MultiPolygon
-			auto mpoly = sgl::multi_polygon::make_empty();
+			poly.set_type(sgl::geometry_type::MULTI_POLYGON);
+
 			for (size_t polygon_idx = 0; polygon_idx < polygon_part_starts.size(); polygon_idx++) {
 				const auto part_start = polygon_part_starts[polygon_idx];
 				const auto part_end = polygon_idx == polygon_part_starts.size() - 1
@@ -609,16 +606,14 @@ struct ST_ReadSHP {
 					poly_ptr->append_part(ring_ptr);
 				}
 
-				mpoly.append_part(poly_ptr);
+				poly.append_part(poly_ptr);
 			}
-
-			return mpoly;
 		}
 	};
 
 	struct ConvertMultiPoint {
-		static sgl::geometry Convert(const SHPObjectPtr &shape, ArenaAllocator &arena) {
-			auto mpoint = sgl::multi_point::make_empty();
+		static void Convert(sgl::geometry &mpoint, const SHPObjectPtr &shape, ArenaAllocator &arena) {
+			mpoint.set_type(sgl::geometry_type::MULTI_POINT);
 
 			for (int i = 0; i < shape->nVertices; i++) {
 				const auto point_mem = arena.AllocateAligned(sizeof(sgl::geometry));
@@ -633,8 +628,6 @@ struct ST_ReadSHP {
 				point_ptr->set_vertex_data(vertex_mem, 1);
 				mpoint.append_part(point_ptr);
 			}
-
-			return mpoint;
 		}
 	};
 
@@ -649,7 +642,8 @@ struct ST_ReadSHP {
 			}
 
 			// TODO: Handle Z and M
-			auto geom = OP::Convert(shape, arena);
+			sgl::geometry geom;
+			OP::Convert(geom, shape, arena);
 
 			// Serialize into a blob
 			const auto size = Serde::GetRequiredSize(geom);
