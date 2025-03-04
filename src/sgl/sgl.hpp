@@ -145,6 +145,16 @@ public:
 		set_m(has_m);
 	}
 
+	// Not copyable
+	// Avoid accidental copies, there are may be parent/child relationships pointing to this object
+	geometry(const geometry &) = delete;
+	geometry &operator=(const geometry &) = delete;
+
+	// Not movable
+	// there might be parent/child relationships pointing to this object
+	geometry(geometry &&other) = delete;
+	geometry &operator=(geometry &&other) = delete;
+
 	geometry_type get_type() const;
 	void set_type(geometry_type type);
 
@@ -509,14 +519,18 @@ inline std::string geometry::type_to_string(const geometry_type type) {
 namespace sgl {
 
 namespace point {
-inline geometry make_empty(bool has_z = false, bool has_m = false) {
-	return geometry(geometry_type::POINT, has_z, has_m);
+inline void init_empty(sgl::geometry *geom, bool has_z = false, bool has_m = false) {
+	geom->set_type(geometry_type::POINT);
+	geom->set_z(has_z);
+	geom->set_m(has_m);
 }
 } // namespace point
 
 namespace linestring {
-inline geometry make_empty(bool has_z = false, bool has_m = false) {
-	return geometry(geometry_type::LINESTRING, has_z, has_m);
+inline void init_empty(sgl::geometry *geom, bool has_z = false, bool has_m = false) {
+	geom->set_type(geometry_type::LINESTRING);
+	geom->set_z(has_z);
+	geom->set_m(has_m);
 }
 
 inline bool is_closed(const geometry *geom) {
@@ -601,15 +615,17 @@ inline double length(const geometry *geom) {
 bool interpolate(const sgl::geometry *geom, double frac, vertex_xyzm *out);
 
 // returns a multipoint with interpolated points
-sgl::geometry interpolate_points(sgl::allocator *alloc, const sgl::geometry *geom, double frac);
-sgl::geometry substring(sgl::allocator *alloc, const sgl::geometry *geom, double beg_frac, double end_frac);
+void interpolate_points(sgl::geometry *result, sgl::allocator *alloc, const sgl::geometry *geom, double frac);
+void substring(sgl::geometry *result,sgl::allocator *alloc, const sgl::geometry *geom, double beg_frac, double end_frac);
 
 } // namespace linestring
 
 namespace polygon {
 
-inline geometry make_empty(bool has_z = false, bool has_m = false) {
-	return geometry(geometry_type::POLYGON, has_z, has_m);
+inline void init_empty(geometry *geom, bool has_z = false, bool has_m = false) {
+	geom->set_type(geometry_type::POLYGON);
+    geom->set_z(has_z);
+    geom->set_m(has_m);
 }
 
 inline double area(const geometry *geom) {
@@ -649,8 +665,10 @@ inline double perimeter(const geometry *geom) {
 	return perimeter;
 }
 
-inline sgl::geometry make_from_box(sgl::allocator *alloc, double minx, double miny, double maxx, double maxy) {
-	auto poly = sgl::polygon::make_empty(false, false);
+inline void init_from_box(sgl::geometry *geom, sgl::allocator *alloc, double minx, double miny, double maxx, double maxy) {
+	geom->set_type(geometry_type::POLYGON);
+	geom->set_z(false);
+	geom->set_m(false);
 
 	const auto ring_mem = alloc->alloc(sizeof(sgl::geometry));
 	const auto ring_ptr = new (ring_mem) sgl::geometry(sgl::geometry_type::LINESTRING, false, false);
@@ -674,24 +692,25 @@ inline sgl::geometry make_from_box(sgl::allocator *alloc, double minx, double mi
 	data_ptr[9] = miny;
 
 	ring_ptr->set_vertex_data(static_cast<const uint8_t*>(data_mem), 5);
-	poly.append_part(ring_ptr);
-
-	return poly;
+	geom->append_part(ring_ptr);
 }
 
 } // namespace polygon
 
 namespace multi_point {
 
-inline geometry make_empty(bool has_z = false, bool has_m = false) {
-	return geometry(geometry_type::MULTI_POINT, has_z, has_m);
-}
+inline void init_empty(sgl::geometry *geom, bool has_z = false, bool has_m = false) {
+    geom->set_type(geometry_type::MULTI_POINT);
+    geom->set_z(has_z);
+    geom->set_m(has_m);}
 
 } // namespace multi_point
 
 namespace multi_linestring {
-inline geometry make_empty(bool has_z = false, bool has_m = false) {
-	return geometry(geometry_type::MULTI_LINESTRING, has_z, has_m);
+inline void init_empty(sgl::geometry *geom, bool has_z = false, bool has_m = false) {
+	geom->set_type(geometry_type::MULTI_LINESTRING);
+	geom->set_z(has_z);
+	geom->set_m(has_m);
 }
 
 inline bool is_closed(const geometry *geom) {
@@ -734,8 +753,10 @@ inline double length(const geometry *geom) {
 } // namespace multi_linestring
 
 namespace multi_polygon {
-inline geometry make_empty(bool has_z = false, bool has_m = false) {
-	return geometry(geometry_type::MULTI_POLYGON, has_z, has_m);
+inline void init_empty(sgl::geometry *geom, bool has_z = false, bool has_m = false) {
+	geom->set_type(geometry_type::MULTI_POLYGON);
+    geom->set_z(has_z);
+    geom->set_m(has_m);
 }
 
 inline double area(const geometry *geom) {
@@ -778,8 +799,10 @@ inline double perimeter(const geometry *geom) {
 
 namespace multi_geometry {
 
-inline geometry make_empty(bool has_z = false, bool has_m = false) {
-	return geometry(geometry_type::MULTI_GEOMETRY, has_z, has_m);
+inline void init_empty(sgl::geometry *geom, bool has_z = false, bool has_m = false) {
+	geom->set_type(geometry_type::MULTI_GEOMETRY);
+    geom->set_z(has_z);
+    geom->set_m(has_m);
 }
 inline double area(const geometry *geom);
 inline double length(const geometry *geom);
@@ -862,9 +885,9 @@ struct wkt_reader {
 bool wkt_reader_try_parse(wkt_reader *state, geometry *out);
 std::string wkt_reader_get_error_message(const wkt_reader *state);
 
-geometry extract_points(sgl::geometry *geom);
-geometry extract_linestrings(sgl::geometry *geom);
-geometry extract_polygons(sgl::geometry *geom);
+void extract_points(sgl::geometry *result, sgl::geometry *geom);
+void extract_linestrings(sgl::geometry *result, sgl::geometry *geom);
+void extract_polygons(sgl::geometry *result, sgl::geometry *geom);
 
 // TODO: this will only check that geometries have enough vertices to be valid.
 // It does NOT check topological validity.

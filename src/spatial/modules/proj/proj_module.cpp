@@ -144,7 +144,7 @@ struct ProjFunctionLocalState final : FunctionLocalState {
 		proj_context_destroy(proj_ctx);
 	}
 
-	sgl::geometry Deserialize(const string_t &blob);
+	void Deserialize(const string_t &blob, sgl::geometry &geom);
 	string_t Serialize(Vector &vector, const sgl::geometry &geom);
 
 	static unique_ptr<FunctionLocalState> Init(ExpressionState &state, const BoundFunctionExpression &expr,
@@ -184,10 +184,8 @@ struct ProjFunctionLocalState final : FunctionLocalState {
 	}
 };
 
-sgl::geometry ProjFunctionLocalState::Deserialize(const string_t &blob) {
-	sgl::geometry geom;
+void ProjFunctionLocalState::Deserialize(const string_t &blob, sgl::geometry &geom) {
 	Serde::Deserialize(geom, arena, blob.GetDataUnsafe(), blob.GetSize());
-	return geom;
 }
 
 string_t ProjFunctionLocalState::Serialize(Vector &vector, const sgl::geometry &geom) {
@@ -305,13 +303,14 @@ struct ST_Transform {
 
 		TernaryExecutor::Execute<string_t, string_t, string_t, string_t>(
 		    args.data[0], args.data[1], args.data[2], result, args.size(),
-		    [&](const string_t &input_geom, const string_t &source, const string_t &target) {
+		    [&](const string_t &blob, const string_t &source, const string_t &target) {
 			    const auto source_str = source.GetString();
 			    const auto target_str = target.GetString();
 
 			    const auto crs = lstate.GetOrCreateProjection(source_str, target_str, info.normalize);
 
-			    auto geom = lstate.Deserialize(input_geom);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
 
 			    sgl::ops::replace_vertices(&alloc, &geom, crs, [](void *arg, sgl::vertex_xyzm *vertex) {
 				    const auto crs_ptr = static_cast<PJ *>(arg);
@@ -500,10 +499,8 @@ struct GeodesicLocalState final : FunctionLocalState {
 		return local_state;
 	}
 
-	sgl::geometry Deserialize(const string_t &blob) {
-		sgl::geometry geom;
+	void Deserialize(const string_t &blob, sgl::geometry &geom) {
 		Serde::Deserialize(geom, arena, blob.GetDataUnsafe(), blob.GetSize());
-		return geom;
 	}
 };
 
@@ -581,7 +578,8 @@ struct ST_Area_Spheroid {
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
-			const auto geom = lstate.Deserialize(input);
+			sgl::geometry geom;
+			lstate.Deserialize(input, geom);
 
 			// Reset the state
 			lstate.accum = 0;
@@ -742,7 +740,8 @@ struct ST_Perimeter_Spheroid {
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
-			const auto geom = lstate.Deserialize(input);
+			sgl::geometry geom;
+			lstate.Deserialize(input, geom);
 
 			// Reset the state
 			lstate.accum = 0;
@@ -886,7 +885,8 @@ struct ST_Length_Spheroid {
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
-			const auto geom = lstate.Deserialize(input);
+			sgl::geometry geom;
+			lstate.Deserialize(input, geom);
 
 			// Reset the state
 			lstate.accum = 0;
