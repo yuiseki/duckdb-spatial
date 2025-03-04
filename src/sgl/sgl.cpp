@@ -545,6 +545,8 @@ void force_zm(allocator &alloc, geometry *geom, bool set_z, bool set_m, double d
 			part->set_m(set_m);
 			if (!part->is_empty()) {
 				part = part->get_first_part();
+				// Continue to the next iteration in the outer loop
+				continue;
 			}
 		} break;
 		default:
