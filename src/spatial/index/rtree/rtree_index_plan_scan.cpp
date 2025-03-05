@@ -200,6 +200,14 @@ public:
 		if (get.table_filters.filters.empty()) {
 			return true;
 		}
+
+		// Before we clear projection ids, replace projection map in the filter
+		if (!get.projection_ids.empty()) {
+			for (auto &id : filter.projection_map) {
+				id = get.projection_ids[id];
+			}
+		}
+
 		get.projection_ids.clear();
 		get.types.clear();
 
