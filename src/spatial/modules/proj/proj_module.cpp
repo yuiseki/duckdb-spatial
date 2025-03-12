@@ -1061,7 +1061,8 @@ struct ST_DWithin_Spheroid {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("p1", GeoTypes::POINT_2D());
 				variant.AddParameter("p2", GeoTypes::POINT_2D());
-				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.AddParameter("distance", LogicalType::DOUBLE);
+				variant.SetReturnType(LogicalType::BOOLEAN);
 
 				variant.SetFunction(Execute);
 			});
