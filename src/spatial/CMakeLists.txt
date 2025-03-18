@@ -2,6 +2,7 @@ add_subdirectory(util)
 add_subdirectory(modules)
 add_subdirectory(geometry)
 add_subdirectory(index)
+add_subdirectory(operators)
 
 set(EXTENSION_SOURCES
     ${EXTENSION_SOURCES}
