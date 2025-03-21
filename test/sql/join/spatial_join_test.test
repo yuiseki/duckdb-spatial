@@ -18,3 +18,25 @@ query I
 SELECT count(*) FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
 ----
 14641
+
+query II
+EXPLAIN SELECT * FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----
+physical_plan	<REGEX>:.*SPATIAL_JOIN.*
+
+query II rowsort result
+SELECT * FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----
+
+# Now disable the optimization
+statement ok
+set disabled_optimizers='extension'
+
+query II
+EXPLAIN SELECT * FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----
+physical_plan	<REGEX>:.*BLOCKWISE_NL_JOIN.*
+
+query II rowsort result
+SELECT * FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----

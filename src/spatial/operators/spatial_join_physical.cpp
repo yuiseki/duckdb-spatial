@@ -22,10 +22,6 @@ public:
 
 	FlatRTree(uint32_t item_count_p, uint32_t node_size_p) : item_count(item_count_p), node_size(node_size_p) {
 
-		indices.resize(item_count);
-		boxes.resize(item_count);
-		rows.resize(item_count);
-
 		uint32_t count = item_count;
 		uint32_t nodes = item_count;
 
@@ -39,10 +35,7 @@ public:
 
 		boxes.resize(nodes);
 		indices.resize(nodes);
-		rows.resize(nodes);
-
-		// auto index_size = nodes * sizeof(uint32_t);
-		// auto nodes_size = nodes * sizeof(Box);
+		rows.resize(item_count);
 	}
 
 	uint32_t Count() const {
@@ -163,31 +156,58 @@ public:
 		return *it;
 	}
 
-	struct LookupState {
+	class LookupState {
+		friend class FlatRTree;
+	public:
+		explicit LookupState() : matches(LogicalType::POINTER) { }
+	public:
+		Vector matches;
+		idx_t matches_count = 0;
+		idx_t matches_idx = 0;
+	private:
 		queue<size_t> search_queue;
 		Box search_box;
-		size_t entry_beg;
-		size_t entry_pos;
+		size_t entry_beg = 0;
+		size_t entry_pos = 0;
+		bool exhausted = true;
+
+
+		//vector<data_ptr_t> result_ptr;
 	};
 
-	void InitLookup(LookupState &state, const Box &box) const {
+	void InitScan(LookupState &state, const Box &box) const {
+		while(!state.search_queue.empty()) {
+			state.search_queue.pop();
+		}
 		state.search_box = box;
 		state.entry_beg = boxes.size() - 1;
 		state.entry_pos = state.entry_beg;
+
+		state.exhausted = false;
+		state.matches_idx = 0;
+		state.matches_count = 0;
 	}
 
-	idx_t Lookup(LookupState &state, Vector &result) const {
+	bool Scan(LookupState &state) const {
+		if(state.exhausted) {
+			return false;
+		}
+
 		idx_t count = 0;
-		const auto ptr = FlatVector::GetData<data_ptr_t>(result);
+		const auto ptr = FlatVector::GetData<data_ptr_t>(state.matches);
 		Lookup(state, [&](const data_ptr_t &row) {
 			ptr[count++] = row;
 			return count == STANDARD_VECTOR_SIZE;
 		});
-		return count;
+		// Set the count of the result vector
+		state.matches_count = count;
+		state.matches_idx = 0;
+
+		return count > 0;
 	}
 
 	template <class CALLBACK>
-	bool Lookup(LookupState &state, CALLBACK &&callback) const {
+	void Lookup(LookupState &state, CALLBACK &&callback) const {
 
 		while (true) {
 
@@ -195,6 +215,7 @@ public:
 
 			while (state.entry_pos < entry_end) {
 				if (!state.search_box.Intersects(boxes[state.entry_pos])) {
+					state.entry_pos++;
 					continue;
 				}
 
@@ -212,57 +233,20 @@ public:
 
 				if (yield) {
 					// Yield!, return true to signal that there might be more rows!
-					return true;
+					return;
 				}
 			}
 
 			if (state.search_queue.empty()) {
 				// There is no more nodes to search, return false!
-				return false;
+				state.exhausted = true;
+				return;
 			}
 
 			state.entry_beg = state.search_queue.front();
 			state.entry_pos = state.entry_beg;
 			state.search_queue.pop();
 		}
-	}
-
-	// Return true if any rows were found
-	bool Lookup(const Box &box, vector<data_ptr_t> &result) const {
-		queue<size_t> search_queue;
-
-		auto node_index = boxes.size() - 1;
-
-		while (true) {
-			// find the end index of the node
-			const size_t entry_end = std::min(node_index + node_size, UpperBound(node_index));
-
-			// search through child nodes
-			for (size_t entry_pos = node_index; entry_pos < entry_end; entry_pos++) {
-				// check if node bbox intersects with query bbox
-				if (!box.Intersects(boxes[entry_pos])) {
-					continue;
-				}
-
-				const size_t index = indices[entry_pos];
-				if (node_index >= item_count) {
-					// Internal node
-					search_queue.push(index);
-				} else {
-					// Leaf node
-					result.push_back(rows[index]);
-				}
-			}
-
-			if (search_queue.empty()) {
-				break;
-			}
-
-			node_index = search_queue.front();
-			search_queue.pop();
-		}
-
-		return !result.empty();
 	}
 
 private:
@@ -556,10 +540,9 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 class SpatialJoinOperatorState final : public CachingOperatorState {
 public:
 	idx_t input_idx = 0;
-	idx_t match_idx = 0;
 
-	vector<data_ptr_t> matched_rows;
-	FlatRTree::LookupState state = {};
+	//vector<data_ptr_t> matched_rows;
+	FlatRTree::LookupState state;
 
 	// Expressions Executor
 	ExpressionExecutor join_key_executor;
@@ -651,24 +634,23 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		lstate.join_key_executor.Execute(input, lstate.join_key_chunk);
 	}
 
+
 	// Create unified format for the geometry column
 	UnifiedVectorFormat probe_geom_format;
 	lstate.join_key_chunk.data[0].ToUnifiedFormat(input.size(), probe_geom_format);
 
 	SelectionVector lhs_sel(chunk.GetCapacity());
 	SelectionVector target_sel(chunk.GetCapacity());
+	SelectionVector source_sel(chunk.GetCapacity());
 
 	idx_t output_count = chunk.GetCapacity();
 	idx_t output_idx = 0;
 
 	while (true) {
-		const auto remaining_output = output_count - output_idx;
-		const auto remaining_matches = lstate.matched_rows.size() - lstate.match_idx;
-		const auto remaining_input = lstate.lhs_output.size() - lstate.input_idx;
-
 		//--------------------------------------------------------------------------------------------------------------
 		// Case 1: The output chunk is full
 		//--------------------------------------------------------------------------------------------------------------
+		const auto remaining_output = output_count - output_idx;
 		if (remaining_output == 0) {
 			break;
 		}
@@ -676,6 +658,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		//--------------------------------------------------------------------------------------------------------------
 		// Case 2: We have matches to output
 		//--------------------------------------------------------------------------------------------------------------
+		const auto remaining_matches = lstate.state.matches_count - lstate.state.matches_idx;
 		if (remaining_matches != 0) {
 
 			// Output as many as we can in one batch
@@ -688,11 +671,12 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 				// This output idx corresponds to the current input idx
 				// TODO: Dont subtract one here
 				lhs_sel.set_index(output_idx + i, lstate.input_idx - 1);
+
+				source_sel.set_index(i, lstate.state.matches_idx + i);
 			}
 
 			// Fetch each column from the build side
-			const auto row_pointers = reinterpret_cast<data_ptr_t>(lstate.matched_rows.data() + lstate.match_idx);
-			Vector pointers(LogicalType::POINTER, row_pointers);
+			auto &pointers = lstate.state.matches;
 			for (idx_t i = 0; i < build_side_output_columns.size(); i++) {
 
 				// TODO: Is this correct?
@@ -701,25 +685,34 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 
 				D_ASSERT(gstate.collection->GetLayout().GetTypes()[build_side_col_idx] == target.GetType());
 
-				// Dont forget to offset by 1 here!
-				gstate.collection->Gather(pointers, *FlatVector::IncrementalSelectionVector(), batch_size,
+				gstate.collection->Gather(pointers, source_sel, batch_size,
 				                          build_side_col_idx, target, target_sel, nullptr);
 			}
 
 			// Also collect the build-side join key (at index 0) while were here
-			gstate.collection->Gather(pointers, *FlatVector::IncrementalSelectionVector(), batch_size, 0,
+			gstate.collection->Gather(pointers, source_sel, batch_size, 0,
 			                          lstate.build_side_joinkey_chunk.data[0], target_sel, nullptr);
 
 			// Increment the counters
 			output_idx += batch_size;
-			lstate.match_idx += batch_size;
+			lstate.state.matches_idx += batch_size;
 
 			continue; // keep going
 		}
 
 		//--------------------------------------------------------------------------------------------------------------
-		// Case 3: We dont have any more input
+		// Case 3: We need to get the next lookup batch
 		//--------------------------------------------------------------------------------------------------------------
+		// Get the next set of matches from the R-Tree
+		if(rtree.Scan(lstate.state)) {
+			// We got a next set of matches, so continue to output them
+			continue;
+		}
+
+		//--------------------------------------------------------------------------------------------------------------
+		// Case 4: We dont have any more input
+		//--------------------------------------------------------------------------------------------------------------
+		const auto remaining_input = lstate.lhs_output.size() - lstate.input_idx;
 		if (remaining_input == 0) {
 			// Also reset the input idx
 			lstate.input_idx = 0;
@@ -727,7 +720,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		}
 
 		//--------------------------------------------------------------------------------------------------------------
-		// Case 4: We need to probe the rtree for more matches
+		// Case 5: We need to initialize the next probe
 		//--------------------------------------------------------------------------------------------------------------
 		const auto geom_idx = probe_geom_format.sel->get_index(lstate.input_idx);
 		if (!probe_geom_format.validity.RowIsValid(geom_idx)) {
@@ -751,9 +744,8 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		bbox_f.max.y = static_cast<float>(bbox.max.y);
 
 		// Probe the R-Tree for new matches and increment the input idx
-		lstate.matched_rows.clear();
-		rtree.Lookup(bbox_f, lstate.matched_rows);
-		lstate.match_idx = 0;
+		rtree.InitScan(lstate.state, bbox_f);
+		rtree.Scan(lstate.state);
 
 		// Increment the input idx
 		lstate.input_idx++;
@@ -783,6 +775,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 	SelectionVector valid_sel(output_idx);
 	idx_t filtered = lstate.predicate_executor.SelectExpression(pred_chunk, valid_sel);
 	chunk.Slice(valid_sel, filtered);
+
 
 	// TODO: Because we end up slicing quite a bit here, it might make sense to combine multiple batches into one
 

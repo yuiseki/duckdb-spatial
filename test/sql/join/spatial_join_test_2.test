@@ -62,3 +62,41 @@ SELECT count(*) FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
 3576
 
 
+# Check that we get a SPATIAL_JOIN plan
+query II
+EXPLAIN SELECT count(*) FROM t1 JOIN t2 ON st_intersects(st_buffer(t1.g, 1), st_buffer(t2.g, 1));
+----
+physical_plan	<REGEX>:.*SPATIAL_JOIN.*
+
+# Also try with buffering
+query I
+SELECT count(*) FROM t1 JOIN t2 ON st_intersects(st_buffer(t1.g, 1), st_buffer(t2.g, 1));
+----
+3827
+
+statement ok
+set disabled_optimizers='extension';
+
+# Also try with buffering
+query II
+EXPLAIN SELECT count(*) FROM t1 JOIN t2 ON st_intersects(st_buffer(t1.g, 1), st_buffer(t2.g, 1));
+----
+physical_plan	<REGEX>:.*BLOCKWISE_NL_JOIN.*
+
+query I
+SELECT count(*) FROM t1 JOIN t2 ON st_intersects(st_buffer(t1.g, 1), st_buffer(t2.g, 1));
+----
+3827
+
+### Now do some real resultset checking
+query II rowsort resultset
+SELECT * FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----
+
+# Now enable the spatial join again
+statement ok
+set disabled_optimizers='';
+
+query II rowsort resultset
+SELECT * FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----
