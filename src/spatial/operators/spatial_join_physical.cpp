@@ -16,6 +16,8 @@ namespace duckdb {
 // Flat RTree
 //======================================================================================================================
 
+namespace {
+
 class FlatRTree {
 public:
 	using Box = Box2D<float>;
@@ -170,9 +172,6 @@ public:
 		size_t entry_beg = 0;
 		size_t entry_pos = 0;
 		bool exhausted = true;
-
-
-		//vector<data_ptr_t> result_ptr;
 	};
 
 	void InitScan(LookupState &state, const Box &box) const {
@@ -262,6 +261,8 @@ private:
 	uint32_t node_size = 0;
 	uint32_t current_position = 0;
 };
+
+} // namespace
 
 //======================================================================================================================
 // Physical Spatial Join Operator
@@ -608,6 +609,103 @@ unique_ptr<GlobalOperatorState> PhysicalSpatialJoin::GetGlobalOperatorState(Clie
 	return std::move(result);
 }
 
+/*
+OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
+														GlobalOperatorState &gstate_p, OperatorState &state_p) const {
+	// Probe the rtree
+	auto &gstate = gstate_p.Cast<SpatialJoinGlobalOperatorState>();
+	auto &lstate = state_p.Cast<SpatialJoinOperatorState>();
+
+	// Return FINISHED if the rtree is empty
+	if (gstate.rtree == nullptr || gstate.rtree->Count() == 0) {
+		D_ASSERT(join_type == JoinType::INNER);
+		return OperatorResultType::FINISHED;
+	}
+
+	idx_t incoming_index = 0;
+	idx_t incoming_count = input.size();
+
+	idx_t outgoing_index = 0;
+	idx_t outgoing_count = chunk.GetCapacity();
+
+	idx_t matching_index = 0;
+	idx_t matching_count = 0;
+
+	Vector build_side_pointers(LogicalType::POINTER);
+
+	// Used to select the rows from the build side
+	SelectionVector build_side_target_sel(STANDARD_VECTOR_SIZE);
+	SelectionVector build_side_source_sel(STANDARD_VECTOR_SIZE);
+	SelectionVector probe_side_probed_sel(STANDARD_VECTOR_SIZE);
+
+	// Used to apply the exact join predicate on the final chunk
+	SelectionVector exact_join_filter_sel(STANDARD_VECTOR_SIZE);
+	DataChunk join_chunk;
+
+	while(true) {
+		if(outgoing_index == outgoing_count) {
+			// There is no more space to output
+			break;
+		}
+
+		if(matching_index == matching_count) {
+			// We are out of matches, try to get another batch
+			if(!rtree.Scan(lstate.state)) {
+
+				// We got a next set of matches, so continue to output them
+				while(incoming_index != incoming_count) {
+
+				}
+				if(incoming_index == incoming_count) {
+					// We are out of input
+					break;
+				}
+			}
+		}
+
+		// Emit as many matches as we can
+		const auto remaining_matching = matching_count - matching_index;
+		const auto remaining_outgoing = outgoing_count - outgoing_index;
+
+		const auto remaining = MinValue(remaining_matching, remaining_outgoing);
+
+		for(idx_t i = 0; i < remaining; i++) {
+			// We select from our matching index, and output to the outgoing index
+			build_side_source_sel.set_index(i, matching_index + i);
+			build_side_target_sel.set_index(i, outgoing_index + i);
+
+			// We also need to select the corresponding row from the probe side
+			probe_side_probed_sel.set_index(i, incoming_index - 1);
+		}
+
+		// Gather the build side join key
+		gstate.collection->Gather(build_side_pointers, build_side_source_sel, remaining, 0, join_chunk.data[0], build_side_target_sel, nullptr);
+
+		// Gather the rest of the build side columns
+		for (idx_t i = 0; i < build_side_output_columns.size(); i++) {
+			// TODO: Is this correct?
+			auto &build_side_col_idx = build_side_output_columns[i];
+			auto &target = chunk.data[lstate.lhs_output.ColumnCount() + i];
+
+			D_ASSERT(gstate.collection->GetLayout().GetTypes()[build_side_col_idx] == target.GetType());
+
+			gstate.collection->Gather(build_side_pointers, build_side_source_sel, remaining,
+									  build_side_col_idx, target, build_side_target_sel, nullptr);
+		}
+
+		outgoing_index += remaining;
+		matching_index += remaining;
+	}
+
+	// Filter the output using the exact predicate
+	auto exact_join_count = lstate.predicate_executor.SelectExpression(join_chunk, exact_join_filter_sel);
+	chunk.Slice(exact_join_filter_sel, exact_join_count);
+
+	// Return HAVE_MORE_OUTPUT if we have more output
+	const auto is_full = outgoing_index == outgoing_count;
+	return is_full ? OperatorResultType::HAVE_MORE_OUTPUT : OperatorResultType::NEED_MORE_INPUT;
+}
+*/
 OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
                                                         GlobalOperatorState &gstate_p, OperatorState &state_p) const {
 
@@ -628,7 +726,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 
 	// Execute the probe side join key expression
 	// TODO: This is innefficient to do on each cycle
-	if (lstate.input_idx == 0) {
+	if (lstate.input_idx == 0 && (lstate.state.matches_count - lstate.state.matches_idx) == 0) {
 		// Reset and execute the join key expression on each new input chunk
 		lstate.join_key_chunk.Reset();
 		lstate.join_key_executor.Execute(input, lstate.join_key_chunk);
