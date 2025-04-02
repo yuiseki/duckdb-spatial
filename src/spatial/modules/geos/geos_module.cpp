@@ -351,6 +351,39 @@ struct ST_Buffer {
 	}
 };
 
+struct ST_BuildArea {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		const auto &lstate = LocalState::ResetAndGet(state);
+
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+			const auto geom = lstate.Deserialize(geom_blob);
+			const auto area = geom.get_built_area();
+			return lstate.Serialize(result, area);
+		});
+	}
+
+	static constexpr auto DESCRIPTION = R"(
+		Creates a polygonal geometry by attemtping to "fill in" the input geometry.
+
+		Unlike ST_Polygonize, this function does not fill in holes.)";
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_BuildArea", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
 struct ST_Centroid {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
@@ -1022,6 +1055,57 @@ struct ST_MakeValid {
 	}
 };
 
+struct ST_MaximumInscribedCircle {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		const auto &lstate = LocalState::ResetAndGet(state);
+
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+			const auto geom = lstate.Deserialize(geom_blob);
+			const auto circle = geom.get_maximum_inscribed_circle();
+			return lstate.Serialize(result, circle);
+		});
+	}
+
+	static void ExecuteWithTolerance(DataChunk &args, ExpressionState &state, Vector &result) {
+		const auto &lstate = LocalState::ResetAndGet(state);
+
+		BinaryExecutor::Execute<string_t, double, string_t>(
+		    args.data[0], args.data[1], result, args.size(), [&](const string_t &geom_blob, const double tolerance) {
+			    const auto geom = lstate.Deserialize(geom_blob);
+			    const auto circle = geom.get_maximum_inscribed_circle(tolerance);
+			    return lstate.Serialize(result, circle);
+		    });
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_MaximumInscribedCircle", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.AddParameter("tolerance", LogicalType::DOUBLE);
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteWithTolerance);
+			});
+
+			func.SetDescription(R"(
+				Returns the maximum inscribed circle of the input geometry, optionally with a tolerance.
+
+				By default, the tolerance is computed as `max(width, height) / 1000`.
+			)");
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
 struct ST_MinimumRotatedRectangle {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
@@ -1046,6 +1130,38 @@ struct ST_MinimumRotatedRectangle {
 			func.SetDescription("Returns the minimum rotated rectangle that bounds the input geometry, finding the "
 			                    "surrounding box that has the lowest area by using a rotated rectangle, rather than "
 			                    "taking the lowest and highest coordinate values as per ST_Envelope().");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_Node {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		const auto &lstate = LocalState::ResetAndGet(state);
+
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+			const auto geom = lstate.Deserialize(geom_blob);
+			const auto node = geom.get_noded();
+			return lstate.Serialize(result, node);
+		});
+	}
+
+	static constexpr auto DESCRIPTION = R"(
+		Returns a "noded" MultiLinestring, produced by combining a collection of input linestrings and adding additional vertices where they intersect.
+	)";
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Node", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(DESCRIPTION);
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
 		});
@@ -1595,6 +1711,7 @@ void RegisterGEOSModule(DatabaseInstance &db) {
 	// Scalar Functions
 	ST_Boundary::Register(db);
 	ST_Buffer::Register(db);
+	ST_BuildArea::Register(db);
 	ST_Centroid::Register(db);
 	ST_Contains::Register(db);
 	ST_ContainsProperly::Register(db);
@@ -1616,7 +1733,9 @@ void RegisterGEOSModule(DatabaseInstance &db) {
 	ST_IsValid::Register(db);
 	ST_LineMerge::Register(db);
 	ST_MakeValid::Register(db);
+	ST_MaximumInscribedCircle::Register(db);
 	ST_MinimumRotatedRectangle::Register(db);
+	ST_Node::Register(db);
 	ST_Normalize::Register(db);
 	ST_Overlaps::Register(db);
 	ST_PointOnSurface::Register(db);

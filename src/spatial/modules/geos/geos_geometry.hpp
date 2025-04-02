@@ -42,6 +42,8 @@ public:
 	GeosGeometry get_point_on_surface() const;
 	GeosGeometry get_made_valid() const;
 	GeosGeometry get_voronoi_diagram() const;
+	GeosGeometry get_built_area() const;
+	GeosGeometry get_noded() const;
 
 	bool contains(const GeosGeometry &other) const;
 	bool covers(const GeosGeometry &other) const;
@@ -68,6 +70,10 @@ public:
 	GeosGeometry get_simplified_topo(double tolerance) const;
 	GeosGeometry get_without_repeated_points(double tolerance) const;
 	GeosGeometry get_reduced_precision(double tolerance) const;
+	GeosGeometry get_maximum_inscribed_circle(double tolerance) const;
+	// default tolerance is max(height/width) / 1000
+	GeosGeometry get_maximum_inscribed_circle() const;
+
 	GeosGeometry get_linemerged(bool directed) const;
 	GeosGeometry get_concave_hull(const double ratio, const bool allowHoles) const;
 	GeosGeometry get_buffer(double distance, int quadsegs) const;
@@ -237,6 +243,34 @@ inline GeosGeometry GeosGeometry::get_minimum_rotated_rectangle() const {
 
 inline GeosGeometry GeosGeometry::get_voronoi_diagram() const {
 	return GeosGeometry(handle, GEOSVoronoiDiagram_r(handle, geom, nullptr, 0, 0));
+}
+
+inline GeosGeometry GeosGeometry::get_built_area() const {
+	return GeosGeometry(handle, GEOSBuildArea_r(handle, geom));
+}
+
+inline GeosGeometry GeosGeometry::get_noded() const {
+	return GeosGeometry(handle, GEOSNode_r(handle, geom));
+}
+
+inline GeosGeometry GeosGeometry::get_maximum_inscribed_circle() const {
+	double xmin = 0;
+	double ymin = 0;
+	double xmax = 0;
+	double ymax = 0;
+
+	GEOSGeom_getExtent_r(handle, geom, &xmin, &ymin, &xmax, &ymax);
+
+	const auto width = xmax - xmin;
+	const auto height = ymax - ymin;
+	const auto length = (width > height ? height : width);
+	const auto tolerance = length == 0 ? 0 : length / 1000;
+
+	return get_maximum_inscribed_circle(tolerance);
+}
+
+inline GeosGeometry GeosGeometry::get_maximum_inscribed_circle(double tolerance) const {
+	return GeosGeometry(handle, GEOSMaximumInscribedCircle_r(handle, geom, tolerance));
 }
 
 inline bool GeosGeometry::contains(const GeosGeometry &other) const {

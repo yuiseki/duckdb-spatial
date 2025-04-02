@@ -5,6 +5,7 @@
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/geometry/wkb_writer.hpp"
 #include "spatial/geometry/geometry_serialization.hpp"
+#include "spatial/util/function_builder.hpp"
 
 // DuckDB
 #include "duckdb/main/database.hpp"
@@ -25,8 +26,6 @@
 #include "cpl_vsi_error.h"
 #include "cpl_vsi_virtual.h"
 #include "ogrsf_frmts.h"
-
-#include <spatial/util/function_builder.hpp>
 
 namespace duckdb {
 
