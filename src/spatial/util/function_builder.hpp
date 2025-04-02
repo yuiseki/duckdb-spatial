@@ -25,8 +25,8 @@ public:
 	template <class CALLBACK>
 	static void RegisterAggregate(DatabaseInstance &db, const char *name, CALLBACK &&callback);
 
-	template<class CALLBACK>
-	static void RegisterMacro(DatabaseInstance &db, const char* name, CALLBACK&& callback);
+	template <class CALLBACK>
+	static void RegisterMacro(DatabaseInstance &db, const char *name, CALLBACK &&callback);
 
 	// TODO:
 	static void AddTableFunctionDocs(DatabaseInstance &db, const char *name, const char *desc, const char *example);
@@ -155,17 +155,19 @@ void ScalarFunctionBuilder::AddVariant(CALLBACK &&callback) {
 //------------------------------------------------------------------------------
 class MacroFunctionBuilder {
 	friend class FunctionBuilder;
+
 public:
-	void AddDefinition(const vector<string> &parameters, const string &body,
-		const char* desc = nullptr, const char* example = nullptr) {
+	void AddDefinition(const vector<string> &parameters, const string &body, const char *desc = nullptr,
+	                   const char *example = nullptr) {
 		macros.push_back({parameters, body, desc, example});
 	}
+
 private:
 	struct MacroDef {
 		vector<string> parameters;
 		string body;
-		const char* description;
-		const char* example;
+		const char *description;
+		const char *example;
 	};
 
 	vector<MacroDef> macros;
@@ -232,6 +234,5 @@ void FunctionBuilder::RegisterMacro(DatabaseInstance &db, const char *name, CALL
 	callback(builder);
 	Register(db, name, builder);
 }
-
 
 } // namespace duckdb

@@ -1067,23 +1067,22 @@ struct ST_MaximumInscribedCircle {
 		using STRING_TYPE = PrimitiveType<string_t>;
 		using RESULT_TYPE = StructTypeTernary<string_t, string_t, double>;
 
-		GenericExecutor::ExecuteUnary<STRING_TYPE, RESULT_TYPE>(args.data[0], result, args.size(),
-			[&](const STRING_TYPE &geom_blob_val) {
+		GenericExecutor::ExecuteUnary<STRING_TYPE, RESULT_TYPE>(
+		    args.data[0], result, args.size(), [&](const STRING_TYPE &geom_blob_val) {
+			    const auto &geom_blob = geom_blob_val.val;
 
-			const auto &geom_blob = geom_blob_val.val;
+			    const auto geom = lstate.Deserialize(geom_blob);
+			    const auto circle = geom.get_maximum_inscribed_circle();
 
-			const auto geom = lstate.Deserialize(geom_blob);
-			const auto circle = geom.get_maximum_inscribed_circle();
+			    const auto center = circle.get_point_n(0);
+			    const auto nearest = circle.get_point_n(1);
+			    const auto radius = center.distance_to(nearest);
 
-			const auto center = circle.get_point_n(0);
-			const auto nearest = circle.get_point_n(1);
-			const auto radius = center.distance_to(nearest);
+			    const auto center_blob = lstate.Serialize(center_vec, center);
+			    const auto nearest_blob = lstate.Serialize(nearest_vec, nearest);
 
-			const auto center_blob = lstate.Serialize(center_vec, center);
-			const auto nearest_blob = lstate.Serialize(nearest_vec, nearest);
-
-			return RESULT_TYPE {center_blob, nearest_blob, radius};
-		});
+			    return RESULT_TYPE {center_blob, nearest_blob, radius};
+		    });
 	}
 
 	static void ExecuteWithTolerance(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -1097,30 +1096,30 @@ struct ST_MaximumInscribedCircle {
 		using DOUBLE_TYPE = PrimitiveType<double>;
 		using RESULT_TYPE = StructTypeTernary<string_t, string_t, double>;
 
-		GenericExecutor::ExecuteBinary<STRING_TYPE, DOUBLE_TYPE, RESULT_TYPE>(args.data[0], args.data[1], result,
-			args.size(), [&](const STRING_TYPE &geom_blob_val, const DOUBLE_TYPE &tolerance_val) {
+		GenericExecutor::ExecuteBinary<STRING_TYPE, DOUBLE_TYPE, RESULT_TYPE>(
+		    args.data[0], args.data[1], result, args.size(),
+		    [&](const STRING_TYPE &geom_blob_val, const DOUBLE_TYPE &tolerance_val) {
+			    const auto &geom_blob = geom_blob_val.val;
+			    const auto &tolerance = tolerance_val.val;
 
-			const auto &geom_blob = geom_blob_val.val;
-			const auto &tolerance = tolerance_val.val;
+			    const auto geom = lstate.Deserialize(geom_blob);
+			    const auto circle = geom.get_maximum_inscribed_circle(tolerance);
 
-			const auto geom = lstate.Deserialize(geom_blob);
-			const auto circle = geom.get_maximum_inscribed_circle(tolerance);
+			    const auto center = circle.get_point_n(0);
+			    const auto nearest = circle.get_point_n(1);
+			    const auto radius = center.distance_to(nearest);
 
-			const auto center = circle.get_point_n(0);
-			const auto nearest = circle.get_point_n(1);
-			const auto radius = center.distance_to(nearest);
+			    const auto center_blob = lstate.Serialize(center_vec, center);
+			    const auto nearest_blob = lstate.Serialize(nearest_vec, nearest);
 
-			const auto center_blob = lstate.Serialize(center_vec, center);
-			const auto nearest_blob = lstate.Serialize(nearest_vec, nearest);
-
-			return RESULT_TYPE {center_blob, nearest_blob, radius};
-		});
+			    return RESULT_TYPE {center_blob, nearest_blob, radius};
+		    });
 	}
 
 	static void Register(DatabaseInstance &db) {
 
-		const auto result_type = LogicalType::STRUCT({
-			{"center", GeoTypes::GEOMETRY()},{"nearest", GeoTypes::GEOMETRY()},{"radius", LogicalType::DOUBLE}});
+		const auto result_type = LogicalType::STRUCT(
+		    {{"center", GeoTypes::GEOMETRY()}, {"nearest", GeoTypes::GEOMETRY()}, {"radius", LogicalType::DOUBLE}});
 
 		FunctionBuilder::RegisterScalar(db, "ST_MaximumInscribedCircle", [&](ScalarFunctionBuilder &func) {
 			func.AddVariant([&](ScalarFunctionVariantBuilder &variant) {
@@ -1314,10 +1313,10 @@ struct ST_Polygonize {
 			const auto length = list.length;
 
 			// Collect all geometries in the list into the collection
-			for(idx_t i = offset; i < offset + length; i++) {
+			for (idx_t i = offset; i < offset + length; i++) {
 				const auto mapped_idx = format.sel->get_index(i);
 
-				if(!format.validity.RowIsValid(mapped_idx)) {
+				if (!format.validity.RowIsValid(mapped_idx)) {
 					continue;
 				}
 

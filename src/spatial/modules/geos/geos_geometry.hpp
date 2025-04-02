@@ -92,7 +92,8 @@ private:
 
 class GeosCollection {
 public:
-	explicit GeosCollection(GEOSContextHandle_t handle_p) : handle(handle_p) { }
+	explicit GeosCollection(GEOSContextHandle_t handle_p) : handle(handle_p) {
+	}
 
 	// disable copy
 	GeosCollection(const GeosCollection &) = delete;
@@ -119,7 +120,7 @@ public:
 private:
 	GEOSContextHandle_t handle;
 	vector<GeosGeometry> geometries;
-	vector<const GEOSGeometry*> pointers;
+	vector<const GEOSGeometry *> pointers;
 };
 
 class PreparedGeosGeometry {
@@ -313,7 +314,6 @@ inline GeosGeometry GeosGeometry::get_point_n(int n) const {
 	const auto point = GEOSGeomGetPointN_r(handle, geom, n);
 	return GeosGeometry(handle, point);
 }
-
 
 inline bool GeosGeometry::contains(const GeosGeometry &other) const {
 	return GEOSContains_r(handle, geom, other.geom);

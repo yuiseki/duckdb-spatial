@@ -114,28 +114,28 @@ struct ST_Affine {
 		UnifiedVectorFormat matrix_elems[12];
 		idx_t matrix_idx[12];
 
-		for(idx_t i = 1; i < 13; i++) {
+		for (idx_t i = 1; i < 13; i++) {
 			args.data[i].ToUnifiedFormat(row_count, matrix_elems[i - 1]);
 		}
 
-		for(idx_t out_idx = 0; out_idx < args.size(); out_idx++) {
+		for (idx_t out_idx = 0; out_idx < args.size(); out_idx++) {
 
 			// Reset the arena after every iteration, to avoid holding onto too much memory
 			lstate.GetArena().Reset();
 
 			const auto geom_idx = geom_format.sel->get_index(out_idx);
-			if(!geom_format.validity.RowIsValid(geom_idx)) {
+			if (!geom_format.validity.RowIsValid(geom_idx)) {
 				FlatVector::SetNull(result, out_idx, true);
 				continue;
 			}
 
 			bool all_valid = true;
-			for(idx_t j = 0; j < 12; j++) {
+			for (idx_t j = 0; j < 12; j++) {
 				matrix_idx[j] = matrix_elems[j].sel->get_index(out_idx);
 				all_valid = all_valid && matrix_elems[j].validity.RowIsValid(matrix_idx[j]);
 			}
 
-			if(!all_valid) {
+			if (!all_valid) {
 				FlatVector::SetNull(result, out_idx, true);
 				continue;
 			}
@@ -154,8 +154,8 @@ struct ST_Affine {
 
 			matrix.v[7] = UnifiedVectorFormat::GetData<double>(matrix_elems[11])[matrix_idx[11]]; // yoff
 
-			matrix.v[8] = UnifiedVectorFormat::GetData<double>(matrix_elems[6])[matrix_idx[6]]; // g
-			matrix.v[9] = UnifiedVectorFormat::GetData<double>(matrix_elems[7])[matrix_idx[7]]; // h
+			matrix.v[8] = UnifiedVectorFormat::GetData<double>(matrix_elems[6])[matrix_idx[6]];  // g
+			matrix.v[9] = UnifiedVectorFormat::GetData<double>(matrix_elems[7])[matrix_idx[7]];  // h
 			matrix.v[10] = UnifiedVectorFormat::GetData<double>(matrix_elems[8])[matrix_idx[8]]; // i
 
 			matrix.v[11] = UnifiedVectorFormat::GetData<double>(matrix_elems[9])[matrix_idx[9]]; // zoff
@@ -172,7 +172,7 @@ struct ST_Affine {
 			FlatVector::GetData<string_t>(result)[out_idx] = lstate.Serialize(result, geom);
 		}
 
-		if(row_count == 1) {
+		if (row_count == 1) {
 			result.SetVectorType(VectorType::CONSTANT_VECTOR);
 		}
 	}
@@ -181,31 +181,32 @@ struct ST_Affine {
 		auto &lstate = LocalState::ResetAndGet(state);
 		auto &alloc = lstate.GetAllocator();
 
-		SeptenaryExecutor::Execute<string_t, double, double, double, double, double, double, string_t>(args, result, [&](
-			const string_t &geom_blob, const double a, const double b, const double d, const double e, const double xoff, const double yoff) {
+		SeptenaryExecutor::Execute<string_t, double, double, double, double, double, double, string_t>(
+		    args, result,
+		    [&](const string_t &geom_blob, const double a, const double b, const double d, const double e,
+		        const double xoff, const double yoff) {
+			    // Reset the arena after every iteration, to avoid holding onto too much memory
+			    lstate.GetArena().Reset();
 
-			// Reset the arena after every iteration, to avoid holding onto too much memory
-			lstate.GetArena().Reset();
+			    // Deserialize the geometry
+			    sgl::geometry geom;
+			    lstate.Deserialize(geom_blob, geom);
 
-			// Deserialize the geometry
-			sgl::geometry geom;
-			lstate.Deserialize(geom_blob, geom);
+			    // Setup the matrix
+			    auto matrix = sgl::affine_matrix::identity();
+			    matrix.v[0] = a;    // a
+			    matrix.v[1] = b;    // b
+			    matrix.v[3] = xoff; // xoff
+			    matrix.v[4] = d;    // d
+			    matrix.v[5] = e;    // e
+			    matrix.v[7] = yoff; // yoff
 
-			// Setup the matrix
-			auto matrix = sgl::affine_matrix::identity();
-			matrix.v[0] = a; // a
-			matrix.v[1] = b; // b
-			matrix.v[3] = xoff; // xoff
-			matrix.v[4] = d; // d
-			matrix.v[5] = e; // e
-			matrix.v[7] = yoff; // yoff
+			    // Transform the geometry
+			    sgl::ops::affine_transform(&alloc, &geom, &matrix);
 
-			// Transform the geometry
-			sgl::ops::affine_transform(&alloc, &geom, &matrix);
-
-			// Serialize the result
-			return lstate.Serialize(result, geom);
-		});
+			    // Serialize the result
+			    return lstate.Serialize(result, geom);
+		    });
 	}
 
 	static void Register(DatabaseInstance &db) {
@@ -271,52 +272,48 @@ struct ST_Affine {
 		// Add helper macros
 		FunctionBuilder::RegisterMacro(db, "ST_Scale", [](MacroFunctionBuilder &builder) {
 			builder.AddDefinition(
-				{"geom", "xs", "ys", "zs"},
-				"ST_Affine(geom, xs, 0, 0, 0, ys, 0, 0, 0, zs, 0, 0, 0)",
-				"Scales a geometry in X, Y and Z direction. This is a shorthand macro for calling ST_Affine.");
+			    {"geom", "xs", "ys", "zs"}, "ST_Affine(geom, xs, 0, 0, 0, ys, 0, 0, 0, zs, 0, 0, 0)",
+			    "Scales a geometry in X, Y and Z direction. This is a shorthand macro for calling ST_Affine.");
 			builder.AddDefinition(
-				{"geom", "xs", "ys"},
-				"ST_Affine(geom, xs, 0, 0, 0, ys, 0, 0, 0, 1, 0, 0, 0)",
-				"Scales a geometry in X and Y direction. This is a shorthand macro for calling ST_Affine.");
+			    {"geom", "xs", "ys"}, "ST_Affine(geom, xs, 0, 0, 0, ys, 0, 0, 0, 1, 0, 0, 0)",
+			    "Scales a geometry in X and Y direction. This is a shorthand macro for calling ST_Affine.");
 		});
 
 		FunctionBuilder::RegisterMacro(db, "ST_Translate", [](MacroFunctionBuilder &builder) {
 			builder.AddDefinition(
-				{"geom", "dx", "dy", "dz"},
-				"ST_Affine(geom, 1, 0, dx, 0, 1, dy, 0, 0, 1, dz, 0, 0)",
-				"Translates a geometry in X, Y and Z direction. This is a shorthand macro for calling ST_Affine.");
+			    {"geom", "dx", "dy", "dz"}, "ST_Affine(geom, 1, 0, dx, 0, 1, dy, 0, 0, 1, dz, 0, 0)",
+			    "Translates a geometry in X, Y and Z direction. This is a shorthand macro for calling ST_Affine.");
 			builder.AddDefinition(
-				{"geom", "dx", "dy"},
-				"ST_Affine(geom, 1, 0, dx, 0, 1, dy, 0, 0, 1, 0, 0, 0)",
-				"Translates a geometry in X and Y direction. This is a shorthand macro for calling ST_Affine.");
+			    {"geom", "dx", "dy"}, "ST_Affine(geom, 1, 0, dx, 0, 1, dy, 0, 0, 1, 0, 0, 0)",
+			    "Translates a geometry in X and Y direction. This is a shorthand macro for calling ST_Affine.");
 		});
 
 		FunctionBuilder::RegisterMacro(db, "ST_TransScale", [](MacroFunctionBuilder &builder) {
-			builder.AddDefinition(
-				{"geom", "dx", "dy", "xs", "ys"},
-				"ST_Affine(geom, xs, 0, 0, 0, ys, 0, 0, 0, 1, dx * xs, dy * ys, 0)",
-				"Translates and then scales a geometry in X and Y direction. This is a shorthand macro for calling ST_Affine.");
+			builder.AddDefinition({"geom", "dx", "dy", "xs", "ys"},
+			                      "ST_Affine(geom, xs, 0, 0, 0, ys, 0, 0, 0, 1, dx * xs, dy * ys, 0)",
+			                      "Translates and then scales a geometry in X and Y direction. This is a shorthand "
+			                      "macro for calling ST_Affine.");
 		});
 
 		FunctionBuilder::RegisterMacro(db, "ST_RotateX", [](MacroFunctionBuilder &builder) {
 			builder.AddDefinition(
-				{"geom", "radians"},
-				"ST_Affine(geom, 1, 0, 0, 0, COS(radians), -SIN(radians), 0, SIN(radians), COS(radians), 0, 0, 0)",
-				"Rotates a geometry around the X axis. This is a shorthand macro for calling ST_Affine.");
+			    {"geom", "radians"},
+			    "ST_Affine(geom, 1, 0, 0, 0, COS(radians), -SIN(radians), 0, SIN(radians), COS(radians), 0, 0, 0)",
+			    "Rotates a geometry around the X axis. This is a shorthand macro for calling ST_Affine.");
 		});
 
 		FunctionBuilder::RegisterMacro(db, "ST_RotateY", [](MacroFunctionBuilder &builder) {
 			builder.AddDefinition(
-				{"geom", "radians"},
-				"ST_Affine(geom, COS(radians), 0, SIN(radians), 0, 1, 0, -SIN(radians), 0, COS(radians), 0, 0, 0)",
-				"Rotates a geometry around the Y axis. This is a shorthand macro for calling ST_Affine.");
+			    {"geom", "radians"},
+			    "ST_Affine(geom, COS(radians), 0, SIN(radians), 0, 1, 0, -SIN(radians), 0, COS(radians), 0, 0, 0)",
+			    "Rotates a geometry around the Y axis. This is a shorthand macro for calling ST_Affine.");
 		});
 
 		FunctionBuilder::RegisterMacro(db, "ST_RotateZ", [](MacroFunctionBuilder &builder) {
 			builder.AddDefinition(
-				{"geom", "radians"},
-				"ST_Affine(geom, COS(radians), -SIN(radians), 0, SIN(radians), COS(radians), 0, 0, 0, 1, 0, 0, 0)",
-				"Rotates a geometry around the Z axis. This is a shorthand macro for calling ST_Affine.");
+			    {"geom", "radians"},
+			    "ST_Affine(geom, COS(radians), -SIN(radians), 0, SIN(radians), COS(radians), 0, 0, 0, 1, 0, 0, 0)",
+			    "Rotates a geometry around the Z axis. This is a shorthand macro for calling ST_Affine.");
 		});
 
 		// Alias for ST_RotateZ
@@ -325,7 +322,6 @@ struct ST_Affine {
 		});
 	}
 };
-
 
 //======================================================================================================================
 // ST_Area

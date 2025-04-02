@@ -123,15 +123,15 @@ void FunctionBuilder::Register(DatabaseInstance &db, const char *name, MacroFunc
 	vector<DefaultMacro> macros;
 	vector<FunctionDescription> descriptions;
 
-	for(auto &def : builder.macros) {
+	for (auto &def : builder.macros) {
 		DefaultMacro macro = {};
 		macro.schema = DEFAULT_SCHEMA;
 		macro.name = name;
 		macro.named_parameters[0].name = nullptr;
 		macro.named_parameters[0].default_value = nullptr;
 		macro.macro = def.body.c_str();
-		for(idx_t i = 0; i < def.parameters.size(); i++) {
-			if(i >= 8) {
+		for (idx_t i = 0; i < def.parameters.size(); i++) {
+			if (i >= 8) {
 				throw InternalException("Too many parameters in macro!");
 			}
 			macro.parameters[i] = def.parameters[i].c_str();
@@ -140,10 +140,10 @@ void FunctionBuilder::Register(DatabaseInstance &db, const char *name, MacroFunc
 		macros.push_back(macro);
 
 		FunctionDescription function_description;
-		if(def.description) {
+		if (def.description) {
 			function_description.description = RemoveIndentAndTrailingWhitespace(def.description);
 		}
-		if(def.example) {
+		if (def.example) {
 			function_description.examples.push_back(RemoveIndentAndTrailingWhitespace(def.example));
 		}
 		descriptions.push_back(function_description);
