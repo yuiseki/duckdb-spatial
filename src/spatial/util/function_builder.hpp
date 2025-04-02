@@ -1,10 +1,11 @@
 #pragma once
 
 #include "duckdb.hpp"
-
 #include "duckdb/function/function_set.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/parser/parsed_data/create_function_info.hpp"
+
+#include <duckdb/catalog/default/default_functions.hpp>
 
 namespace duckdb {
 
@@ -14,6 +15,7 @@ namespace duckdb {
 
 class ScalarFunctionBuilder;
 class AggregateFunctionBuilder;
+class MacroFunctionBuilder;
 
 class FunctionBuilder {
 public:
@@ -23,6 +25,9 @@ public:
 	template <class CALLBACK>
 	static void RegisterAggregate(DatabaseInstance &db, const char *name, CALLBACK &&callback);
 
+	template<class CALLBACK>
+	static void RegisterMacro(DatabaseInstance &db, const char* name, CALLBACK&& callback);
+
 	// TODO:
 	static void AddTableFunctionDocs(DatabaseInstance &db, const char *name, const char *desc, const char *example);
 
@@ -31,6 +36,7 @@ public:
 private:
 	static void Register(DatabaseInstance &db, const char *name, ScalarFunctionBuilder &builder);
 	static void Register(DatabaseInstance &db, const char *name, AggregateFunctionBuilder &builder);
+	static void Register(DatabaseInstance &db, const char *name, MacroFunctionBuilder &builder);
 };
 
 //------------------------------------------------------------------------------
@@ -145,6 +151,27 @@ void ScalarFunctionBuilder::AddVariant(CALLBACK &&callback) {
 }
 
 //------------------------------------------------------------------------------
+// Macro
+//------------------------------------------------------------------------------
+class MacroFunctionBuilder {
+	friend class FunctionBuilder;
+public:
+	void AddDefinition(const vector<string> &parameters, const string &body,
+		const char* desc = nullptr, const char* example = nullptr) {
+		macros.push_back({parameters, body, desc, example});
+	}
+private:
+	struct MacroDef {
+		vector<string> parameters;
+		string body;
+		const char* description;
+		const char* example;
+	};
+
+	vector<MacroDef> macros;
+};
+
+//------------------------------------------------------------------------------
 // Aggregate
 //------------------------------------------------------------------------------
 
@@ -198,5 +225,13 @@ void FunctionBuilder::RegisterAggregate(DatabaseInstance &db, const char *name, 
 	callback(builder);
 	Register(db, name, builder);
 }
+
+template <class CALLBACK>
+void FunctionBuilder::RegisterMacro(DatabaseInstance &db, const char *name, CALLBACK &&callback) {
+	MacroFunctionBuilder builder;
+	callback(builder);
+	Register(db, name, builder);
+}
+
 
 } // namespace duckdb

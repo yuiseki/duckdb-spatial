@@ -1,15 +1,21 @@
-#include "duckdb/common/types/blob.hpp"
-#include "duckdb/common/vector_operations/generic_executor.hpp"
-#include "duckdb/execution/expression_executor.hpp"
-#include "duckdb/planner/expression/bound_function_expression.hpp"
+// Spatial
+#include "spatial/modules/main/spatial_functions.hpp"
 #include "spatial/geometry/geometry_serialization.hpp"
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/geometry/wkb_writer.hpp"
-#include "spatial/modules/main/spatial_functions.hpp"
 #include "spatial/spatial_types.hpp"
 #include "spatial/util/binary_reader.hpp"
 #include "spatial/util/function_builder.hpp"
 #include "spatial/util/math.hpp"
+
+// DuckDB
+#include "duckdb/common/types/blob.hpp"
+#include "duckdb/common/vector_operations/generic_executor.hpp"
+#include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/common/vector_operations/septenary_executor.hpp"
+
+// Extra
 #include "yyjson.h"
 
 namespace duckdb {
@@ -86,6 +92,240 @@ namespace {
 //######################################################################################################################
 // Functions
 //######################################################################################################################
+
+//======================================================================================================================
+// ST_Affine
+//======================================================================================================================
+
+struct ST_Affine {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void Execute3D(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		auto &alloc = lstate.GetAllocator();
+
+		const auto row_count = args.size();
+
+		UnifiedVectorFormat geom_format;
+		args.data[0].ToUnifiedFormat(row_count, geom_format);
+
+		UnifiedVectorFormat matrix_elems[12];
+		idx_t matrix_idx[12];
+
+		for(idx_t i = 1; i < 13; i++) {
+			args.data[i].ToUnifiedFormat(row_count, matrix_elems[i - 1]);
+		}
+
+		for(idx_t out_idx = 0; out_idx < args.size(); out_idx++) {
+
+			// Reset the arena after every iteration, to avoid holding onto too much memory
+			lstate.GetArena().Reset();
+
+			const auto geom_idx = geom_format.sel->get_index(out_idx);
+			if(!geom_format.validity.RowIsValid(geom_idx)) {
+				FlatVector::SetNull(result, out_idx, true);
+				continue;
+			}
+
+			bool all_valid = true;
+			for(idx_t j = 0; j < 12; j++) {
+				matrix_idx[j] = matrix_elems[j].sel->get_index(out_idx);
+				all_valid = all_valid && matrix_elems[j].validity.RowIsValid(matrix_idx[j]);
+			}
+
+			if(!all_valid) {
+				FlatVector::SetNull(result, out_idx, true);
+				continue;
+			}
+
+			// Setup the matrix
+			auto matrix = sgl::affine_matrix::identity();
+			matrix.v[0] = UnifiedVectorFormat::GetData<double>(matrix_elems[0])[matrix_idx[0]]; // a
+			matrix.v[1] = UnifiedVectorFormat::GetData<double>(matrix_elems[1])[matrix_idx[1]]; // b
+			matrix.v[2] = UnifiedVectorFormat::GetData<double>(matrix_elems[2])[matrix_idx[2]]; // c
+
+			matrix.v[3] = UnifiedVectorFormat::GetData<double>(matrix_elems[10])[matrix_idx[10]]; // xoff
+
+			matrix.v[4] = UnifiedVectorFormat::GetData<double>(matrix_elems[3])[matrix_idx[3]]; // d
+			matrix.v[5] = UnifiedVectorFormat::GetData<double>(matrix_elems[4])[matrix_idx[4]]; // e
+			matrix.v[6] = UnifiedVectorFormat::GetData<double>(matrix_elems[5])[matrix_idx[5]]; // f
+
+			matrix.v[7] = UnifiedVectorFormat::GetData<double>(matrix_elems[11])[matrix_idx[11]]; // yoff
+
+			matrix.v[8] = UnifiedVectorFormat::GetData<double>(matrix_elems[6])[matrix_idx[6]]; // g
+			matrix.v[9] = UnifiedVectorFormat::GetData<double>(matrix_elems[7])[matrix_idx[7]]; // h
+			matrix.v[10] = UnifiedVectorFormat::GetData<double>(matrix_elems[8])[matrix_idx[8]]; // i
+
+			matrix.v[11] = UnifiedVectorFormat::GetData<double>(matrix_elems[9])[matrix_idx[9]]; // zoff
+
+			// Deserialize the geometry
+			auto geom_blob = UnifiedVectorFormat::GetData<string_t>(geom_format)[geom_idx];
+			sgl::geometry geom;
+			lstate.Deserialize(geom_blob, geom);
+
+			// Apply the transformation
+			sgl::ops::affine_transform(&alloc, &geom, &matrix);
+
+			// Serialize the result
+			FlatVector::GetData<string_t>(result)[out_idx] = lstate.Serialize(result, geom);
+		}
+
+		if(row_count == 1) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	}
+
+	static void Execute2D(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		auto &alloc = lstate.GetAllocator();
+
+		SeptenaryExecutor::Execute<string_t, double, double, double, double, double, double, string_t>(args, result, [&](
+			const string_t &geom_blob, const double a, const double b, const double d, const double e, const double xoff, const double yoff) {
+
+			// Reset the arena after every iteration, to avoid holding onto too much memory
+			lstate.GetArena().Reset();
+
+			// Deserialize the geometry
+			sgl::geometry geom;
+			lstate.Deserialize(geom_blob, geom);
+
+			// Setup the matrix
+			auto matrix = sgl::affine_matrix::identity();
+			matrix.v[0] = a; // a
+			matrix.v[1] = b; // b
+			matrix.v[3] = xoff; // xoff
+			matrix.v[4] = d; // d
+			matrix.v[5] = e; // e
+			matrix.v[7] = yoff; // yoff
+
+			// Transform the geometry
+			sgl::ops::affine_transform(&alloc, &geom, &matrix);
+
+			// Serialize the result
+			return lstate.Serialize(result, geom);
+		});
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Affine", [](ScalarFunctionBuilder &func) {
+			// GEOMETRY (3D)
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.AddParameter("a", LogicalType::DOUBLE);
+				variant.AddParameter("b", LogicalType::DOUBLE);
+				variant.AddParameter("c", LogicalType::DOUBLE);
+				variant.AddParameter("d", LogicalType::DOUBLE);
+				variant.AddParameter("e", LogicalType::DOUBLE);
+				variant.AddParameter("f", LogicalType::DOUBLE);
+				variant.AddParameter("g", LogicalType::DOUBLE);
+				variant.AddParameter("h", LogicalType::DOUBLE);
+				variant.AddParameter("i", LogicalType::DOUBLE);
+				variant.AddParameter("xoff", LogicalType::DOUBLE);
+				variant.AddParameter("yoff", LogicalType::DOUBLE);
+				variant.AddParameter("zoff", LogicalType::DOUBLE);
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute3D);
+			});
+
+			// GEOMETRY (2D)
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.AddParameter("a", LogicalType::DOUBLE);
+				variant.AddParameter("b", LogicalType::DOUBLE);
+				variant.AddParameter("d", LogicalType::DOUBLE);
+				variant.AddParameter("e", LogicalType::DOUBLE);
+				variant.AddParameter("xoff", LogicalType::DOUBLE);
+				variant.AddParameter("yoff", LogicalType::DOUBLE);
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute2D);
+			});
+
+			func.SetDescription(R"(
+			Applies an affine transformation to a geometry.
+
+			For the 2D variant, the transformation matrix is defined as follows:
+			```
+			| a b xoff |
+			| d e yoff |
+			| 0 0 1    |
+			```
+
+			For the 3D variant, the transformation matrix is defined as follows:
+			```
+			| a b c xoff |
+			| d e f yoff |
+			| g h i zoff |
+			| 0 0 0 1    |
+			```
+
+			The transformation is applied to all vertices of the geometry.
+			)");
+		});
+
+		// Add helper macros
+		FunctionBuilder::RegisterMacro(db, "ST_Scale", [](MacroFunctionBuilder &builder) {
+			builder.AddDefinition(
+				{"geom", "xs", "ys", "zs"},
+				"ST_Affine(geom, xs, 0, 0, 0, ys, 0, 0, 0, zs, 0, 0, 0)",
+				"Scales a geometry in X, Y and Z direction. This is a shorthand macro for calling ST_Affine.");
+			builder.AddDefinition(
+				{"geom", "xs", "ys"},
+				"ST_Affine(geom, xs, 0, 0, 0, ys, 0, 0, 0, 1, 0, 0, 0)",
+				"Scales a geometry in X and Y direction. This is a shorthand macro for calling ST_Affine.");
+		});
+
+		FunctionBuilder::RegisterMacro(db, "ST_Translate", [](MacroFunctionBuilder &builder) {
+			builder.AddDefinition(
+				{"geom", "dx", "dy", "dz"},
+				"ST_Affine(geom, 1, 0, dx, 0, 1, dy, 0, 0, 1, dz, 0, 0)",
+				"Translates a geometry in X, Y and Z direction. This is a shorthand macro for calling ST_Affine.");
+			builder.AddDefinition(
+				{"geom", "dx", "dy"},
+				"ST_Affine(geom, 1, 0, dx, 0, 1, dy, 0, 0, 1, 0, 0, 0)",
+				"Translates a geometry in X and Y direction. This is a shorthand macro for calling ST_Affine.");
+		});
+
+		FunctionBuilder::RegisterMacro(db, "ST_TransScale", [](MacroFunctionBuilder &builder) {
+			builder.AddDefinition(
+				{"geom", "dx", "dy", "xs", "ys"},
+				"ST_Affine(geom, xs, 0, 0, 0, ys, 0, 0, 0, 1, dx * xs, dy * ys, 0)",
+				"Translates and then scales a geometry in X and Y direction. This is a shorthand macro for calling ST_Affine.");
+		});
+
+		FunctionBuilder::RegisterMacro(db, "ST_RotateX", [](MacroFunctionBuilder &builder) {
+			builder.AddDefinition(
+				{"geom", "radians"},
+				"ST_Affine(geom, 1, 0, 0, 0, COS(radians), -SIN(radians), 0, SIN(radians), COS(radians), 0, 0, 0)",
+				"Rotates a geometry around the X axis. This is a shorthand macro for calling ST_Affine.");
+		});
+
+		FunctionBuilder::RegisterMacro(db, "ST_RotateY", [](MacroFunctionBuilder &builder) {
+			builder.AddDefinition(
+				{"geom", "radians"},
+				"ST_Affine(geom, COS(radians), 0, SIN(radians), 0, 1, 0, -SIN(radians), 0, COS(radians), 0, 0, 0)",
+				"Rotates a geometry around the Y axis. This is a shorthand macro for calling ST_Affine.");
+		});
+
+		FunctionBuilder::RegisterMacro(db, "ST_RotateZ", [](MacroFunctionBuilder &builder) {
+			builder.AddDefinition(
+				{"geom", "radians"},
+				"ST_Affine(geom, COS(radians), -SIN(radians), 0, SIN(radians), COS(radians), 0, 0, 0, 1, 0, 0, 0)",
+				"Rotates a geometry around the Z axis. This is a shorthand macro for calling ST_Affine.");
+		});
+
+		// Alias for ST_RotateZ
+		FunctionBuilder::RegisterMacro(db, "ST_Rotate", [](MacroFunctionBuilder &builder) {
+			builder.AddDefinition({"geom", "radians"}, "ST_RotateZ(geom, radians)", "Alias of ST_RotateZ");
+		});
+	}
+};
+
 
 //======================================================================================================================
 // ST_Area
@@ -8035,9 +8275,8 @@ struct ST_MMin : VertexAggFunctionBase<ST_MMin, VertexMinAggOp> {
 //######################################################################################################################
 
 void RegisterSpatialScalarFunctions(DatabaseInstance &db) {
+	ST_Affine::Register(db);
 	ST_Area::Register(db);
-
-	// 1 functions to go!
 	ST_AsGeoJSON::Register(db);
 	ST_AsText::Register(db);
 	ST_AsWKB::Register(db);
