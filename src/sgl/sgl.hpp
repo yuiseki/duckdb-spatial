@@ -926,6 +926,7 @@ int32_t max_surface_dimension(const geometry *geom, bool ignore_empty);
 
 double distance(const geometry* lhs, const geometry* rhs);
 
+// This will NOT visit polygon rings if the requested dimension is 1
 typedef void (*visit_func)(void *state, const geometry *part);
 void visit_by_dimension(const geometry *geom, int surface_dimension, void *state, visit_func func);
 
@@ -1236,21 +1237,45 @@ inline void visit_by_dimension(const geometry *geom, int surface_dimension, void
 	while (true) {
 		switch (part->get_type()) {
 		case geometry_type::POINT:
-		case geometry_type::MULTI_POINT:
 			if(surface_dimension == 0) {
 				func(state, part);
 			}
 			break;
+		case geometry_type::MULTI_POINT:
+			if(surface_dimension == 0) {
+				func(state, part);
+				if (!part->is_empty()) {
+					part = part->get_first_part();
+					continue;
+				}
+			}
+			break;
 		case geometry_type::LINESTRING:
+			if(surface_dimension == 1) {
+                func(state, part);
+            }
+		break;
 		case geometry_type::MULTI_LINESTRING:
 			if(surface_dimension == 1) {
 				func(state, part);
+				if (!part->is_empty()) {
+					part = part->get_first_part();
+					continue;
+				}
 			}
 		break;
 		case geometry_type::POLYGON:
+			if(surface_dimension == 2) {
+				func(state, part);
+			}
+			break;
 		case geometry_type::MULTI_POLYGON:
 			if(surface_dimension == 2) {
 				func(state, part);
+				if (!part->is_empty()) {
+                    part = part->get_first_part();
+                    continue;
+                }
 			}
 			break;
 		case geometry_type::MULTI_GEOMETRY:
