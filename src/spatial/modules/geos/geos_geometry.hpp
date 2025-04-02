@@ -2,6 +2,8 @@
 
 #include "geos_c.h"
 
+#include "duckdb/common/vector.hpp"
+
 namespace duckdb {
 
 class GeosGeometry;
@@ -73,6 +75,7 @@ public:
 	GeosGeometry get_maximum_inscribed_circle(double tolerance) const;
 	// default tolerance is max(height/width) / 1000
 	GeosGeometry get_maximum_inscribed_circle() const;
+	GeosGeometry get_point_n(int n) const;
 
 	GeosGeometry get_linemerged(bool directed) const;
 	GeosGeometry get_concave_hull(const double ratio, const bool allowHoles) const;
@@ -85,6 +88,38 @@ public:
 private:
 	GEOSContextHandle_t handle;
 	GEOSGeometry *geom;
+};
+
+class GeosCollection {
+public:
+	explicit GeosCollection(GEOSContextHandle_t handle_p) : handle(handle_p) { }
+
+	// disable copy
+	GeosCollection(const GeosCollection &) = delete;
+	GeosCollection &operator=(const GeosCollection &) = delete;
+
+	// disable move
+	GeosCollection(GeosCollection &&) = delete;
+	GeosCollection &operator=(GeosCollection &&) = delete;
+
+	void add(GeosGeometry &&geom) {
+		geometries.push_back(std::move(geom));
+		pointers.push_back(geometries.back().get_raw());
+	}
+
+	void clear() {
+		geometries.clear();
+		pointers.clear();
+	}
+
+	GeosGeometry get_polygonized() const {
+		return GeosGeometry(handle, GEOSPolygonize_r(handle, pointers.data(), pointers.size()));
+	}
+
+private:
+	GEOSContextHandle_t handle;
+	vector<GeosGeometry> geometries;
+	vector<const GEOSGeometry*> pointers;
 };
 
 class PreparedGeosGeometry {
@@ -133,6 +168,7 @@ inline GeosGeometry::GeosGeometry(GEOSContextHandle_t handle_p, GEOSGeometry *ge
 }
 inline GeosGeometry::GeosGeometry(GeosGeometry &&other) noexcept : handle(other.handle), geom(other.geom) {
 	other.geom = nullptr;
+	other.handle = nullptr;
 }
 inline GeosGeometry &GeosGeometry::operator=(GeosGeometry &&other) noexcept {
 	if (this != &other) {
@@ -272,6 +308,12 @@ inline GeosGeometry GeosGeometry::get_maximum_inscribed_circle() const {
 inline GeosGeometry GeosGeometry::get_maximum_inscribed_circle(double tolerance) const {
 	return GeosGeometry(handle, GEOSMaximumInscribedCircle_r(handle, geom, tolerance));
 }
+
+inline GeosGeometry GeosGeometry::get_point_n(int n) const {
+	const auto point = GEOSGeomGetPointN_r(handle, geom, n);
+	return GeosGeometry(handle, point);
+}
+
 
 inline bool GeosGeometry::contains(const GeosGeometry &other) const {
 	return GEOSContains_r(handle, geom, other.geom);

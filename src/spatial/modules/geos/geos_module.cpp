@@ -1,12 +1,13 @@
 #include "spatial/modules/geos/geos_module.hpp"
+
+#include "duckdb/common/vector_operations/senary_executor.hpp"
+#include "geos_c.h"
 #include "spatial/modules/geos/geos_geometry.hpp"
 #include "spatial/modules/geos/geos_serde.hpp"
 #include "spatial/spatial_types.hpp"
 #include "spatial/util/function_builder.hpp"
 
-#include "duckdb/common/vector_operations/senary_executor.hpp"
-
-#include "geos_c.h"
+#include <duckdb/common/vector_operations/generic_executor.hpp>
 
 namespace duckdb {
 
@@ -1059,37 +1060,80 @@ struct ST_MaximumInscribedCircle {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+		auto &struct_vecs = StructVector::GetEntries(result);
+		auto &center_vec = *struct_vecs[0];
+		auto &nearest_vec = *struct_vecs[1];
+
+		using STRING_TYPE = PrimitiveType<string_t>;
+		using RESULT_TYPE = StructTypeTernary<string_t, string_t, double>;
+
+		GenericExecutor::ExecuteUnary<STRING_TYPE, RESULT_TYPE>(args.data[0], result, args.size(),
+			[&](const STRING_TYPE &geom_blob_val) {
+
+			const auto &geom_blob = geom_blob_val.val;
+
 			const auto geom = lstate.Deserialize(geom_blob);
 			const auto circle = geom.get_maximum_inscribed_circle();
-			return lstate.Serialize(result, circle);
+
+			const auto center = circle.get_point_n(0);
+			const auto nearest = circle.get_point_n(1);
+			const auto radius = center.distance_to(nearest);
+
+			const auto center_blob = lstate.Serialize(center_vec, center);
+			const auto nearest_blob = lstate.Serialize(nearest_vec, nearest);
+
+			return RESULT_TYPE {center_blob, nearest_blob, radius};
 		});
 	}
 
 	static void ExecuteWithTolerance(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
 
-		BinaryExecutor::Execute<string_t, double, string_t>(
-		    args.data[0], args.data[1], result, args.size(), [&](const string_t &geom_blob, const double tolerance) {
-			    const auto geom = lstate.Deserialize(geom_blob);
-			    const auto circle = geom.get_maximum_inscribed_circle(tolerance);
-			    return lstate.Serialize(result, circle);
-		    });
+		auto &struct_vecs = StructVector::GetEntries(result);
+		auto &center_vec = *struct_vecs[0];
+		auto &nearest_vec = *struct_vecs[1];
+
+		using STRING_TYPE = PrimitiveType<string_t>;
+		using DOUBLE_TYPE = PrimitiveType<double>;
+		using RESULT_TYPE = StructTypeTernary<string_t, string_t, double>;
+
+		GenericExecutor::ExecuteBinary<STRING_TYPE, DOUBLE_TYPE, RESULT_TYPE>(args.data[0], args.data[1], result,
+			args.size(), [&](const STRING_TYPE &geom_blob_val, const DOUBLE_TYPE &tolerance_val) {
+
+			const auto &geom_blob = geom_blob_val.val;
+			const auto &tolerance = tolerance_val.val;
+
+			const auto geom = lstate.Deserialize(geom_blob);
+			const auto circle = geom.get_maximum_inscribed_circle(tolerance);
+
+			const auto center = circle.get_point_n(0);
+			const auto nearest = circle.get_point_n(1);
+			const auto radius = center.distance_to(nearest);
+
+			const auto center_blob = lstate.Serialize(center_vec, center);
+			const auto nearest_blob = lstate.Serialize(nearest_vec, nearest);
+
+			return RESULT_TYPE {center_blob, nearest_blob, radius};
+		});
 	}
 
 	static void Register(DatabaseInstance &db) {
-		FunctionBuilder::RegisterScalar(db, "ST_MaximumInscribedCircle", [](ScalarFunctionBuilder &func) {
-			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+
+		const auto result_type = LogicalType::STRUCT({
+			{"center", GeoTypes::GEOMETRY()},{"nearest", GeoTypes::GEOMETRY()},{"radius", LogicalType::DOUBLE}});
+
+		FunctionBuilder::RegisterScalar(db, "ST_MaximumInscribedCircle", [&](ScalarFunctionBuilder &func) {
+			func.AddVariant([&](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("geom", GeoTypes::GEOMETRY());
-				variant.SetReturnType(GeoTypes::GEOMETRY());
+				variant.SetReturnType(result_type);
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
 			});
 
-			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			func.AddVariant([&](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("geom", GeoTypes::GEOMETRY());
 				variant.AddParameter("tolerance", LogicalType::DOUBLE);
-				variant.SetReturnType(GeoTypes::GEOMETRY());
+				variant.SetReturnType(result_type);
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(ExecuteWithTolerance);
 			});
@@ -1098,6 +1142,7 @@ struct ST_MaximumInscribedCircle {
 				Returns the maximum inscribed circle of the input geometry, optionally with a tolerance.
 
 				By default, the tolerance is computed as `max(width, height) / 1000`.
+				The return value is a struct with the center of the circle, the nearest point to the center on the boundary of the geometry, and the radius of the circle.
 			)");
 
 			func.SetTag("ext", "spatial");
@@ -1242,6 +1287,63 @@ struct ST_PointOnSurface {
 			});
 
 			func.SetDescription("Returns a point guaranteed to lie on the surface of the geometry");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_Polygonize {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		const auto &lstate = LocalState::ResetAndGet(state);
+
+		UnifiedVectorFormat format;
+
+		auto &list_vec = args.data[0];
+		auto &item_vec = ListVector::GetEntry(list_vec);
+		item_vec.ToUnifiedFormat(ListVector::GetListSize(list_vec), format);
+
+		// Collection to hold the working set of geometries
+		GeosCollection collection(lstate.GetContext());
+
+		UnaryExecutor::Execute<list_entry_t, string_t>(list_vec, result, args.size(), [&](const list_entry_t &list) {
+			// Reset the collection
+			collection.clear();
+
+			const auto offset = list.offset;
+			const auto length = list.length;
+
+			// Collect all geometries in the list into the collection
+			for(idx_t i = offset; i < offset + length; i++) {
+				const auto mapped_idx = format.sel->get_index(i);
+
+				if(!format.validity.RowIsValid(mapped_idx)) {
+					continue;
+				}
+
+				const auto &geom_blob = UnifiedVectorFormat::GetData<string_t>(format)[mapped_idx];
+
+				auto geom = lstate.Deserialize(geom_blob);
+				collection.add(std::move(geom));
+			}
+
+			// Now polygonize the collection
+			const auto polygon = collection.get_polygonized();
+			return lstate.Serialize(result, polygon);
+		});
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Polygonize", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geometries", LogicalType::LIST(GeoTypes::GEOMETRY()));
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription("Returns a polygonized representation of the input geometries");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
 		});
@@ -1739,6 +1841,7 @@ void RegisterGEOSModule(DatabaseInstance &db) {
 	ST_Normalize::Register(db);
 	ST_Overlaps::Register(db);
 	ST_PointOnSurface::Register(db);
+	ST_Polygonize::Register(db);
 	ST_ReducePrecision::Register(db);
 	ST_RemoveRepeatedPoints::Register(db);
 	ST_Reverse::Register(db);
