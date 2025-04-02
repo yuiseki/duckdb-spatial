@@ -30,10 +30,15 @@ public:
 public:
 	GEOSGeomTypes type() const;
 	const GEOSGeometry *get_raw() const;
+	GEOSGeometry *get_raw();
+
+	// Release the ownership of the geometry, but does NOT destroy it
+	void leak();
 
 	bool is_simple() const;
 	bool is_ring() const;
 	bool is_valid() const;
+	bool is_empty() const;
 
 	GeosGeometry get_boundary() const;
 	GeosGeometry get_centroid() const;
@@ -83,6 +88,10 @@ public:
 	GeosGeometry get_buffer_style(double distance, int quadsegs, int endcap_style, int join_style,
 	                              double mitre_limit) const;
 
+	GeosGeometry get_coverage_invalid_edges(double tolerance) const;
+	GeosGeometry get_coverage_simplified(double tolerance, bool preserve_boundary) const;
+	GeosGeometry get_coverage_union() const;
+
 	PreparedGeosGeometry get_prepared() const;
 
 private:
@@ -113,14 +122,34 @@ public:
 		pointers.clear();
 	}
 
+	void reserve(size_t size) {
+		geometries.reserve(size);
+		pointers.reserve(size);
+	}
+
 	GeosGeometry get_polygonized() const {
 		return GeosGeometry(handle, GEOSPolygonize_r(handle, pointers.data(), pointers.size()));
+	}
+
+	GeosGeometry get_collection() {
+		auto res = GeosGeometry(
+		    handle, GEOSGeom_createCollection_r(handle, GEOS_GEOMETRYCOLLECTION, pointers.data(), pointers.size()));
+
+		// Because the GEOSGeometry takes ownership of the geometries, we need to leak them here
+		for (auto &geom : geometries) {
+			geom.leak();
+		}
+
+		// Now we can clear safely
+		geometries.clear();
+		pointers.clear();
+		return res;
 	}
 
 private:
 	GEOSContextHandle_t handle;
 	vector<GeosGeometry> geometries;
-	vector<const GEOSGeometry *> pointers;
+	vector<GEOSGeometry *> pointers;
 };
 
 class PreparedGeosGeometry {
@@ -230,6 +259,15 @@ inline const GEOSGeometry *GeosGeometry::get_raw() const {
 	return geom;
 }
 
+inline GEOSGeometry *GeosGeometry::get_raw() {
+	return geom;
+}
+
+inline void GeosGeometry::leak() {
+	handle = nullptr;
+	geom = nullptr;
+}
+
 inline bool GeosGeometry::is_simple() const {
 	return GEOSisSimple_r(handle, geom);
 }
@@ -240,6 +278,10 @@ inline bool GeosGeometry::is_ring() const {
 
 inline bool GeosGeometry::is_valid() const {
 	return GEOSisValid_r(handle, geom);
+}
+
+inline bool GeosGeometry::is_empty() const {
+	return GEOSisEmpty_r(handle, geom);
 }
 
 inline GeosGeometry GeosGeometry::get_boundary() const {
@@ -419,6 +461,19 @@ inline GeosGeometry GeosGeometry::get_buffer_style(double distance, int quadsegs
                                                    double mitre_limit) const {
 	const auto buffer = GEOSBufferWithStyle_r(handle, geom, distance, quadsegs, endcap_style, join_style, mitre_limit);
 	return GeosGeometry(handle, buffer);
+}
+
+inline GeosGeometry GeosGeometry::get_coverage_invalid_edges(double tolerance) const {
+	GEOSGeometry *output = nullptr;
+	GEOSCoverageIsValid_r(handle, geom, tolerance, &output);
+	return GeosGeometry(handle, output);
+}
+inline GeosGeometry GeosGeometry::get_coverage_simplified(double tolerance, bool preserve_boundary) const {
+	return GeosGeometry(handle, GEOSCoverageSimplifyVW_r(handle, geom, tolerance, preserve_boundary));
+}
+
+inline GeosGeometry GeosGeometry::get_coverage_union() const {
+	return GeosGeometry(handle, GEOSCoverageUnion_r(handle, geom));
 }
 
 inline PreparedGeosGeometry GeosGeometry::get_prepared() const {
