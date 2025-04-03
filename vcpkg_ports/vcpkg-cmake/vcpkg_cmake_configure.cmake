@@ -44,7 +44,7 @@ function(vcpkg_cmake_configure)
 
     set(manually_specified_variables "")
 
-    vcpkg_list(APPEND arg_OPTIONS "-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
+    vcpkg_list(APPEND arg_OPTIONS "-DCMAKE_POLICY_VERSION_MINIMUM=3.20")
 
     if(arg_Z_CMAKE_GET_VARS_USAGE)
         set(configuring_message "Getting CMake variables for ${TARGET_TRIPLET}")
