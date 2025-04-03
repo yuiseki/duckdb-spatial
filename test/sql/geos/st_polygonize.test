@@ -1,0 +1,16 @@
+require spatial
+
+query I
+SELECT ST_Polygonize([]);
+----
+GEOMETRYCOLLECTION EMPTY
+
+query I
+SELECT ST_Polygonize([st_point(0,0)]);
+----
+GEOMETRYCOLLECTION EMPTY
+
+query I
+SELECT ST_Polygonize(['LINESTRING(0 0, 1 2, 2 1, 0 0)'::GEOMETRY]);
+----
+GEOMETRYCOLLECTION (POLYGON ((0 0, 1 2, 2 1, 0 0)))

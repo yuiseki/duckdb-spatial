@@ -109,6 +109,109 @@ struct box_xyzm {
 	}
 };
 
+struct affine_matrix {
+
+	// *------------*
+	// | a b c xoff |
+	// | d e f yoff |
+	// | g h i zoff |
+	// | 0 0 0 1	|
+	// *------------*
+	double v[16] = {};
+
+	static affine_matrix identity() {
+        affine_matrix result;
+        result.v[0] = 1;
+        result.v[5] = 1;
+        result.v[10] = 1;
+        return result;
+    }
+
+	static affine_matrix translate(double x, double y, double z = 0) {
+        affine_matrix result = identity();
+        result.v[3] = x;
+        result.v[7] = y;
+        result.v[11] = z;
+        return result;
+    }
+
+	static affine_matrix scale(double x, double y, double z = 1) {
+        affine_matrix result = identity();
+        result.v[0] = x;
+        result.v[5] = y;
+        result.v[10] = z;
+        return result;
+    }
+
+	static affine_matrix rotate_x(double angle) {
+        affine_matrix result = identity();
+        const auto c = std::cos(angle);
+        const auto s = std::sin(angle);
+        result.v[5] = c;
+        result.v[6] = -s;
+        result.v[9] = s;
+        result.v[10] = c;
+        return result;
+    }
+
+	static affine_matrix rotate_y(double angle) {
+		affine_matrix result = identity();
+		const auto c = std::cos(angle);
+		const auto s = std::sin(angle);
+		result.v[0] = c;
+		result.v[2] = s;
+		result.v[8] = -s;
+		result.v[10] = c;
+		return result;
+	}
+
+	static affine_matrix rotate_z(double angle) {
+		affine_matrix result = identity();
+		const auto c = std::cos(angle);
+		const auto s = std::sin(angle);
+		result.v[0] = c;
+		result.v[1] = -s;
+		result.v[4] = s;
+		result.v[5] = c;
+		return result;
+	}
+
+	static affine_matrix translate_scale(double x, double y, double z, double sx, double sy, double sz) {
+        affine_matrix result = identity();
+        result.v[0] = sx;
+        result.v[5] = sy;
+        result.v[10] = sz;
+        result.v[3] = x;
+        result.v[7] = y;
+        result.v[11] = z;
+        return result;
+    }
+
+	vertex_xy apply_xy(const vertex_xy &vertex) const {
+
+		// x = a * x + b * y + xoff;
+		// y = d * x + e * y + yoff;
+
+		vertex_xy result = {0, 0};
+		result.x = v[0] * vertex.x + v[1] * vertex.y + v[3];
+		result.y = v[4] * vertex.x + v[5] * vertex.y + v[7];
+		return result;
+	}
+
+	vertex_xyzm apply_xyz(const vertex_xyzm &vertex) const {
+
+		// x = a * x + b * y + c * z + xoff;
+		// y = d * x + e * y + f * z + yoff;
+		// z = g * x + h * y + i * z + zoff;
+
+		vertex_xyzm result = {0, 0, 0, 0};
+		result.x =  v[0] * vertex.x + v[1] * vertex.y + v[2]  * vertex.zm + v[3];
+		result.y =  v[4] * vertex.x + v[5] * vertex.y + v[6]  * vertex.zm + v[7];
+		result.zm = v[8] * vertex.x + v[9] * vertex.y + v[10] * vertex.zm + v[11];
+        return result;
+    }
+};
+
 enum class geometry_type : uint8_t {
 	INVALID = 0,
 	POINT,
@@ -812,6 +915,9 @@ inline double perimeter(const geometry *geom);
 
 namespace ops {
 
+// If the allocator is null, transform in-place. Otherwise allocate new vertex data
+void affine_transform(sgl::allocator *alloc, sgl::geometry *geom, const sgl::affine_matrix *matrix);
+
 double area(const geometry *geom);
 double perimeter(const geometry *geom);
 double length(const geometry *geom);
@@ -820,6 +926,7 @@ int32_t max_surface_dimension(const geometry *geom, bool ignore_empty);
 
 double distance(const geometry* lhs, const geometry* rhs);
 
+// This will NOT visit polygon rings if the requested dimension is 1
 typedef void (*visit_func)(void *state, const geometry *part);
 void visit_by_dimension(const geometry *geom, int surface_dimension, void *state, visit_func func);
 
@@ -903,6 +1010,75 @@ bool is_valid(const sgl::geometry *geom);
 
 namespace sgl {
 namespace ops {
+
+inline void affine_transform(sgl::allocator *alloc, sgl::geometry *geom, const sgl::affine_matrix *matrix) {
+	if (!geom) {
+		return;
+	}
+
+	geometry *part = geom;
+	geometry *root = part->get_parent();
+
+	while (true) {
+		switch (part->get_type()) {
+		case geometry_type::POINT:
+		case geometry_type::LINESTRING: {
+			const auto vertex_width = part->get_vertex_size();
+			const auto vertex_count = part->get_count();
+
+			if(vertex_count == 0) {
+				break;
+			}
+
+			const auto old_vertex_data = part->get_vertex_data();
+			auto new_vertex_data = old_vertex_data;
+			if(alloc) {
+				new_vertex_data = static_cast<uint8_t*>(alloc->alloc(vertex_width * vertex_count));
+			}
+
+			// Now, apply the transformation
+			vertex_xyzm old_vertex = {0, 0, 0, 0};
+			for (uint32_t i = 0; i < vertex_count; i++) {
+				memcpy(&old_vertex, old_vertex_data + i * vertex_width, vertex_width);
+                auto new_vertex = matrix->apply_xyz(old_vertex);
+                memcpy(new_vertex_data + i * vertex_width, &new_vertex, vertex_width);
+            }
+
+			part->set_vertex_data(new_vertex_data, vertex_count);
+		}
+		break;
+		case geometry_type::POLYGON:
+		case geometry_type::MULTI_POINT:
+		case geometry_type::MULTI_LINESTRING:
+		case geometry_type::MULTI_POLYGON:
+		case geometry_type::MULTI_GEOMETRY:
+			if (!part->is_empty()) {
+				part = part->get_first_part();
+				continue;
+			}
+			break;
+		default:
+			SGL_ASSERT(false);
+			return;
+		}
+
+		while (true) {
+			const auto parent = part->get_parent();
+			if (parent == root) {
+				return;
+			}
+
+			if (part != parent->get_last_part()) {
+				part = part->get_next();
+				break;
+			}
+
+			part = parent;
+		}
+	}
+}
+
+
 inline double area(const geometry *geom) {
 	switch (geom->get_type()) {
 	case geometry_type::POLYGON: {
@@ -1061,21 +1237,45 @@ inline void visit_by_dimension(const geometry *geom, int surface_dimension, void
 	while (true) {
 		switch (part->get_type()) {
 		case geometry_type::POINT:
-		case geometry_type::MULTI_POINT:
 			if(surface_dimension == 0) {
 				func(state, part);
 			}
 			break;
+		case geometry_type::MULTI_POINT:
+			if(surface_dimension == 0) {
+				func(state, part);
+				if (!part->is_empty()) {
+					part = part->get_first_part();
+					continue;
+				}
+			}
+			break;
 		case geometry_type::LINESTRING:
+			if(surface_dimension == 1) {
+                func(state, part);
+            }
+		break;
 		case geometry_type::MULTI_LINESTRING:
 			if(surface_dimension == 1) {
 				func(state, part);
+				if (!part->is_empty()) {
+					part = part->get_first_part();
+					continue;
+				}
 			}
 		break;
 		case geometry_type::POLYGON:
+			if(surface_dimension == 2) {
+				func(state, part);
+			}
+			break;
 		case geometry_type::MULTI_POLYGON:
 			if(surface_dimension == 2) {
 				func(state, part);
+				if (!part->is_empty()) {
+                    part = part->get_first_part();
+                    continue;
+                }
 			}
 			break;
 		case geometry_type::MULTI_GEOMETRY:

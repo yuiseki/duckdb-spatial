@@ -118,6 +118,44 @@ void FunctionBuilder::Register(DatabaseInstance &db, const char *name, Aggregate
 	}
 }
 
+void FunctionBuilder::Register(DatabaseInstance &db, const char *name, MacroFunctionBuilder &builder) {
+	// Register the function
+	vector<DefaultMacro> macros;
+	vector<FunctionDescription> descriptions;
+
+	for (auto &def : builder.macros) {
+		DefaultMacro macro = {};
+		macro.schema = DEFAULT_SCHEMA;
+		macro.name = name;
+		macro.named_parameters[0].name = nullptr;
+		macro.named_parameters[0].default_value = nullptr;
+		macro.macro = def.body.c_str();
+		for (idx_t i = 0; i < def.parameters.size(); i++) {
+			if (i >= 8) {
+				throw InternalException("Too many parameters in macro!");
+			}
+			macro.parameters[i] = def.parameters[i].c_str();
+		}
+		macro.parameters[def.parameters.size()] = nullptr;
+		macros.push_back(macro);
+
+		FunctionDescription function_description;
+		if (def.description) {
+			function_description.description = RemoveIndentAndTrailingWhitespace(def.description);
+		}
+		if (def.example) {
+			function_description.examples.push_back(RemoveIndentAndTrailingWhitespace(def.example));
+		}
+		descriptions.push_back(function_description);
+	}
+
+	const auto macro_ptr = array_ptr<const DefaultMacro>(macros.data(), macros.size());
+	const auto info = DefaultFunctionGenerator::CreateInternalMacroInfo(macro_ptr);
+	info->descriptions = descriptions;
+
+	ExtensionUtil::RegisterFunction(db, *info);
+}
+
 void FunctionBuilder::AddTableFunctionDocs(DatabaseInstance &db, const char *name, const char *desc,
                                            const char *example) {
 

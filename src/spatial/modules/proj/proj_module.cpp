@@ -74,6 +74,12 @@ PJ_CONTEXT *ProjModule::GetThreadProjContext() {
 
 // IMPORTANT: Make sure this module is loaded before any other modules that use proj (like GDAL)
 void ProjModule::RegisterVFS(DatabaseInstance &db) {
+
+	// Initialization lock around global proj state
+	static mutex lock;
+
+	lock_guard<mutex> g(lock);
+
 	// we use the sqlite "memvfs" to store the proj.db database in the extension binary itself
 	// this way we don't have to worry about the user having the proj.db database installed
 	// on their system. We therefore have to tell proj to use memvfs as the sqlite3 vfs and
@@ -1061,7 +1067,8 @@ struct ST_DWithin_Spheroid {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("p1", GeoTypes::POINT_2D());
 				variant.AddParameter("p2", GeoTypes::POINT_2D());
-				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.AddParameter("distance", LogicalType::DOUBLE);
+				variant.SetReturnType(LogicalType::BOOLEAN);
 
 				variant.SetFunction(Execute);
 			});

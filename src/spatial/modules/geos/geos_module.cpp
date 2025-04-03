@@ -5,8 +5,8 @@
 #include "spatial/util/function_builder.hpp"
 
 #include "duckdb/common/vector_operations/senary_executor.hpp"
-
-#include "geos_c.h"
+#include "duckdb/common/vector_operations/generic_executor.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
 
 namespace duckdb {
 
@@ -351,6 +351,39 @@ struct ST_Buffer {
 	}
 };
 
+struct ST_BuildArea {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		const auto &lstate = LocalState::ResetAndGet(state);
+
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+			const auto geom = lstate.Deserialize(geom_blob);
+			const auto area = geom.get_built_area();
+			return lstate.Serialize(result, area);
+		});
+	}
+
+	static constexpr auto DESCRIPTION = R"(
+		Creates a polygonal geometry by attemtping to "fill in" the input geometry.
+
+		Unlike ST_Polygonize, this function does not fill in holes.)";
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_BuildArea", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(DESCRIPTION);
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
 struct ST_Centroid {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
@@ -492,6 +525,248 @@ struct ST_ConvexHull {
 			});
 
 			func.SetDescription("Returns the convex hull enclosing the geometry");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_CoverageInvalidEdges {
+
+	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
+	                                     vector<unique_ptr<Expression>> &arguments) {
+
+		// Set the default value for the tolerance parameter
+		if (arguments.size() == 1) {
+			arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(0)));
+		}
+		return nullptr;
+	}
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		const auto &lstate = LocalState::ResetAndGet(state);
+
+		UnifiedVectorFormat format;
+
+		auto &list_vec = args.data[0];
+		auto &item_vec = ListVector::GetEntry(list_vec);
+		item_vec.ToUnifiedFormat(ListVector::GetListSize(list_vec), format);
+
+		// Collection to hold the working set of geometries
+		GeosCollection collection(lstate.GetContext());
+
+		BinaryExecutor::ExecuteWithNulls<list_entry_t, double, string_t>(
+		    list_vec, args.data[1], result, args.size(),
+		    [&](const list_entry_t &list, double tolerance, ValidityMask &mask, idx_t row_idx) {
+			    // Reset the collection
+			    collection.clear();
+			    collection.reserve(list.length);
+
+			    const auto offset = list.offset;
+			    const auto length = list.length;
+
+			    // Collect all geometries in the list into the collection
+			    for (idx_t i = offset; i < offset + length; i++) {
+				    const auto mapped_idx = format.sel->get_index(i);
+
+				    if (!format.validity.RowIsValid(mapped_idx)) {
+					    continue;
+				    }
+
+				    const auto &geom_blob = UnifiedVectorFormat::GetData<string_t>(format)[mapped_idx];
+
+				    auto geom = lstate.Deserialize(geom_blob);
+				    collection.add(std::move(geom));
+			    }
+
+			    // Now make a geometrycollection and get the invalid edges
+			    const auto geometry_col = collection.get_collection();
+			    const auto invalid = geometry_col.get_coverage_invalid_edges(tolerance);
+
+			    if (invalid.is_empty()) {
+				    mask.SetInvalid(row_idx);
+				    return string_t {};
+			    }
+
+			    return lstate.Serialize(result, invalid);
+		    });
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_CoverageInvalidEdges", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geoms", LogicalType::LIST(GeoTypes::GEOMETRY()));
+				variant.AddParameter("tolerance", LogicalType::DOUBLE);
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geoms", LogicalType::LIST(GeoTypes::GEOMETRY()));
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetBind(Bind);
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(R"(
+				Returns the invalid edges in a polygonal coverage, which are edges that are not shared by two polygons.
+				Returns NULL if the input is not a polygonal coverage, or if the input is valid.
+				Tolerance is 0 by default.
+			)");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_CoverageSimplify {
+
+	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
+	                                     vector<unique_ptr<Expression>> &arguments) {
+		// Set the default value for the simplify_boundary parameter
+		if (arguments.size() == 2) {
+			arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::BOOLEAN(true)));
+		}
+		return nullptr;
+	}
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		const auto &lstate = LocalState::ResetAndGet(state);
+
+		UnifiedVectorFormat format;
+
+		auto &list_vec = args.data[0];
+		auto &item_vec = ListVector::GetEntry(list_vec);
+		item_vec.ToUnifiedFormat(ListVector::GetListSize(list_vec), format);
+
+		// Collection to hold the working set of geometries
+		GeosCollection collection(lstate.GetContext());
+
+		TernaryExecutor::Execute<list_entry_t, double, bool, string_t>(
+		    list_vec, args.data[1], args.data[2], result, args.size(),
+		    [&](const list_entry_t &list, double tolerance, bool simplify_boundary) {
+			    // Reset the collection
+			    collection.clear();
+			    collection.reserve(list.length);
+
+			    const auto offset = list.offset;
+			    const auto length = list.length;
+
+			    // Collect all geometries in the list into the collection
+			    for (idx_t i = offset; i < offset + length; i++) {
+				    const auto mapped_idx = format.sel->get_index(i);
+
+				    if (!format.validity.RowIsValid(mapped_idx)) {
+					    continue;
+				    }
+
+				    const auto &geom_blob = UnifiedVectorFormat::GetData<string_t>(format)[mapped_idx];
+
+				    auto geom = lstate.Deserialize(geom_blob);
+				    collection.add(std::move(geom));
+			    }
+
+			    // Now make a geometrycollection and simplify
+			    const auto geometry_col = collection.get_collection();
+			    const auto simplified = geometry_col.get_coverage_simplified(tolerance, !simplify_boundary);
+			    return lstate.Serialize(result, simplified);
+		    });
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_CoverageSimplify", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geoms", LogicalType::LIST(GeoTypes::GEOMETRY()));
+				variant.AddParameter("tolerance", LogicalType::DOUBLE);
+				variant.AddParameter("simplify_boundary", LogicalType::BOOLEAN);
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geoms", LogicalType::LIST(GeoTypes::GEOMETRY()));
+				variant.AddParameter("tolerance", LogicalType::DOUBLE);
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetBind(Bind);
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(R"(
+				Simplify the edges in a polygonal coverage, preserving the coverange by ensuring that the there are no seams between the resulting simplified polygons.
+
+				By default, the boundary of the coverage is also simplified, but this can be controlled with the optional third 'simplify_boundary' parameter.
+			)");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_CoverageUnion {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		const auto &lstate = LocalState::ResetAndGet(state);
+
+		UnifiedVectorFormat format;
+
+		auto &list_vec = args.data[0];
+		auto &item_vec = ListVector::GetEntry(list_vec);
+		item_vec.ToUnifiedFormat(ListVector::GetListSize(list_vec), format);
+
+		// Collection to hold the working set of geometries
+		GeosCollection collection(lstate.GetContext());
+
+		UnaryExecutor::Execute<list_entry_t, string_t>(list_vec, result, args.size(), [&](const list_entry_t &list) {
+			// Reset the collection
+			collection.clear();
+			collection.reserve(list.length);
+
+			const auto offset = list.offset;
+			const auto length = list.length;
+
+			// Collect all geometries in the list into the collection
+			for (idx_t i = offset; i < offset + length; i++) {
+				const auto mapped_idx = format.sel->get_index(i);
+
+				if (!format.validity.RowIsValid(mapped_idx)) {
+					continue;
+				}
+
+				const auto &geom_blob = UnifiedVectorFormat::GetData<string_t>(format)[mapped_idx];
+
+				auto geom = lstate.Deserialize(geom_blob);
+				collection.add(std::move(geom));
+			}
+
+			// Now make a geometrycollection and simplify
+			const auto geometry_col = collection.get_collection();
+			const auto unioned = geometry_col.get_coverage_union();
+			return lstate.Serialize(result, unioned);
+		});
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_CoverageUnion", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geoms", LogicalType::LIST(GeoTypes::GEOMETRY()));
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(R"(
+				Union all geometries in a polygonal coverage into a single geometry.
+				This may be faster than using `ST_Union`, but may use more memory.
+			)");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
 		});
@@ -1022,6 +1297,100 @@ struct ST_MakeValid {
 	}
 };
 
+struct ST_MaximumInscribedCircle {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		const auto &lstate = LocalState::ResetAndGet(state);
+
+		auto &struct_vecs = StructVector::GetEntries(result);
+		auto &center_vec = *struct_vecs[0];
+		auto &nearest_vec = *struct_vecs[1];
+
+		using STRING_TYPE = PrimitiveType<string_t>;
+		using RESULT_TYPE = StructTypeTernary<string_t, string_t, double>;
+
+		GenericExecutor::ExecuteUnary<STRING_TYPE, RESULT_TYPE>(
+		    args.data[0], result, args.size(), [&](const STRING_TYPE &geom_blob_val) {
+			    const auto &geom_blob = geom_blob_val.val;
+
+			    const auto geom = lstate.Deserialize(geom_blob);
+			    const auto circle = geom.get_maximum_inscribed_circle();
+
+			    const auto center = circle.get_point_n(0);
+			    const auto nearest = circle.get_point_n(1);
+			    const auto radius = center.distance_to(nearest);
+
+			    const auto center_blob = lstate.Serialize(center_vec, center);
+			    const auto nearest_blob = lstate.Serialize(nearest_vec, nearest);
+
+			    return RESULT_TYPE {center_blob, nearest_blob, radius};
+		    });
+	}
+
+	static void ExecuteWithTolerance(DataChunk &args, ExpressionState &state, Vector &result) {
+		const auto &lstate = LocalState::ResetAndGet(state);
+
+		auto &struct_vecs = StructVector::GetEntries(result);
+		auto &center_vec = *struct_vecs[0];
+		auto &nearest_vec = *struct_vecs[1];
+
+		using STRING_TYPE = PrimitiveType<string_t>;
+		using DOUBLE_TYPE = PrimitiveType<double>;
+		using RESULT_TYPE = StructTypeTernary<string_t, string_t, double>;
+
+		GenericExecutor::ExecuteBinary<STRING_TYPE, DOUBLE_TYPE, RESULT_TYPE>(
+		    args.data[0], args.data[1], result, args.size(),
+		    [&](const STRING_TYPE &geom_blob_val, const DOUBLE_TYPE &tolerance_val) {
+			    const auto &geom_blob = geom_blob_val.val;
+			    const auto &tolerance = tolerance_val.val;
+
+			    const auto geom = lstate.Deserialize(geom_blob);
+			    const auto circle = geom.get_maximum_inscribed_circle(tolerance);
+
+			    const auto center = circle.get_point_n(0);
+			    const auto nearest = circle.get_point_n(1);
+			    const auto radius = center.distance_to(nearest);
+
+			    const auto center_blob = lstate.Serialize(center_vec, center);
+			    const auto nearest_blob = lstate.Serialize(nearest_vec, nearest);
+
+			    return RESULT_TYPE {center_blob, nearest_blob, radius};
+		    });
+	}
+
+	static void Register(DatabaseInstance &db) {
+
+		const auto result_type = LogicalType::STRUCT(
+		    {{"center", GeoTypes::GEOMETRY()}, {"nearest", GeoTypes::GEOMETRY()}, {"radius", LogicalType::DOUBLE}});
+
+		FunctionBuilder::RegisterScalar(db, "ST_MaximumInscribedCircle", [&](ScalarFunctionBuilder &func) {
+			func.AddVariant([&](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(result_type);
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.AddVariant([&](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.AddParameter("tolerance", LogicalType::DOUBLE);
+				variant.SetReturnType(result_type);
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteWithTolerance);
+			});
+
+			func.SetDescription(R"(
+				Returns the maximum inscribed circle of the input geometry, optionally with a tolerance.
+
+				By default, the tolerance is computed as `max(width, height) / 1000`.
+				The return value is a struct with the center of the circle, the nearest point to the center on the boundary of the geometry, and the radius of the circle.
+			)");
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
 struct ST_MinimumRotatedRectangle {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
@@ -1046,6 +1415,38 @@ struct ST_MinimumRotatedRectangle {
 			func.SetDescription("Returns the minimum rotated rectangle that bounds the input geometry, finding the "
 			                    "surrounding box that has the lowest area by using a rotated rectangle, rather than "
 			                    "taking the lowest and highest coordinate values as per ST_Envelope().");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_Node {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		const auto &lstate = LocalState::ResetAndGet(state);
+
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
+			const auto geom = lstate.Deserialize(geom_blob);
+			const auto node = geom.get_noded();
+			return lstate.Serialize(result, node);
+		});
+	}
+
+	static constexpr auto DESCRIPTION = R"(
+		Returns a "noded" MultiLinestring, produced by combining a collection of input linestrings and adding additional vertices where they intersect.
+	)";
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Node", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", GeoTypes::GEOMETRY());
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(DESCRIPTION);
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
 		});
@@ -1126,6 +1527,65 @@ struct ST_PointOnSurface {
 			});
 
 			func.SetDescription("Returns a point guaranteed to lie on the surface of the geometry");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_Polygonize {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		const auto &lstate = LocalState::ResetAndGet(state);
+
+		UnifiedVectorFormat format;
+
+		auto &list_vec = args.data[0];
+		auto &item_vec = ListVector::GetEntry(list_vec);
+		item_vec.ToUnifiedFormat(ListVector::GetListSize(list_vec), format);
+
+		// Collection to hold the working set of geometries
+		GeosCollection collection(lstate.GetContext());
+
+		UnaryExecutor::Execute<list_entry_t, string_t>(list_vec, result, args.size(), [&](const list_entry_t &list) {
+			// Reset the collection
+			collection.clear();
+			collection.reserve(list.length);
+
+			const auto offset = list.offset;
+			const auto length = list.length;
+
+			// Collect all geometries in the list into the collection
+			for (idx_t i = offset; i < offset + length; i++) {
+				const auto mapped_idx = format.sel->get_index(i);
+
+				if (!format.validity.RowIsValid(mapped_idx)) {
+					continue;
+				}
+
+				const auto &geom_blob = UnifiedVectorFormat::GetData<string_t>(format)[mapped_idx];
+
+				auto geom = lstate.Deserialize(geom_blob);
+				collection.add(std::move(geom));
+			}
+
+			// Now polygonize the collection
+			const auto polygon = collection.get_polygonized();
+			return lstate.Serialize(result, polygon);
+		});
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_Polygonize", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geometries", LogicalType::LIST(GeoTypes::GEOMETRY()));
+				variant.SetReturnType(GeoTypes::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription("Returns a polygonized representation of the input geometries");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
 		});
@@ -1584,6 +2044,437 @@ struct ST_Intersection_Agg : GeosUnaryAggFunction {
 	}
 };
 
+//======================================================================================================================
+// Base GEOS-based coverage aggregate
+//======================================================================================================================
+
+struct GEOSCoverageAggFunction {
+
+	struct State {
+		GEOSContextHandle_t context = nullptr;
+		// This used to be a nice linked list.
+		// Unfortunately, there are issues when using custom destructors in combination with both window and aggregate
+		// functions. So we use a vector instead.
+		// We cant use a deque because we need to pass a contiguos array to GEOS.
+		vector<GEOSGeometry *> geoms;
+
+		double tolerance = 0;
+		bool parameters_set = false;
+		bool simplify_boundary = false;
+	};
+
+	// Serialize a GEOS geometry
+	static string_t Serialize(const GEOSContextHandle_t context, Vector &result, const GEOSGeometry *geom) {
+		D_ASSERT(geom);
+		const auto size = GeosSerde::GetRequiredSize(context, geom);
+		auto blob = StringVector::EmptyString(result, size);
+		const auto ptr = blob.GetDataWriteable();
+
+		// Serialize the geometry
+		GeosSerde::Serialize(context, geom, ptr, size);
+
+		blob.Finalize();
+		return blob;
+	}
+
+	// Deserialize a GEOS geometry
+	static GEOSGeometry *Deserialize(const GEOSContextHandle_t context, const string_t &blob) {
+		const auto ptr = blob.GetData();
+		const auto size = blob.GetSize();
+
+		return GeosSerde::Deserialize(context, ptr, size);
+	}
+
+	static void Initialize(const AggregateFunction &, data_ptr_t state_mem) {
+		const auto state_ptr = new (state_mem) State();
+		auto &state = *state_ptr;
+		state.context = GEOS_init_r();
+	}
+
+	static void Absorb(Vector &state_vec, Vector &combined, AggregateInputData &aggr_input_data, idx_t count) {
+		D_ASSERT(aggr_input_data.combine_type == AggregateCombineType::ALLOW_DESTRUCTIVE);
+
+		UnifiedVectorFormat state_format;
+		state_vec.ToUnifiedFormat(count, state_format);
+
+		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
+		const auto combined_ptr = FlatVector::GetData<State *>(combined);
+
+		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
+			const auto state_idx = state_format.sel->get_index(raw_idx);
+			auto &state = *state_ptr[state_idx];
+
+			// Steal the list from the state and append it to the combined state
+			auto &combined_state = *combined_ptr[raw_idx];
+			combined_state.geoms.insert(combined_state.geoms.end(), state.geoms.begin(), state.geoms.end());
+			state.geoms.clear();
+
+			// Copy params
+			if (!combined_state.parameters_set && state.parameters_set) {
+				combined_state.tolerance = state.tolerance;
+				combined_state.simplify_boundary = state.simplify_boundary;
+				combined_state.parameters_set = true;
+			}
+		}
+	}
+
+	static void Combine(Vector &state_vec, Vector &combined, AggregateInputData &aggr_input_data, idx_t count) {
+
+		//	Can we use destructive combining?
+		if (aggr_input_data.combine_type == AggregateCombineType::ALLOW_DESTRUCTIVE) {
+			Absorb(state_vec, combined, aggr_input_data, count);
+			return;
+		}
+
+		UnifiedVectorFormat state_format;
+		state_vec.ToUnifiedFormat(count, state_format);
+
+		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
+		const auto combined_ptr = FlatVector::GetData<State *>(combined);
+
+		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
+			const auto state_idx = state_format.sel->get_index(raw_idx);
+			const auto &state = *state_ptr[state_idx];
+
+			// We can't steal the list, we need to clone and append all elements
+			auto &combined_state = *combined_ptr[raw_idx];
+
+			for (auto &geom : state.geoms) {
+				combined_state.geoms.push_back(GEOSGeom_clone_r(combined_state.context, geom));
+			}
+
+			// Copy params
+			if (!combined_state.parameters_set && state.parameters_set) {
+				combined_state.tolerance = state.tolerance;
+				combined_state.simplify_boundary = state.simplify_boundary;
+				combined_state.parameters_set = true;
+			}
+		}
+	}
+
+	static idx_t StateSize(const AggregateFunction &) {
+		return sizeof(State);
+	}
+
+	template <class OP>
+	static void Finalize(Vector &state_vec, AggregateInputData &aggr_input_data, Vector &result, idx_t count,
+	                     idx_t offset) {
+
+		UnifiedVectorFormat state_format;
+		state_vec.ToUnifiedFormat(count, state_format);
+
+		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
+
+		auto &mask = FlatVector::Validity(result);
+
+		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
+			auto &state = *state_ptr[state_format.sel->get_index(raw_idx)];
+			const auto out_idx = raw_idx + offset;
+
+			// Now create a geometry collection out of all geometries
+			const auto collection = GEOSGeom_createCollection_r(state.context, GEOS_GEOMETRYCOLLECTION,
+			                                                    state.geoms.data(), state.geoms.size());
+
+			// If we manage to construct the collection, it takes ownership of the geometries
+			// So we need to leak the list or risk a double free
+			state.geoms.clear();
+
+			try {
+				// And perform the operation with the result
+				OP::Build(state, collection, result, mask, out_idx);
+
+				// Destroy the collection
+				GEOSGeom_destroy_r(state.context, collection);
+
+			} catch (...) {
+				// Destroy the collection, and rethrow the exception
+				GEOSGeom_destroy_r(state.context, collection);
+				throw;
+			}
+		}
+	}
+
+	static void Destroy(Vector &state_vec, AggregateInputData &aggr, idx_t count) {
+		UnifiedVectorFormat state_format;
+		state_vec.ToUnifiedFormat(count, state_format);
+
+		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
+		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
+			const auto row_idx = state_format.sel->get_index(raw_idx);
+			if (state_format.validity.RowIsValid(row_idx)) {
+				auto &state = *state_ptr[row_idx];
+
+				state.geoms.clear();
+
+				if (state.context) {
+					GEOS_finish_r(state.context);
+					state.context = nullptr;
+				}
+			}
+		}
+	}
+};
+
+//======================================================================================================================
+// ST_CoverageUnion_Agg
+//======================================================================================================================
+
+struct ST_CoverageSimplify_Agg : GEOSCoverageAggFunction {
+
+	static unique_ptr<FunctionData> Bind(ClientContext &context, AggregateFunction &function,
+	                                     vector<unique_ptr<Expression>> &arguments) {
+		if (arguments.size() == 2) {
+			arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::BOOLEAN(true)));
+			function.arguments.push_back(LogicalType::BOOLEAN);
+		}
+		return nullptr;
+	}
+
+	static void Update(Vector inputs[], AggregateInputData &aggr_input_data, idx_t input_count, Vector &state_vec,
+	                   idx_t count) {
+
+		auto &geom_vec = inputs[0];
+
+		UnifiedVectorFormat geom_format;
+		geom_vec.ToUnifiedFormat(count, geom_format);
+
+		UnifiedVectorFormat state_format;
+		state_vec.ToUnifiedFormat(count, state_format);
+
+		UnifiedVectorFormat tolerance_format;
+		inputs[1].ToUnifiedFormat(count, tolerance_format);
+
+		UnifiedVectorFormat simplify_boundary_format;
+		inputs[2].ToUnifiedFormat(count, simplify_boundary_format);
+
+		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
+		const auto geom_ptr = UnifiedVectorFormat::GetData<string_t>(geom_format);
+		const auto tolerance_ptr = UnifiedVectorFormat::GetData<double>(tolerance_format);
+		const auto simplify_boundary_ptr = UnifiedVectorFormat::GetData<bool>(simplify_boundary_format);
+
+		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
+			const auto state_idx = state_format.sel->get_index(raw_idx);
+			const auto geom_idx = geom_format.sel->get_index(raw_idx);
+			const auto tolerance_idx = tolerance_format.sel->get_index(raw_idx);
+
+			if (!geom_format.validity.RowIsValid(geom_idx)) {
+				continue;
+			}
+			if (!tolerance_format.validity.RowIsValid(tolerance_idx)) {
+				continue;
+			}
+			if (!simplify_boundary_format.validity.RowIsValid(raw_idx)) {
+				continue;
+			}
+
+			// Now, deserialize the geometry and append it to the list in each state
+			auto &state = *state_ptr[state_idx];
+			const auto geom = Deserialize(state.context, geom_ptr[geom_idx]);
+			state.geoms.push_back(geom);
+
+			// Also set parameters
+			if (!state.parameters_set) {
+				state.tolerance = tolerance_ptr[tolerance_idx];
+				state.simplify_boundary = simplify_boundary_ptr[raw_idx];
+				state.parameters_set = true;
+			}
+		}
+	}
+
+	static void Build(const State &state, const GEOSGeometry *collection, Vector &result, ValidityMask &,
+	                  idx_t out_idx) {
+		// Compute the coverage
+		const auto simplified =
+		    GEOSCoverageSimplifyVW_r(state.context, collection, state.tolerance, !state.simplify_boundary);
+
+		// Serialize the result
+		const auto result_ptr = FlatVector::GetData<string_t>(result);
+		result_ptr[out_idx] = Serialize(state.context, result, simplified);
+		GEOSGeom_destroy_r(state.context, simplified);
+	}
+
+	static void Register(DatabaseInstance &db) {
+		using SELF = ST_CoverageSimplify_Agg;
+
+		AggregateFunction agg({GeoTypes::GEOMETRY(), LogicalType::DOUBLE}, GeoTypes::GEOMETRY(), StateSize, Initialize,
+		                      Update, Combine, Finalize<SELF>, nullptr, Bind, Destroy);
+
+		FunctionBuilder::RegisterAggregate(db, "ST_CoverageSimplify_Agg", [&](AggregateFunctionBuilder &func) {
+			func.SetFunction(agg);
+			func.SetDescription("Simplifies a set of geometries while maintaining coverage");
+
+			// TODO: this is a hack
+			agg.arguments.push_back(LogicalType::BOOLEAN);
+			func.SetFunction(agg);
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_CoverageUnion_Agg
+//======================================================================================================================
+
+struct ST_CoverageUnion_Agg : GEOSCoverageAggFunction {
+
+	static void Update(Vector inputs[], AggregateInputData &aggr_input_data, idx_t input_count, Vector &state_vec,
+	                   idx_t count) {
+
+		auto &geom_vec = inputs[0];
+
+		UnifiedVectorFormat geom_format;
+		geom_vec.ToUnifiedFormat(count, geom_format);
+
+		UnifiedVectorFormat state_format;
+		state_vec.ToUnifiedFormat(count, state_format);
+
+		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
+		const auto geom_ptr = UnifiedVectorFormat::GetData<string_t>(geom_format);
+
+		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
+			const auto state_idx = state_format.sel->get_index(raw_idx);
+			const auto geom_idx = geom_format.sel->get_index(raw_idx);
+
+			if (!geom_format.validity.RowIsValid(geom_idx)) {
+				continue;
+			}
+
+			// Now, deserialize the geometry and append it to the list in each state
+			auto &state = *state_ptr[state_idx];
+			const auto geom = Deserialize(state.context, geom_ptr[geom_idx]);
+			state.geoms.push_back(geom);
+
+			// Also set parameters
+			if (!state.parameters_set) {
+				state.parameters_set = true;
+			}
+		}
+	}
+
+	static void Build(const State &state, const GEOSGeometry *collection, Vector &result, ValidityMask &,
+	                  idx_t out_idx) {
+		// Compute the union
+		const auto coverage = GEOSCoverageUnion_r(state.context, collection);
+
+		// Serialize the result
+		const auto result_ptr = FlatVector::GetData<string_t>(result);
+		result_ptr[out_idx] = Serialize(state.context, result, coverage);
+		GEOSGeom_destroy_r(state.context, coverage);
+	}
+
+	static void Register(DatabaseInstance &db) {
+		using SELF = ST_CoverageUnion_Agg;
+
+		const AggregateFunction agg({GeoTypes::GEOMETRY()}, GeoTypes::GEOMETRY(), StateSize, Initialize, Update,
+		                            Combine, Finalize<SELF>, nullptr, nullptr, Destroy);
+
+		FunctionBuilder::RegisterAggregate(db, "ST_CoverageUnion_Agg", [&](AggregateFunctionBuilder &func) {
+			func.SetFunction(agg);
+			func.SetDescription("Unions a set of geometries while maintaining coverage");
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_CoverageInvalidEdges_Agg
+//======================================================================================================================
+
+struct ST_CoverageInvalidEdges_Agg : GEOSCoverageAggFunction {
+
+	static unique_ptr<FunctionData> Bind(ClientContext &context, AggregateFunction &function,
+	                                     vector<unique_ptr<Expression>> &arguments) {
+		if (arguments.size() == 1) {
+			arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(0.0)));
+			function.arguments.push_back(LogicalType::DOUBLE);
+		}
+		return nullptr;
+	}
+
+	static void Update(Vector inputs[], AggregateInputData &aggr_input_data, idx_t input_count, Vector &state_vec,
+	                   idx_t count) {
+
+		auto &geom_vec = inputs[0];
+
+		UnifiedVectorFormat geom_format;
+		geom_vec.ToUnifiedFormat(count, geom_format);
+
+		UnifiedVectorFormat state_format;
+		state_vec.ToUnifiedFormat(count, state_format);
+
+		UnifiedVectorFormat tolerance_format;
+		inputs[1].ToUnifiedFormat(count, tolerance_format);
+
+		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
+		const auto geom_ptr = UnifiedVectorFormat::GetData<string_t>(geom_format);
+		const auto tolerance_ptr = UnifiedVectorFormat::GetData<double>(tolerance_format);
+
+		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
+			const auto state_idx = state_format.sel->get_index(raw_idx);
+			const auto geom_idx = geom_format.sel->get_index(raw_idx);
+			const auto tolerance_idx = tolerance_format.sel->get_index(raw_idx);
+
+			if (!geom_format.validity.RowIsValid(geom_idx)) {
+				continue;
+			}
+			if (!tolerance_format.validity.RowIsValid(tolerance_idx)) {
+				continue;
+			}
+
+			// Now, deserialize the geometry and append it to the list in each state
+			auto &state = *state_ptr[state_idx];
+			const auto geom = Deserialize(state.context, geom_ptr[geom_idx]);
+			state.geoms.push_back(geom);
+
+			// Also set parameters
+			if (!state.parameters_set) {
+				state.tolerance = tolerance_ptr[tolerance_idx];
+				state.parameters_set = true;
+			}
+		}
+	}
+
+	static void Build(const State &state, const GEOSGeometry *collection, Vector &result, ValidityMask &mask,
+	                  idx_t out_idx) {
+
+		// Check if there are any invalid edges
+		GEOSGeometry *edges;
+		GEOSCoverageIsValid_r(state.context, collection, state.tolerance, &edges);
+		if (GEOSisEmpty_r(state.context, edges)) {
+			mask.SetInvalid(out_idx);
+			return;
+		}
+		// Serialize the result
+		const auto result_ptr = FlatVector::GetData<string_t>(result);
+		result_ptr[out_idx] = Serialize(state.context, result, edges);
+		GEOSGeom_destroy_r(state.context, edges);
+	}
+
+	static void Register(DatabaseInstance &db) {
+		using SELF = ST_CoverageInvalidEdges_Agg;
+
+		AggregateFunction agg({GeoTypes::GEOMETRY()}, GeoTypes::GEOMETRY(), StateSize, Initialize, Update, Combine,
+		                      Finalize<SELF>, nullptr, Bind, Destroy, nullptr);
+
+		FunctionBuilder::RegisterAggregate(db, "ST_CoverageInvalidEdges_Agg", [&](AggregateFunctionBuilder &func) {
+			func.SetFunction(agg);
+
+			// TODO: this is a hack
+			agg.arguments.push_back(LogicalType::DOUBLE);
+			func.SetFunction(agg);
+
+			func.SetDescription("Returns the invalid edges of a coverage geometry");
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
 } // namespace
 
 //######################################################################################################################
@@ -1595,11 +2486,15 @@ void RegisterGEOSModule(DatabaseInstance &db) {
 	// Scalar Functions
 	ST_Boundary::Register(db);
 	ST_Buffer::Register(db);
+	ST_BuildArea::Register(db);
 	ST_Centroid::Register(db);
 	ST_Contains::Register(db);
 	ST_ContainsProperly::Register(db);
 	ST_ConcaveHull::Register(db);
 	ST_ConvexHull::Register(db);
+	ST_CoverageInvalidEdges::Register(db);
+	ST_CoverageSimplify::Register(db);
+	ST_CoverageUnion::Register(db);
 	ST_CoveredBy::Register(db);
 	ST_Covers::Register(db);
 	ST_Crosses::Register(db);
@@ -1616,10 +2511,13 @@ void RegisterGEOSModule(DatabaseInstance &db) {
 	ST_IsValid::Register(db);
 	ST_LineMerge::Register(db);
 	ST_MakeValid::Register(db);
+	ST_MaximumInscribedCircle::Register(db);
 	ST_MinimumRotatedRectangle::Register(db);
+	ST_Node::Register(db);
 	ST_Normalize::Register(db);
 	ST_Overlaps::Register(db);
 	ST_PointOnSurface::Register(db);
+	ST_Polygonize::Register(db);
 	ST_ReducePrecision::Register(db);
 	ST_RemoveRepeatedPoints::Register(db);
 	ST_Reverse::Register(db);
@@ -1634,6 +2532,11 @@ void RegisterGEOSModule(DatabaseInstance &db) {
 	// Aggregate Functions
 	ST_Union_Agg::Register(db);
 	ST_Intersection_Agg::Register(db);
+
+	// Coverage Aggregate Functions
+	ST_CoverageInvalidEdges_Agg::Register(db);
+	ST_CoverageUnion_Agg::Register(db);
+	ST_CoverageSimplify_Agg::Register(db);
 }
 
 } // namespace duckdb
