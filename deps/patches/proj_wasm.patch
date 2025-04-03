@@ -47,3 +47,14 @@
  
  # If unsuitable, append the reason to the package version so that it's
  # visible to the user.
+--- a/cmake/Ccache.cmake
++++ b/cmake/Ccache.cmake
+@@ -7,7 +7,7 @@
+ # Add "include(Ccache)" to CMakeLists.txt and enable
+ # using the option -D USE_CCACHE=ON
+
+-cmake_minimum_required(VERSION 3.4)
++cmake_minimum_required(VERSION 3.5)
+
+
+ option(USE_CCACHE
