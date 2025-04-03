@@ -377,6 +377,25 @@ struct ST_Transform {
 	);
 	----
 	POINT (544615.0239773799 6867874.103539125)
+
+	-- Transform a geometry from OSG36 British National Grid EPSG:27700 to EPSG:4326 WGS84
+	-- Standard transform is often fine for the first few decimal places before being wrong
+	-- which could result in an error starting at about 10m and possibly much more
+	SELECT ST_Transform(bng, 'EPSG:27700', 'EPSG:4326', xy := true) AS without_grid_file
+	FROM (SELECT ST_GeomFromText('POINT( 170370.718 11572.405 )') AS bng);
+	----
+	POINT (-5.202992651563592 49.96007490162923)
+
+	-- By using an official NTv2 grid file, we can reduce the error down around the 9th decimal place
+	-- which in theory is below a millimetre, and in practise unlikely that your coordinates are that precise
+	-- British National Grid "NTv2 format files" download available here:
+	-- https://www.ordnancesurvey.co.uk/products/os-net/for-developers
+	SELECT ST_Transform(bng
+		, '+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +units=m +no_defs +nadgrids=/full/path/to/OSTN15-NTv2/OSTN15_NTv2_OSGBtoETRS.gsb +type=crs'
+		, 'EPSG:4326', xy := true) AS with_grid_file
+	FROM (SELECT ST_GeomFromText('POINT( 170370.718 11572.405 )') AS bng) t;
+	----
+	POINT (-5.203046090608746 49.96006137018598)
 	)";
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -932,7 +951,7 @@ struct ST_Length_Spheroid {
 	// Documentation
 	//------------------------------------------------------------------------------------------------------------------
 	static constexpr auto DESCRIPTION = R"(
-		Returns the length of the input geometry in meters, using a ellipsoidal model of the earth
+		Returns the length of the input geometry in meters, using an ellipsoidal model of the earth
 
 		The input geometry is assumed to be in the [EPSG:4326](https://en.wikipedia.org/wiki/World_Geodetic_System) coordinate system (WGS84), with [latitude, longitude] axis order and the length is returned in square meters. This function uses the [GeographicLib](https://geographiclib.sourceforge.io/) library, calculating the length using an ellipsoidal model of the earth. This is a highly accurate method for calculating the length of a line geometry taking the curvature of the earth into account, but is also the slowest.
 
@@ -993,7 +1012,7 @@ struct ST_Distance_Spheroid {
 	}
 
 	static constexpr auto DESCRIPTION = R"(
-    Returns the distance between two geometries in meters using a ellipsoidal model of the earths surface
+    Returns the distance between two geometries in meters using an ellipsoidal model of the earths surface
 
 	The input geometry is assumed to be in the [EPSG:4326](https://en.wikipedia.org/wiki/World_Geodetic_System) coordinate system (WGS84), with [latitude, longitude] axis order and the distance limit is expected to be in meters. This function uses the [GeographicLib](https://geographiclib.sourceforge.io/) library to solve the [inverse geodesic problem](https://en.wikipedia.org/wiki/Geodesics_on_an_ellipsoid#Solution_of_the_direct_and_inverse_problems), calculating the distance between two points using an ellipsoidal model of the earth. This is a highly accurate method for calculating the distance between two arbitrary points taking the curvature of the earths surface into account, but is also the slowest.
 	)";
