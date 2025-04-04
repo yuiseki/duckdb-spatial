@@ -75,20 +75,22 @@ bool interpolate(const sgl::geometry *geom, double frac, vertex_xyzm *out) {
 	return false;
 }
 
-sgl::geometry interpolate_points(sgl::allocator *alloc, const sgl::geometry *geom, double frac) {
+void interpolate_points(sgl::geometry *result, sgl::allocator *alloc, const sgl::geometry *geom, double frac) {
 
 	SGL_ASSERT(geom);
 	if(geom->get_type() != sgl::geometry_type::LINESTRING) {
-		return point::make_empty(geom->has_z(), geom->has_m());
+		point::init_empty(result, geom->has_z(), geom->has_m());
+		return;
 	}
 	if(geom->is_empty()) {
-		return point::make_empty(geom->has_z(), geom->has_m());
+		point::init_empty(result, geom->has_z(), geom->has_m());
+		return;
 	}
 
 	if(geom->get_count() == 1) {
-		auto point = point::make_empty(geom->has_z(), geom->has_m());
-		point.set_vertex_data(geom->get_vertex_data(), 1);
-		return point;
+		point::init_empty(result, geom->has_z(), geom->has_m());
+		result->set_vertex_data(geom->get_vertex_data(), 1);
+		return;
 	}
 
 	// Clamp the fraction to [0, 1]
@@ -100,17 +102,20 @@ sgl::geometry interpolate_points(sgl::allocator *alloc, const sgl::geometry *geo
 
 	// Special cases
 	if(frac == 0) {
-		auto point = point::make_empty(geom->has_z(), geom->has_m());
-		point.set_vertex_data(vertex_data, 1);
+		point::init_empty(result, geom->has_z(), geom->has_m());
+		result->set_vertex_data(vertex_data, 1);
+		return;
 	}
 
 	if(frac == 1) {
-		auto point = point::make_empty(geom->has_z(), geom->has_m());
-		point.set_vertex_data(vertex_data + (vertex_count - 1) * vertex_stride, 1);
+		point::init_empty(result, geom->has_z(), geom->has_m());
+		result->set_vertex_data(vertex_data + (vertex_count - 1) * vertex_stride, 1);
+		return;
 	}
 
 
-	auto mpoint = multi_point::make_empty(geom->has_z(), geom->has_m());
+	// Make a multi-point
+	multi_point::init_empty(result, geom->has_z(), geom->has_m());
 
 	const auto actual_length = linestring::length(geom);
 	double total_length = 0.0;
@@ -151,7 +156,7 @@ sgl::geometry interpolate_points(sgl::allocator *alloc, const sgl::geometry *geo
 
 			// Set the vertex data and append it to the multi-point
 			point_ptr->set_vertex_data(data_mem, 1);
-			mpoint.append_part(point_ptr);
+			result->append_part(point_ptr);
 
 			// Update the target length
 			next_target += frac * actual_length;
@@ -159,24 +164,23 @@ sgl::geometry interpolate_points(sgl::allocator *alloc, const sgl::geometry *geo
 		total_length += segment_length;
 		prev = next;
 	}
-
-	return mpoint;
 }
 
-sgl::geometry substring(sgl::allocator *alloc, const sgl::geometry *geom, double beg_frac, double end_frac) {
-	auto line = linestring::make_empty(geom->has_z(), geom->has_m());
+void substring(sgl::geometry *line, sgl::allocator *alloc, const sgl::geometry *geom, double beg_frac, double end_frac) {
+	linestring::init_empty(line, geom->has_z(), geom->has_m());
+
 	if(geom->get_type() != sgl::geometry_type::LINESTRING) {
-		return line;
+		return;
 	}
 	if(geom->is_empty()) {
 		if(beg_frac == end_frac) {
-			line.set_type(geometry_type::POINT);
+			line->set_type(geometry_type::POINT);
 		}
-		return line;
+		return;
 	}
 
 	if(beg_frac > end_frac) {
-		return line;
+		return;
 	}
 
 	beg_frac = std::min(std::max(beg_frac, 0.0), 1.0);
@@ -188,8 +192,8 @@ sgl::geometry substring(sgl::allocator *alloc, const sgl::geometry *geom, double
 
 	// Reference the whole line
 	if(beg_frac == 0 && end_frac == 1) {
-		line.set_vertex_data(vertex_data, vertex_count);
-		return line;
+		line->set_vertex_data(vertex_data, vertex_count);
+		return;
 	}
 
 	if(beg_frac == end_frac) {
@@ -197,15 +201,15 @@ sgl::geometry substring(sgl::allocator *alloc, const sgl::geometry *geom, double
 		vertex_xyzm point = {};
 
 		// Make it a point instead!
-		line.set_type(geometry_type::POINT);
+		line->set_type(geometry_type::POINT);
 
 		if(interpolate(geom, beg_frac, &point)) {
 			const auto mem = static_cast<char *>(alloc->alloc(vertex_size));
 			memcpy(mem, &point, vertex_size);
-			line.set_vertex_data(mem, 1);
+			line->set_vertex_data(mem, 1);
 		}
 
-		return line;
+		return;
 	}
 
 	vertex_xyzm beg = {};
@@ -281,8 +285,7 @@ sgl::geometry substring(sgl::allocator *alloc, const sgl::geometry *geom, double
 	// Copy the end point
 	memcpy(new_vertex_data + (new_vertex_count - 1) * vertex_size, &end, vertex_size);
 
-	line.set_vertex_data(new_vertex_data, new_vertex_count);
-	return line;
+	line->set_vertex_data(new_vertex_data, new_vertex_count);
 }
 
 
@@ -545,6 +548,8 @@ void force_zm(allocator &alloc, geometry *geom, bool set_z, bool set_m, double d
 			part->set_m(set_m);
 			if (!part->is_empty()) {
 				part = part->get_first_part();
+				// Continue to the next iteration in the outer loop
+				continue;
 			}
 		} break;
 		default:
@@ -1827,22 +1832,19 @@ static void handle_polygons(void *state, sgl::geometry *geom) {
 	}
 }
 
-geometry extract_points(sgl::geometry *geom) {
-	auto points = sgl::geometry(sgl::geometry_type::MULTI_POINT, geom->has_z(), geom->has_m());
-	geom->filter_parts(&points, select_points, handle_points);
-	return points;
+void extract_points(sgl::geometry *result, sgl::geometry *geom) {
+	multi_point::init_empty(result, geom->has_z(), geom->has_m());
+	geom->filter_parts(result, select_points, handle_points);
 }
 
-geometry extract_linestrings(sgl::geometry *geom) {
-	auto lines = sgl::geometry(sgl::geometry_type::MULTI_LINESTRING, geom->has_z(), geom->has_m());
-	geom->filter_parts(&lines, select_lines, handle_lines);
-	return lines;
+void extract_linestrings(sgl::geometry *result, sgl::geometry *geom) {
+	multi_linestring::init_empty(result, geom->has_z(), geom->has_m());
+	geom->filter_parts(result, select_lines, handle_lines);
 }
 
-geometry extract_polygons(sgl::geometry *geom) {
-	auto polygons = sgl::geometry(sgl::geometry_type::MULTI_POLYGON, geom->has_z(), geom->has_m());
-	geom->filter_parts(&polygons, select_polygons, handle_polygons);
-	return polygons;
+void extract_polygons(sgl::geometry *result, sgl::geometry *geom) {
+	multi_polygon::init_empty(result, geom->has_z(), geom->has_m());
+	geom->filter_parts(result, select_polygons, handle_polygons);
 }
 
 

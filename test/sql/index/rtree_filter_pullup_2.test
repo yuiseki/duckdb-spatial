@@ -1,0 +1,17 @@
+require spatial
+
+# This test only really works on release builds, where the column lifetime optimizers
+# doesnt pollute the plan (but still applies)
+
+statement ok
+CREATE TABLE t1 AS
+SELECT st_point(i, j) as pt, row_number() over () as i, row_number () over () as j
+FROM range(0, 3) as r(i), range(0, 3) as rr(j);
+
+statement ok
+CREATE INDEX my_idx ON t1 USING RTREE (pt);
+
+query I rowsort
+SELECT i FROM t1 WHERE j = 5 AND ST_Contains(ST_GeomFromText('POLYGON((0 0, 0 50, 50 50, 50 0, 0 0))'), pt);
+----
+5

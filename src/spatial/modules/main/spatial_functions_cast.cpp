@@ -32,7 +32,7 @@ public:
 	static LocalState &ResetAndGet(CastParameters &params);
 
 	// De/Serialize geometries
-	sgl::geometry Deserialize(const string_t &blob);
+	void Deserialize(const string_t &blob, sgl::geometry &geom);
 	string_t Serialize(Vector &vector, const sgl::geometry &geom);
 
 	ArenaAllocator &GetArena() {
@@ -57,10 +57,8 @@ LocalState &LocalState::ResetAndGet(CastParameters &state) {
 	return local_state;
 }
 
-sgl::geometry LocalState::Deserialize(const string_t &blob) {
-	sgl::geometry geom;
+void LocalState::Deserialize(const string_t &blob, sgl::geometry &geom) {
 	Serde::Deserialize(geom, arena, blob.GetDataUnsafe(), blob.GetSize());
-	return geom;
 }
 
 string_t LocalState::Serialize(Vector &vector, const sgl::geometry &geom) {
@@ -235,8 +233,7 @@ struct PointCasts {
 
 		GenericExecutor::ExecuteUnary<POINT_TYPE, GEOMETRY_TYPE>(source, result, count, [&](const POINT_TYPE &point) {
 			const double buffer[2] = {point.a_val, point.b_val};
-			auto geom = sgl::point::make_empty();
-			geom.set_type(sgl::geometry_type::POINT);
+			sgl::geometry geom(sgl::geometry_type::POINT, false, false);
 			geom.set_vertex_data(reinterpret_cast<const uint8_t *>(buffer), 1);
 
 			return lstate.Serialize(result, geom);
@@ -254,7 +251,9 @@ struct PointCasts {
 		auto &lstate = LocalState::ResetAndGet(parameters);
 
 		GenericExecutor::ExecuteUnary<GEOMETRY_TYPE, POINT_TYPE>(source, result, count, [&](const GEOMETRY_TYPE &blob) {
-			const auto geom = lstate.Deserialize(blob.val);
+			sgl::geometry geom;
+			lstate.Deserialize(blob.val, geom);
+
 			if (geom.get_type() != sgl::geometry_type::POINT) {
 				throw ConversionException("Cannot cast non-point GEOMETRY to POINT_2D");
 			}
@@ -345,8 +344,7 @@ struct LinestringCasts {
 				vertex_data_ptr[i * 2 + 1] = y_data[line.offset + i];
 			}
 
-			auto geom = sgl::linestring::make_empty();
-			geom.set_type(sgl::geometry_type::LINESTRING);
+			sgl::geometry geom(sgl::geometry_type::LINESTRING, false, false);
 			geom.set_vertex_data(vertex_data_mem, line.length);
 
 			return lstate.Serialize(result, geom);
@@ -368,7 +366,9 @@ struct LinestringCasts {
 		idx_t total_coords = 0;
 
 		UnaryExecutor::Execute<string_t, list_entry_t>(source, result, count, [&](const string_t &blob) {
-			const auto line = lstate.Deserialize(blob);
+			sgl::geometry line;
+			lstate.Deserialize(blob, line);
+
 			if (line.get_type() != sgl::geometry_type::LINESTRING) {
 				// TODO: Dont throw here, return NULL instead to allow TRY_CAST
 				throw ConversionException("Cannot cast non-linestring GEOMETRY to LINESTRING_2D");
@@ -436,7 +436,7 @@ struct PolygonCasts {
 		const auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
 
 		UnaryExecutor::Execute<list_entry_t, string_t>(source, result, count, [&](const list_entry_t &poly) {
-			auto geom = sgl::polygon::make_empty();
+			sgl::geometry geom(sgl::geometry_type::POLYGON, false, false);
 
 			for (idx_t i = 0; i < poly.length; i++) {
 				const auto ring_entry = ring_entries[poly.offset + i];
@@ -476,7 +476,8 @@ struct PolygonCasts {
 		idx_t total_coords = 0;
 
 		UnaryExecutor::Execute<string_t, list_entry_t>(source, result, count, [&](const string_t &blob) {
-			const auto poly = lstate.Deserialize(blob);
+			sgl::geometry poly;
+			lstate.Deserialize(blob, poly);
 
 			// TODO: Dont throw here, return NULL instead to allow TRY_CAST
 			if (poly.get_type() != sgl::geometry_type::POLYGON) {
@@ -576,7 +577,10 @@ struct BoxCasts {
 			const auto miny = box.b_val;
 			const auto maxx = box.c_val;
 			const auto maxy = box.d_val;
-			const auto poly = sgl::polygon::make_from_box(&alloc, minx, miny, maxx, maxy);
+
+			sgl::geometry poly;
+			sgl::polygon::init_from_box(&poly, &alloc, minx, miny, maxx, maxy);
+
 			return lstate.Serialize(result, poly);
 		});
 		return true;
@@ -595,7 +599,10 @@ struct BoxCasts {
 			const auto miny = box.b_val;
 			const auto maxx = box.c_val;
 			const auto maxy = box.d_val;
-			const auto poly = sgl::polygon::make_from_box(&alloc, minx, miny, maxx, maxy);
+
+			sgl::geometry poly;
+			sgl::polygon::init_from_box(&poly, &alloc, minx, miny, maxx, maxy);
+
 			return lstate.Serialize(result, poly);
 		});
 		return true;

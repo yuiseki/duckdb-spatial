@@ -74,6 +74,12 @@ PJ_CONTEXT *ProjModule::GetThreadProjContext() {
 
 // IMPORTANT: Make sure this module is loaded before any other modules that use proj (like GDAL)
 void ProjModule::RegisterVFS(DatabaseInstance &db) {
+
+	// Initialization lock around global proj state
+	static mutex lock;
+
+	lock_guard<mutex> g(lock);
+
 	// we use the sqlite "memvfs" to store the proj.db database in the extension binary itself
 	// this way we don't have to worry about the user having the proj.db database installed
 	// on their system. We therefore have to tell proj to use memvfs as the sqlite3 vfs and
@@ -144,7 +150,7 @@ struct ProjFunctionLocalState final : FunctionLocalState {
 		proj_context_destroy(proj_ctx);
 	}
 
-	sgl::geometry Deserialize(const string_t &blob);
+	void Deserialize(const string_t &blob, sgl::geometry &geom);
 	string_t Serialize(Vector &vector, const sgl::geometry &geom);
 
 	static unique_ptr<FunctionLocalState> Init(ExpressionState &state, const BoundFunctionExpression &expr,
@@ -184,10 +190,8 @@ struct ProjFunctionLocalState final : FunctionLocalState {
 	}
 };
 
-sgl::geometry ProjFunctionLocalState::Deserialize(const string_t &blob) {
-	sgl::geometry geom;
+void ProjFunctionLocalState::Deserialize(const string_t &blob, sgl::geometry &geom) {
 	Serde::Deserialize(geom, arena, blob.GetDataUnsafe(), blob.GetSize());
-	return geom;
 }
 
 string_t ProjFunctionLocalState::Serialize(Vector &vector, const sgl::geometry &geom) {
@@ -305,13 +309,14 @@ struct ST_Transform {
 
 		TernaryExecutor::Execute<string_t, string_t, string_t, string_t>(
 		    args.data[0], args.data[1], args.data[2], result, args.size(),
-		    [&](const string_t &input_geom, const string_t &source, const string_t &target) {
+		    [&](const string_t &blob, const string_t &source, const string_t &target) {
 			    const auto source_str = source.GetString();
 			    const auto target_str = target.GetString();
 
 			    const auto crs = lstate.GetOrCreateProjection(source_str, target_str, info.normalize);
 
-			    auto geom = lstate.Deserialize(input_geom);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
 
 			    sgl::ops::replace_vertices(&alloc, &geom, crs, [](void *arg, sgl::vertex_xyzm *vertex) {
 				    const auto crs_ptr = static_cast<PJ *>(arg);
@@ -372,6 +377,25 @@ struct ST_Transform {
 	);
 	----
 	POINT (544615.0239773799 6867874.103539125)
+
+	-- Transform a geometry from OSG36 British National Grid EPSG:27700 to EPSG:4326 WGS84
+	-- Standard transform is often fine for the first few decimal places before being wrong
+	-- which could result in an error starting at about 10m and possibly much more
+	SELECT ST_Transform(bng, 'EPSG:27700', 'EPSG:4326', xy := true) AS without_grid_file
+	FROM (SELECT ST_GeomFromText('POINT( 170370.718 11572.405 )') AS bng);
+	----
+	POINT (-5.202992651563592 49.96007490162923)
+
+	-- By using an official NTv2 grid file, we can reduce the error down around the 9th decimal place
+	-- which in theory is below a millimetre, and in practise unlikely that your coordinates are that precise
+	-- British National Grid "NTv2 format files" download available here:
+	-- https://www.ordnancesurvey.co.uk/products/os-net/for-developers
+	SELECT ST_Transform(bng
+		, '+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +units=m +no_defs +nadgrids=/full/path/to/OSTN15-NTv2/OSTN15_NTv2_OSGBtoETRS.gsb +type=crs'
+		, 'EPSG:4326', xy := true) AS with_grid_file
+	FROM (SELECT ST_GeomFromText('POINT( 170370.718 11572.405 )') AS bng) t;
+	----
+	POINT (-5.203046090608746 49.96006137018598)
 	)";
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -500,10 +524,8 @@ struct GeodesicLocalState final : FunctionLocalState {
 		return local_state;
 	}
 
-	sgl::geometry Deserialize(const string_t &blob) {
-		sgl::geometry geom;
+	void Deserialize(const string_t &blob, sgl::geometry &geom) {
 		Serde::Deserialize(geom, arena, blob.GetDataUnsafe(), blob.GetSize());
-		return geom;
 	}
 };
 
@@ -581,7 +603,8 @@ struct ST_Area_Spheroid {
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
-			const auto geom = lstate.Deserialize(input);
+			sgl::geometry geom;
+			lstate.Deserialize(input, geom);
 
 			// Reset the state
 			lstate.accum = 0;
@@ -742,7 +765,8 @@ struct ST_Perimeter_Spheroid {
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
-			const auto geom = lstate.Deserialize(input);
+			sgl::geometry geom;
+			lstate.Deserialize(input, geom);
 
 			// Reset the state
 			lstate.accum = 0;
@@ -793,11 +817,11 @@ struct ST_Perimeter_Spheroid {
 	// Documentation
 	//------------------------------------------------------------------------------------------------------------------
 	static constexpr auto DESCRIPTION = R"(
-	    Returns the length of the perimeter in meters using an ellipsoidal model of the earths surface
+		Returns the length of the perimeter in meters using an ellipsoidal model of the earths surface
 
-	    The input geometry is assumed to be in the [EPSG:4326](https://en.wikipedia.org/wiki/World_Geodetic_System) coordinate system (WGS84), with [latitude, longitude] axis order and the length is returned in meters. This function uses the [GeographicLib](https://geographiclib.sourceforge.io/) library, calculating the perimeter using an ellipsoidal model of the earth. This is a highly accurate method for calculating the perimeter of a polygon taking the curvature of the earth into account, but is also the slowest.
+		The input geometry is assumed to be in the [EPSG:4326](https://en.wikipedia.org/wiki/World_Geodetic_System) coordinate system (WGS84), with [latitude, longitude] axis order and the length is returned in meters. This function uses the [GeographicLib](https://geographiclib.sourceforge.io/) library, calculating the perimeter using an ellipsoidal model of the earth. This is a highly accurate method for calculating the perimeter of a polygon taking the curvature of the earth into account, but is also the slowest.
 
-	    Returns `0.0` for any geometry that is not a `POLYGON`, `MULTIPOLYGON` or `GEOMETRYCOLLECTION` containing polygon geometries.
+		Returns `0.0` for any geometry that is not a `POLYGON`, `MULTIPOLYGON` or `GEOMETRYCOLLECTION` containing polygon geometries.
 	)";
 
 	// TODO: add example
@@ -886,7 +910,8 @@ struct ST_Length_Spheroid {
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
-			const auto geom = lstate.Deserialize(input);
+			sgl::geometry geom;
+			lstate.Deserialize(input, geom);
 
 			// Reset the state
 			lstate.accum = 0;
@@ -926,9 +951,9 @@ struct ST_Length_Spheroid {
 	// Documentation
 	//------------------------------------------------------------------------------------------------------------------
 	static constexpr auto DESCRIPTION = R"(
-		Returns the length of the input geometry in meters, using a ellipsoidal model of the earth
+		Returns the length of the input geometry in meters, using an ellipsoidal model of the earth
 
-		The input geometry is assumed to be in the [EPSG:4326](https://en.wikipedia.org/wiki/World_Geodetic_System) coordinate system (WGS84), with [latitude, longitude] axis order and the length is returned in square meters. This function uses the [GeographicLib](https://geographiclib.sourceforge.io/) library, calculating the length using an ellipsoidal model of the earth. This is a highly accurate method for calculating the length of a line geometry taking the curvature of the earth into account, but is also the slowest.
+		The input geometry is assumed to be in the [EPSG:4326](https://en.wikipedia.org/wiki/World_Geodetic_System) coordinate system (WGS84), with [latitude, longitude] axis order and the length is returned in meters. This function uses the [GeographicLib](https://geographiclib.sourceforge.io/) library, calculating the length using an ellipsoidal model of the earth. This is a highly accurate method for calculating the length of a line geometry taking the curvature of the earth into account, but is also the slowest.
 
 		Returns `0.0` for any geometry that is not a `LINESTRING`, `MULTILINESTRING` or `GEOMETRYCOLLECTION` containing line geometries.
 	)";
@@ -987,7 +1012,7 @@ struct ST_Distance_Spheroid {
 	}
 
 	static constexpr auto DESCRIPTION = R"(
-    Returns the distance between two geometries in meters using a ellipsoidal model of the earths surface
+    Returns the distance between two geometries in meters using an ellipsoidal model of the earths surface
 
 	The input geometry is assumed to be in the [EPSG:4326](https://en.wikipedia.org/wiki/World_Geodetic_System) coordinate system (WGS84), with [latitude, longitude] axis order and the distance limit is expected to be in meters. This function uses the [GeographicLib](https://geographiclib.sourceforge.io/) library to solve the [inverse geodesic problem](https://en.wikipedia.org/wiki/Geodesics_on_an_ellipsoid#Solution_of_the_direct_and_inverse_problems), calculating the distance between two points using an ellipsoidal model of the earth. This is a highly accurate method for calculating the distance between two arbitrary points taking the curvature of the earths surface into account, but is also the slowest.
 	)";
@@ -1061,7 +1086,8 @@ struct ST_DWithin_Spheroid {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("p1", GeoTypes::POINT_2D());
 				variant.AddParameter("p2", GeoTypes::POINT_2D());
-				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.AddParameter("distance", LogicalType::DOUBLE);
+				variant.SetReturnType(LogicalType::BOOLEAN);
 
 				variant.SetFunction(Execute);
 			});

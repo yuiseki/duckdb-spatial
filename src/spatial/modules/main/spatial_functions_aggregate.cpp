@@ -90,10 +90,10 @@ struct ExtentAggFunction {
 			buf[8] = state.xmin;
 			buf[9] = state.ymin;
 
-			auto ring = sgl::linestring::make_empty();
+			sgl::geometry ring(sgl::geometry_type::LINESTRING, false, false);
 			ring.set_vertex_data(reinterpret_cast<const char *>(buf), 5);
 
-			auto bbox = sgl::polygon::make_empty();
+			sgl::geometry bbox(sgl::geometry_type::POLYGON, false, false);
 			bbox.append_part(&ring);
 
 			const auto size = Serde::GetRequiredSize(bbox);

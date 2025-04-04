@@ -25,7 +25,7 @@ public:
 	void ResolveColumnBindings(ColumnBindingResolver &res, vector<ColumnBinding> &bindings) override;
 
 	// Actually create and plan the index creation
-	unique_ptr<PhysicalOperator> CreatePlan(ClientContext &context, PhysicalPlanGenerator &generator) override;
+	PhysicalOperator &CreatePlan(ClientContext &context, PhysicalPlanGenerator &planner) override;
 
 	void Serialize(Serializer &writer) const override {
 		LogicalExtensionOperator::Serialize(writer);

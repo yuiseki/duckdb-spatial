@@ -5,11 +5,12 @@
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/geometry/wkb_writer.hpp"
 #include "spatial/geometry/geometry_serialization.hpp"
+#include "spatial/util/function_builder.hpp"
 
 // DuckDB
 #include "duckdb/main/database.hpp"
 #include "duckdb/common/enums/file_glob_options.hpp"
-#include "duckdb/common/multi_file_reader.hpp"
+#include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/function/table/arrow.hpp"
 #include "duckdb/main/extension_util.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
@@ -25,8 +26,6 @@
 #include "cpl_vsi_error.h"
 #include "cpl_vsi_virtual.h"
 #include "ogrsf_frmts.h"
-
-#include <spatial/util/function_builder.hpp>
 
 namespace duckdb {
 
@@ -1106,7 +1105,7 @@ struct ST_Read : ArrowTableFunction {
 		func.named_parameters["keep_wkb"] = LogicalType::BOOLEAN;
 		ExtensionUtil::RegisterFunction(db, func);
 
-		FunctionBuilder::AddTableFunctionDocs(db, "ST_Read", DOCUMENTATION, EXAMPLE);
+		FunctionBuilder::AddTableFunctionDocs(db, "ST_Read", DOCUMENTATION, EXAMPLE, {{"ext", "spatial"}});
 
 		// Replacement scan
 		auto &config = DBConfig::GetConfig(db);
@@ -1327,7 +1326,7 @@ struct ST_Read_Meta {
 		const TableFunction func("ST_Read_Meta", {LogicalType::VARCHAR}, Execute, Bind, Init);
 		ExtensionUtil::RegisterFunction(db, MultiFileReader::CreateFunctionSet(func));
 
-		FunctionBuilder::AddTableFunctionDocs(db, "ST_Read_Meta", DESCRIPTION, EXAMPLE);
+		FunctionBuilder::AddTableFunctionDocs(db, "ST_Read_Meta", DESCRIPTION, EXAMPLE, {{"ext", "spatial"}});
 	}
 };
 
@@ -1448,7 +1447,7 @@ struct ST_Drivers {
 		const TableFunction func("ST_Drivers", {}, Execute, Bind, Init);
 		ExtensionUtil::RegisterFunction(db, func);
 
-		FunctionBuilder::AddTableFunctionDocs(db, "ST_Drivers", DESCRIPTION, EXAMPLE);
+		FunctionBuilder::AddTableFunctionDocs(db, "ST_Drivers", DESCRIPTION, EXAMPLE, {{"ext", "spatial"}});
 	}
 };
 
