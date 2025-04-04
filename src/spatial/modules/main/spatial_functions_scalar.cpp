@@ -1237,9 +1237,8 @@ struct ST_AsSVG {
 	// Documentation
 	//------------------------------------------------------------------------------------------------------------------
 	static constexpr auto DESCRIPTION = R"(
-		Convert the geometry into a SVG fragment or path
-
 	    Convert the geometry into a SVG fragment or path
+
 		The SVG fragment is returned as a string. The fragment is a path element that can be used in an SVG document.
 		The second boolean argument specifies whether the path should be relative or absolute.
 		The third argument specifies the maximum number of digits to use for the coordinates.
@@ -2067,7 +2066,14 @@ struct ST_Dimension {
 	//------------------------------------------------------------------------------------------------------------------
 	// Documentation
 	//------------------------------------------------------------------------------------------------------------------
-	static constexpr auto DESCRIPTION = "Returns the dimension of a geometry.";
+	static constexpr auto DESCRIPTION = R"(
+		Returns the "topological dimension" of a geometry.
+
+		- For POINT and MULTIPOINT geometries, returns `0`
+		- For LINESTRING and MULTILINESTRING, returns `1`
+		- For POLYGON and MULTIPOLYGON, returns `2`
+		- For GEOMETRYCOLLECTION, returns the maximum dimension of the contained geometries, or 0 if the collection is empty
+	)";
 
 	static constexpr auto EXAMPLE = R"(
 	select st_dimension('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'::geometry);
@@ -2424,12 +2430,23 @@ struct ST_Dump {
 	//------------------------------------------------------------------------------------------------------------------
 	static constexpr auto DESCRIPTION = R"(
 	Dumps a geometry into a list of sub-geometries and their "path" in the original geometry.
+
+	You can use the `UNNEST(res, recursive := true)` function to explode  resulting list of structs into multiple rows.
 	)";
 
 	static constexpr auto EXAMPLE = R"(
 	select st_dump('MULTIPOINT(1 2,3 4)'::geometry);
 	----
 	[{'geom': 'POINT(1 2)', 'path': [0]}, {'geom': 'POINT(3 4)', 'path': [1]}]
+
+	select unnest(st_dump('MULTIPOINT(1 2,3 4)'::geometry), recursive := true);
+	-- ┌─────────────┬─────────┐
+	-- │    geom     │  path   │
+	-- │  geometry   │ int32[] │
+	-- ├─────────────┼─────────┤
+	-- │ POINT (1 2) │ [1]     │
+	-- │ POINT (3 4) │ [2]     │
+	-- └─────────────┴─────────┘
 	)";
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -2681,6 +2698,13 @@ struct ST_Extent_Approx {
 
 				variant.SetFunction(Execute);
 			});
+
+			func.SetDescription(R"(
+				Returns the approximate bounding box of a geometry, if available.
+
+				This function is only really used internally, and returns the cached bounding box of the geometry if it exists.
+				This function may be removed or renamed in the future.
+			)");
 
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "property");

@@ -7,7 +7,19 @@
 
 namespace duckdb {
 
-string FunctionBuilder::RemoveIndentAndTrailingWhitespace(const char *text) {
+string FunctionBuilder::RemoveIndentAndTrailingWhitespace(const char *ptr) {
+	string tmp;
+	// Replace all tabs with 4 spaces in ptr
+	for (const char *text = ptr; *text; text++) {
+		if (*text == '\t') {
+			tmp.append("    ");
+		} else {
+			tmp += *text;
+		}
+	}
+
+	auto text = tmp.c_str();
+
 	string result;
 	// Skip any empty first newlines if present
 	while (*text == '\n') {
@@ -157,7 +169,7 @@ void FunctionBuilder::Register(DatabaseInstance &db, const char *name, MacroFunc
 }
 
 void FunctionBuilder::AddTableFunctionDocs(DatabaseInstance &db, const char *name, const char *desc,
-                                           const char *example) {
+                                           const char *example, const unordered_map<string, string> &tags) {
 
 	auto &catalog = Catalog::GetSystemCatalog(db);
 	auto transaction = CatalogTransaction::GetSystemTransaction(db);
@@ -173,6 +185,7 @@ void FunctionBuilder::AddTableFunctionDocs(DatabaseInstance &db, const char *nam
 	function_description.description = RemoveIndentAndTrailingWhitespace(desc);
 	function_description.examples.push_back(RemoveIndentAndTrailingWhitespace(example));
 	func_entry.descriptions.push_back(function_description);
+	func_entry.tags.insert(tags.begin(), tags.end());
 }
 
 } // namespace duckdb

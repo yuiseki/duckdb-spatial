@@ -219,7 +219,7 @@ struct ST_Boundary {
 				variant.SetFunction(Execute);
 			});
 
-			func.SetDescription("Returns the boundary of a geometry");
+			func.SetDescription("Returns the \"boundary\" of a geometry");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
 		});
@@ -431,7 +431,12 @@ struct ST_Contains : AsymmetricPreparedBinaryFunction<ST_Contains> {
 				variant.SetFunction(Execute);
 			});
 
-			func.SetDescription("Returns true if the first geometry contains the second geometry");
+			func.SetDescription(R"(
+				Returns true if the first geometry contains the second geometry
+
+				In contrast to `ST_ContainsProperly`, this function will also return true if `geom2` is contained strictly on the boundary of `geom1`.
+				A geometry always `ST_Contains` itself, but does not `ST_ContainsProperly` itself.
+			)");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "relation");
 		});
@@ -460,7 +465,12 @@ struct ST_ContainsProperly : AsymmetricPreparedBinaryFunction<ST_ContainsProperl
 				variant.SetFunction(Execute);
 			});
 
-			func.SetDescription("Returns true if the first geometry contains the second geometry properly");
+			func.SetDescription(R"(
+				Returns true if the first geometry \"properly\" contains the second geometry
+
+				In contrast to `ST_Contains`, this function does not return true if `geom2` is contained strictly on the boundary of `geom1`.
+				A geometry always `ST_Contains` itself, but does not `ST_ContainsProperly` itself.
+			)");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "relation");
 		});
@@ -791,7 +801,7 @@ struct ST_CoveredBy : AsymmetricPreparedBinaryFunction<ST_CoveredBy> {
 				variant.SetFunction(Execute);
 			});
 
-			func.SetDescription("Returns true if the first geometry is covered by the second geometry");
+			func.SetDescription("Returns true if geom1 is \"covered by\" geom2");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "relation");
 		});
@@ -816,7 +826,7 @@ struct ST_Covers : AsymmetricPreparedBinaryFunction<ST_Covers> {
 				variant.SetFunction(Execute);
 			});
 
-			func.SetDescription("Returns true if the first geometry covers the second geometry");
+			func.SetDescription("Returns true if the geom1 \"covers\" geom2");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "relation");
 		});
@@ -841,7 +851,7 @@ struct ST_Crosses : SymmetricPreparedBinaryFunction<ST_Crosses> {
 				variant.SetFunction(Execute);
 			});
 
-			func.SetDescription("Returns true if the geometries cross each other");
+			func.SetDescription("Returns true if geom1 \"crosses\" geom2");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "relation");
 		});
@@ -872,7 +882,7 @@ struct ST_Difference {
 				variant.SetFunction(Execute);
 			});
 
-			func.SetDescription("Returns the difference between two geometries");
+			func.SetDescription("Returns the \"difference\" between two geometries");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
 		});
@@ -1045,7 +1055,7 @@ struct ST_Equals {
 				variant.SetFunction(Execute);
 			});
 
-			func.SetDescription("Returns true if the geometries are equal");
+			func.SetDescription("Returns true if the geometries are \"equal\"");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "relation");
 		});
@@ -1058,8 +1068,8 @@ struct ST_Envelope {
 
 		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
 			const auto geom = lstate.Deserialize(geom_blob);
-			const auto intersection = geom.get_envelope();
-			return lstate.Serialize(result, intersection);
+			const auto envelope = geom.get_envelope();
+			return lstate.Serialize(result, envelope);
 		});
 	}
 
@@ -1073,7 +1083,7 @@ struct ST_Envelope {
 				variant.SetFunction(Execute);
 			});
 
-			func.SetDescription("Returns the envelope of a geometry");
+			func.SetDescription("Returns the minimum bounding rectangle of a geometry as a polygon geometry");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
 		});
@@ -1472,7 +1482,7 @@ struct ST_Normalize {
 				variant.SetFunction(Execute);
 			});
 
-			func.SetDescription("Returns a normalized representation of the geometry");
+			func.SetDescription("Returns the \"normalized\" representation of the geometry");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
 		});

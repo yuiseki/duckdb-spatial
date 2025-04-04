@@ -1,8 +1,9 @@
+#include "duckdb/main/extension_util.hpp"
+#include "spatial/geometry/bbox.hpp"
 #include "spatial/modules/main/spatial_functions.hpp"
 #include "spatial/spatial_types.hpp"
-#include "spatial/geometry/bbox.hpp"
 
-#include "duckdb/main/extension_util.hpp"
+#include <spatial/util/function_builder.hpp>
 
 namespace duckdb {
 
@@ -106,6 +107,17 @@ struct ST_GeneratePoints {
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
+	// DOCUMENTATION
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Generates a set of random points within the specified bounding box.
+
+		Takes a bounding box (min_x, min_y, max_x, max_y), a count of points to generate, and optionally a seed for the random number generator.
+	)";
+	static constexpr auto EXAMPLE =
+	    "SELECT * FROM ST_GeneratePoints({min_x: 0, min_y:0, max_x:10, max_y:10}::BOX_2D, 5, 42);";
+
+	//------------------------------------------------------------------------------------------------------------------
 	// Register
 	//------------------------------------------------------------------------------------------------------------------
 	static void Register(DatabaseInstance &db) {
@@ -122,6 +134,7 @@ struct ST_GeneratePoints {
 		generate_points.arguments = {GeoTypes::BOX_2D(), LogicalType::BIGINT, LogicalType::BIGINT};
 		set.AddFunction(generate_points);
 		ExtensionUtil::RegisterFunction(db, set);
+		FunctionBuilder::AddTableFunctionDocs(db, "ST_GeneratePoints", DESCRIPTION, EXAMPLE, {{"ext", "spatial"}});
 	}
 };
 
