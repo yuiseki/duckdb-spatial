@@ -29,7 +29,8 @@ public:
 	static void RegisterMacro(DatabaseInstance &db, const char *name, CALLBACK &&callback);
 
 	// TODO:
-	static void AddTableFunctionDocs(DatabaseInstance &db, const char *name, const char *desc, const char *example);
+	static void AddTableFunctionDocs(DatabaseInstance &db, const char *name, const char *desc, const char *example,
+	                                 const unordered_map<string, string> &tags);
 
 	static string RemoveIndentAndTrailingWhitespace(const char *str);
 

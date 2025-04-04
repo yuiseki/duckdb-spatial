@@ -900,7 +900,7 @@ void RegisterOSMModule(DatabaseInstance &db) {
 	read.table_scan_progress = Progress;
 
 	ExtensionUtil::RegisterFunction(db, read);
-	FunctionBuilder::AddTableFunctionDocs(db, "ST_ReadOSM", DOC_DESCRIPTION, DOC_EXAMPLE);
+	FunctionBuilder::AddTableFunctionDocs(db, "ST_ReadOSM", DOC_DESCRIPTION, DOC_EXAMPLE, {{"ext", "spatial"}});
 
 	// Replacement scan
 	auto &config = DBConfig::GetConfig(db);
