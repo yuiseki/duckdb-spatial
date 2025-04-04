@@ -34,7 +34,7 @@ public:
 		return std::move(res);
 	}
 
-	static unique_ptr<PhysicalOperator> CreatePlan(PlanIndexInput &input);
+	static PhysicalOperator &CreatePlan(PlanIndexInput &input);
 
 public:
 	//! Called when data is appended to the index. The lock obtained from InitializeLock must be held

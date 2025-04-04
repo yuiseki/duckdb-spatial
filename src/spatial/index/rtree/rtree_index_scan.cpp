@@ -60,7 +60,7 @@ static unique_ptr<GlobalTableFunctionState> RTreeIndexScanInitGlobal(ClientConte
 	}
 
 	// Initialize the storage scan state
-	result->local_storage_state.Initialize(result->column_ids, input.filters.get());
+	result->local_storage_state.Initialize(result->column_ids, context, input.filters);
 	local_storage.InitializeScan(bind_data.table.GetStorage(), result->local_storage_state.local_state, input.filters);
 
 	// Initialize the scan state for the index

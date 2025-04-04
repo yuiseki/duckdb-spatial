@@ -10,7 +10,7 @@
 // DuckDB
 #include "duckdb/main/database.hpp"
 #include "duckdb/common/enums/file_glob_options.hpp"
-#include "duckdb/common/multi_file_reader.hpp"
+#include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/function/table/arrow.hpp"
 #include "duckdb/main/extension_util.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"

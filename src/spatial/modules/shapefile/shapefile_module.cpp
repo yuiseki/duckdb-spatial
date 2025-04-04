@@ -3,7 +3,7 @@
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/spatial_types.hpp"
 
-#include "duckdb/common/multi_file_reader.hpp"
+#include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/function/replacement_scan.hpp"
 #include "duckdb/main/extension_util.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
