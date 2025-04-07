@@ -430,8 +430,8 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 	do {
 		const auto row_count = iterator.GetCurrentChunkCount();
 
-		// We only need to fetch the build-side GEOMETRY column to build the rtree.
-		// The geometry column is always the first column in the layout.
+		// We only need to fetch the build-side key column to build the rtree.
+		// The key column is always the first column in the layout.
 		gstate.collection->Gather(row_pointer_vector, sel, row_count, 0, geom_vec, sel, nullptr);
 
 		// Get a pointer to what we just gathered
@@ -472,9 +472,9 @@ public:
 
 	FlatRTree::LookupState state;
 
-	DataChunk join_probe_chunk;
-	DataChunk join_build_chunk;
-	DataChunk join_match_chunk;
+	DataChunk join_probe_chunk; // holds the lhs probe key
+	DataChunk join_build_chunk; // holds the rhs build key
+	DataChunk join_match_chunk; // references the lhs probe key and the rhs build key, used to compute the predicate
 
 	ExpressionExecutor join_probe_executor;
 	ExpressionExecutor join_match_executor;
@@ -483,8 +483,17 @@ public:
 
 	unique_ptr<Expression> match_expr;
 
+	SelectionVector probe_side_source_sel;
+	SelectionVector build_side_source_sel;
+	SelectionVector build_side_target_sel;
+	SelectionVector match_sel;
+
 	explicit SpatialJoinLocalOperatorState(ClientContext &context)
-	    : join_probe_executor(context), join_match_executor(context) {
+	    : join_probe_executor(context), join_match_executor(context),
+		probe_side_source_sel(STANDARD_VECTOR_SIZE),
+		build_side_source_sel(STANDARD_VECTOR_SIZE),
+		build_side_target_sel(STANDARD_VECTOR_SIZE),
+		match_sel(STANDARD_VECTOR_SIZE) {
 	}
 };
 
@@ -527,7 +536,6 @@ unique_ptr<GlobalOperatorState> PhysicalSpatialJoin::GetGlobalOperatorState(Clie
 
 	return std::move(result);
 }
-
 
 OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
 														GlobalOperatorState &gstate_p, OperatorState &lstate_p) const {
@@ -573,9 +581,31 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			const auto batch_size = MinValue<idx_t>(remaining_output, remaining_matches);
 
 			for(idx_t i = 0; i < batch_size; i++) {
+				lstate.build_side_target_sel.set_index(i, output_index + 1);
+				lstate.build_side_source_sel.set_index(i, lstate.state.matches_idx + i);
 
+				lstate.probe_side_source_sel.set_index(output_index + i, lstate.input_idx - 1);
 			}
 
+			auto &pointers = lstate.state.matches;
+
+			// Fetch each column from the build side
+			//
+
+			// Also collect the build side join key (at index 0) while were here
+			gstate.collection->Gather(pointers,
+				lstate.build_side_source_sel,
+				batch_size,
+				0,
+				lstate.join_build_chunk.data[0],
+				lstate.build_side_target_sel,
+				nullptr
+			);
+
+			output_index +=	batch_size;
+			lstate.state.matches_idx += batch_size;
+
+			// Keep going
 			continue;
 		}
 
@@ -631,11 +661,18 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		lstate.input_idx++;
 	}
 
+	chunk.Slice(lstate.probe_side_source_sel, output_index);
 
+	lstate.join_match_chunk.data[0].Slice(lstate.join_probe_chunk.data[0], lstate.probe_side_source_sel, output_index);
+	lstate.join_match_chunk.data[1].Reference(lstate.join_build_chunk.data[0]);
+	lstate.join_match_chunk.SetCardinality(output_index);
 
+	const auto filtered = lstate.join_match_executor.SelectExpression(lstate.join_match_chunk, lstate.match_sel);
+	chunk.Slice(lstate.match_sel, filtered);
 
+	chunk.Verify();
 
-
+	return output_index == output_count ? OperatorResultType::HAVE_MORE_OUTPUT : OperatorResultType::NEED_MORE_INPUT;
 }
 
 /*
