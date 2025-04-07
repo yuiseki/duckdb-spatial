@@ -4,34 +4,18 @@
 
 namespace duckdb {
 
-struct SpatialJoinCondition;
-
 class PhysicalSpatialJoin final : public PhysicalJoin {
 public:
 	static constexpr auto TYPE = PhysicalOperatorType::EXTENSION;
 
 public:
 	PhysicalSpatialJoin(LogicalOperator &op, unique_ptr<PhysicalOperator> left, unique_ptr<PhysicalOperator> right,
-	                    vector<SpatialJoinCondition> conditions, JoinType join_type, idx_t estimated_cardinality);
+	                    unique_ptr<Expression>, JoinType join_type, idx_t estimated_cardinality);
 
-	//! The conditions of the join
-	vector<SpatialJoinCondition> conditions;
-
-	// The types at each side of the condition, for each condition
-	vector<LogicalType> probe_side_condition_types;
-	vector<LogicalType> build_side_condition_types;
-
-	//! The indices/types of the left-hand side (probe side) columns that need to be output
-	vector<idx_t> probe_side_output_columns;
-	vector<LogicalType> probe_side_output_types;
-
-	//! The indices/types of the right-hand side (build side) columns that need to be output
-	vector<idx_t> build_side_output_columns;
-	vector<LogicalType> build_side_output_types;
-
-	//! The indices/types of the payload columns
-	vector<idx_t> payload_columns;
-	vector<LogicalType> payload_types;
+	//! The condition of the join
+	unique_ptr<Expression> condition;
+	optional_ptr<Expression> build_side_key;
+	optional_ptr<Expression> probe_side_key;
 
 public:
 	// Operator Interface
@@ -59,7 +43,21 @@ public:
 	bool IsSink() const override {
 		return true;
 	}
+
 	bool ParallelSink() const override {
+		return true;
+	}
+public:
+	// Source interface
+	unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const override;
+	unique_ptr<LocalSourceState> GetLocalSourceState(ExecutionContext &context, GlobalSourceState &gstate) const override;
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
+
+	bool IsSource() const override {
+		return PropagatesBuildSide(join_type);
+	}
+
+	bool ParallelSource() const override {
 		return true;
 	}
 

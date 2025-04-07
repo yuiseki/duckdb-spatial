@@ -284,7 +284,6 @@ struct ST_Buffer {
 
 			    const auto buffer = geom.get_buffer_style(radius, segments, cap_style, join_style, mitre_limit);
 			    return lstate.Serialize(result, buffer);
-			    ;
 		    });
 	}
 

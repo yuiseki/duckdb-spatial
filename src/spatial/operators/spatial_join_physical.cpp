@@ -269,89 +269,30 @@ private:
 //======================================================================================================================
 
 PhysicalSpatialJoin::PhysicalSpatialJoin(LogicalOperator &op, unique_ptr<PhysicalOperator> left,
-                                         unique_ptr<PhysicalOperator> right, vector<SpatialJoinCondition> conditions_p,
+                                         unique_ptr<PhysicalOperator> right, unique_ptr<Expression> condition_p,
                                          JoinType join_type, idx_t estimated_cardinality)
     : PhysicalJoin(op, PhysicalOperatorType::EXTENSION, join_type, estimated_cardinality),
-      conditions(std::move(conditions_p)) {
+      condition(std::move(condition_p)) {
 
 	children.push_back(std::move(left));
 	children.push_back(std::move(right));
 
+	auto &func = condition->Cast<BoundFunctionExpression>();
+
+	// Extract the probe side and build side join keys
+	probe_side_key = func.children[0].get();
+	build_side_key = func.children[1].get();
+
 	// Only inner joins for now!
 	D_ASSERT(join_type == JoinType::INNER);
 
-	const auto &lop = op.Cast<LogicalJoin>();
-
-	// Make sure we have a consistent list of output columns, ids and types, always
-
-	unordered_map<idx_t, idx_t> build_columns_in_conditions;
-
-	// Collect condition types
-	for (idx_t i = 0; i < conditions.size(); i++) {
-		auto &cond = conditions[i];
-		probe_side_condition_types.push_back(cond.left->return_type);
-		build_side_condition_types.push_back(cond.right->return_type);
-
-		// If this is just a reference, we dont need to include it as part of the payload
-		if (cond.right->GetExpressionClass() == ExpressionClass::BOUND_REF) {
-			build_columns_in_conditions.emplace(cond.right->Cast<BoundReferenceExpression>().index, i);
-		}
-	}
-
-	// Probe-side
-	auto &probe_side_input_types = children[0]->GetTypes();
-
-	probe_side_output_columns = lop.left_projection_map;
-	if (probe_side_output_columns.empty()) {
-		probe_side_output_columns.reserve(probe_side_input_types.size());
-		for (idx_t i = 0; i < probe_side_input_types.size(); i++) {
-			probe_side_output_columns.emplace_back(i);
-		}
-	}
-
-	for (const auto &probe_col_idx : probe_side_output_columns) {
-		const auto &probe_type = probe_side_input_types[probe_col_idx];
-		probe_side_output_types.push_back(probe_type);
-	}
-
-	// For ANTI, SEMI and MARK join, we only need to store the keys, so for these the payload/RHS types are empty
-	if (join_type == JoinType::ANTI || join_type == JoinType::SEMI || join_type == JoinType::MARK) {
-		return;
-	}
-
-	// Build-side
-	auto &build_side_input_types = children[1]->GetTypes();
-
-	// This is slightly more advanced, as we need to handle the payload columns.
-	auto build_side_projection_map = lop.right_projection_map;
-	if (build_side_projection_map.empty()) {
-		build_side_projection_map.reserve(build_side_input_types.size());
-		for (idx_t i = 0; i < build_side_input_types.size(); i++) {
-			build_side_projection_map.emplace_back(i);
-		}
-	}
-
-	for (auto &build_col_idx : build_side_projection_map) {
-		const auto &build_type = build_side_input_types[build_col_idx];
-
-		auto it = build_columns_in_conditions.find(build_col_idx);
-		if (it == build_columns_in_conditions.end()) {
-			// This build side column is not a join key
-			payload_columns.push_back(build_col_idx);
-			payload_types.push_back(build_type);
-			build_side_output_columns.push_back(build_side_condition_types.size() + payload_types.size() - 1);
-		} else {
-			// This build side column is a join key
-			build_side_output_columns.push_back(it->second);
-		}
-		build_side_output_types.push_back(build_type);
-	}
+	// const auto &lop = op.Cast<LogicalJoin>();
 }
 
 InsertionOrderPreservingMap<string> PhysicalSpatialJoin::ParamsToString() const {
 	// TODO: Add condition to the result (GetName is wrong)
 	auto result = PhysicalOperator::ParamsToString();
-	// result["condition"] = condition->GetName();
+	result["condition"] = condition->GetName();
 	return result;
 }
 
@@ -375,13 +316,11 @@ public:
 unique_ptr<GlobalSinkState> PhysicalSpatialJoin::GetGlobalSinkState(ClientContext &context) const {
 	vector<LogicalType> layout_types;
 
-	// Joinkey types
-	for (const auto &type : build_side_condition_types) {
-		layout_types.push_back(type);
-	}
+	// Add the type of the build-side join key
+	layout_types.push_back(build_side_key->return_type);
 
-	// Any extra payload types
-	for (const auto &type : payload_types) {
+	// And then add the rest of the types in the RHS
+	for (const auto &type : children[1]->types) {
 		layout_types.push_back(type);
 	}
 
@@ -395,7 +334,7 @@ unique_ptr<GlobalSinkState> PhysicalSpatialJoin::GetGlobalSinkState(ClientContex
 class SpatialJoinLocalState final : public LocalSinkState {
 public:
 	SpatialJoinLocalState(const PhysicalSpatialJoin &op, ClientContext &context, const TupleDataLayout &layout)
-	    : join_key_executor(context) {
+	    : join_build_executor(context) {
 
 		// Dont keep the tuples in memory after appending.
 		collection = make_uniq<TupleDataCollection>(BufferManager::GetBufferManager(context), layout);
@@ -403,21 +342,19 @@ public:
 
 		// Initialize join key executor/chunk
 		// TODO: Use buffer allocator for chunk
-		D_ASSERT(op.conditions.size() == 1);
-		join_key_executor.AddExpression(*op.conditions[0].right);
-		join_key_chunk.Initialize(context, op.build_side_condition_types);
+		join_build_executor.AddExpression(*op.build_side_key);
+		join_build_chunk.Initialize(context, {op.build_side_key->return_type});
 
-		// If we have a payload, initialize it
-		if (!op.payload_types.empty()) {
-			payload_chunk.Initialize(context, op.payload_types);
-		}
+		append_chunk.InitializeEmpty(layout.GetTypes());
 	}
 
 	TupleDataAppendState append_state;
 	unique_ptr<TupleDataCollection> collection;
-	ExpressionExecutor join_key_executor;
-	DataChunk join_key_chunk;
-	DataChunk payload_chunk;
+	ExpressionExecutor join_build_executor;
+	DataChunk join_build_chunk;
+
+	// The append chunk just references the vectors from the join key chunk and the input chunk
+	DataChunk append_chunk;
 };
 
 unique_ptr<LocalSinkState> PhysicalSpatialJoin::GetLocalSinkState(ExecutionContext &context) const {
@@ -428,37 +365,27 @@ unique_ptr<LocalSinkState> PhysicalSpatialJoin::GetLocalSinkState(ExecutionConte
 
 SinkResultType PhysicalSpatialJoin::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
 
-	auto &gstate = input.global_state.Cast<SpatialJoinGlobalState>();
+	// auto &gstate = input.global_state.Cast<SpatialJoinGlobalState>();
 	auto &lstate = input.local_state.Cast<SpatialJoinLocalState>();
 
-	lstate.join_key_chunk.Reset();
-	lstate.join_key_executor.Execute(chunk, lstate.join_key_chunk);
+	// Execute the join key expression
+	lstate.join_build_chunk.Reset();
+	lstate.join_build_executor.Execute(chunk, lstate.join_build_chunk);
 
-	if (payload_types.empty()) {
-		// Put an empty chunk into the collection
-		lstate.payload_chunk.SetCardinality(chunk.size());
-	} else {
-		// Reference the input
-		lstate.payload_chunk.ReferenceColumns(chunk, payload_columns);
+	// Now combine the join key with the payload columns
+	lstate.append_chunk.Reset();
+
+	// Reference the join key column
+	lstate.append_chunk.data[0].Reference(lstate.join_build_chunk.data[0]);
+
+	// Reference the rest of the input columns
+	for(idx_t i = 0; i < chunk.ColumnCount(); i++) {
+		lstate.append_chunk.data[i + 1].Reference(chunk.data[i]);
 	}
 
-	// Build a chunk to concatenate the join key with the payload columns
-	DataChunk source_chunk;
-	source_chunk.InitializeEmpty(gstate.layout.GetTypes());
-
-	const auto joinkey_col_count = lstate.join_key_chunk.ColumnCount();
-	const auto payload_col_count = lstate.payload_chunk.ColumnCount();
-
-	for (idx_t i = 0; i < joinkey_col_count; i++) {
-		source_chunk.data[i].Reference(lstate.join_key_chunk.data[i]);
-	}
-	for (idx_t i = 0; i < payload_col_count; i++) {
-		source_chunk.data[joinkey_col_count + i].Reference(lstate.payload_chunk.data[i]);
-	}
-	source_chunk.SetCardinality(chunk);
-
-	// Finally, append the combined chunk to the collection
-	lstate.collection->Append(lstate.append_state, source_chunk);
+	// Append the combined chunk to the collection
+	lstate.append_chunk.SetCardinality(chunk);
+	lstate.collection->Append(lstate.append_state, lstate.append_chunk);
 
 	return SinkResultType::NEED_MORE_INPUT;
 }
@@ -499,15 +426,16 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 	auto &sel = *FlatVector::IncrementalSelectionVector();
 
 	Vector geom_vec(GeoTypes::GEOMETRY());
-	auto geom_ptr = FlatVector::GetData<geometry_t>(geom_vec);
 
 	do {
 		const auto row_count = iterator.GetCurrentChunkCount();
 
-		// We only need to fetch the LHS GEOMETRY column to build the rtree.
+		// We only need to fetch the build-side GEOMETRY column to build the rtree.
 		// The geometry column is always the first column in the layout.
 		gstate.collection->Gather(row_pointer_vector, sel, row_count, 0, geom_vec, sel, nullptr);
 
+		// Get a pointer to what we just gathered
+		const auto geom_ptr = FlatVector::GetData<geometry_t>(geom_vec);
 		// Push the bounding boxes into the R-Tree
 		for (idx_t row_idx = 0; row_idx < row_count; row_idx++) {
 			const auto &geom = geom_ptr[row_idx];
@@ -528,7 +456,7 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 		}
 	} while (iterator.Next());
 
-	// Build the R-Tree
+	// Build the R-Tree once we've gathered everything
 	gstate.rtree->Build();
 
 	return SinkFinalizeType::READY;
@@ -538,26 +466,25 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 // Operator Interface
 //----------------------------------------------------------------------------------------------------------------------
 // This is where we do the probing of the rtree.
-class SpatialJoinOperatorState final : public CachingOperatorState {
+class SpatialJoinLocalOperatorState final : public CachingOperatorState {
 public:
 	idx_t input_idx = 0;
 
-	//vector<data_ptr_t> matched_rows;
 	FlatRTree::LookupState state;
 
-	// Expressions Executor
-	ExpressionExecutor join_key_executor;
-	DataChunk join_key_chunk;
-	DataChunk lhs_output;
+	DataChunk join_probe_chunk;
+	DataChunk join_build_chunk;
+	DataChunk join_match_chunk;
 
-	ExpressionExecutor predicate_executor;
-	DataChunk predicate_chunk;
-	unique_ptr<Expression> predicate_expr;
+	ExpressionExecutor join_probe_executor;
+	ExpressionExecutor join_match_executor;
 
-	DataChunk build_side_joinkey_chunk;
+	UnifiedVectorFormat join_probe_vformat;
 
-	explicit SpatialJoinOperatorState(ClientContext &context)
-	    : join_key_executor(context), predicate_executor(context) {
+	unique_ptr<Expression> match_expr;
+
+	explicit SpatialJoinLocalOperatorState(ClientContext &context)
+	    : join_probe_executor(context), join_match_executor(context) {
 	}
 };
 
@@ -568,31 +495,23 @@ public:
 };
 
 unique_ptr<OperatorState> PhysicalSpatialJoin::GetOperatorState(ExecutionContext &context) const {
-	// auto &gstate = sink_state->Cast<SpatialJoinGlobalState>();
-	// Steal the built rtree from the sink state.
-	auto lstate = make_uniq<SpatialJoinOperatorState>(context.client);
+	auto lstate = make_uniq<SpatialJoinLocalOperatorState>(context.client);
 
-	// Add the expression executor for the join key
-	D_ASSERT(conditions.size() == 1);
-	lstate->join_key_executor.AddExpression(*conditions[0].left);
-	lstate->join_key_chunk.Initialize(context.client, probe_side_condition_types);
+	// Create a match expression using the condition, that will be used to filter the results
+	lstate->match_expr = condition->Copy();
+	auto &func_expr = lstate->match_expr->Cast<BoundFunctionExpression>();
+	func_expr.children[0] = make_uniq<BoundReferenceExpression>(probe_side_key->return_type, 0);
+	func_expr.children[1] = make_uniq<BoundReferenceExpression>(build_side_key->return_type, 1);
 
-	if (!probe_side_output_types.empty()) {
-		lstate->lhs_output.Initialize(context.client, probe_side_output_types);
-	}
+	lstate->join_match_executor.AddExpression(*lstate->match_expr);
 
-	// We also need to add the predicate executor
-	lstate->predicate_expr = conditions[0].ToExpr(context.client);
+	// Also add the probe side joinkey expression
+	lstate->join_probe_executor.AddExpression(*probe_side_key);
 
-	// HACK: Make this reference the join key chunks
-	auto &func_expr = lstate->predicate_expr->Cast<BoundFunctionExpression>();
-	func_expr.children[0] = make_uniq<BoundReferenceExpression>(conditions[0].left->return_type, 0);
-	func_expr.children[1] = make_uniq<BoundReferenceExpression>(conditions[0].right->return_type, 1);
-
-	lstate->predicate_executor.AddExpression(*lstate->predicate_expr);
-
-	// And initalize the chunk to hold the rhs buildside join key
-	lstate->build_side_joinkey_chunk.Initialize(context.client, build_side_condition_types);
+	// The chunks we need for the join
+	lstate->join_probe_chunk.Initialize(context.client, {probe_side_key->return_type});
+	lstate->join_build_chunk.Initialize(context.client, {build_side_key->return_type});
+	lstate->join_match_chunk.Initialize(context.client, {probe_side_key->return_type, build_side_key->return_type});
 
 	return std::move(lstate);
 }
@@ -607,6 +526,116 @@ unique_ptr<GlobalOperatorState> PhysicalSpatialJoin::GetGlobalOperatorState(Clie
 	result->collection = std::move(gstate.collection);
 
 	return std::move(result);
+}
+
+
+OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
+														GlobalOperatorState &gstate_p, OperatorState &lstate_p) const {
+
+	auto &gstate = gstate_p.Cast<SpatialJoinGlobalOperatorState>();
+	auto &lstate = lstate_p.Cast<SpatialJoinLocalOperatorState>();
+
+	if (gstate.rtree == nullptr || gstate.rtree->Count() == 0) {
+		return OperatorResultType::FINISHED;
+	}
+
+	const auto &rtree = *gstate.rtree;
+
+	// Reset and execute join key expression on each new input chunk
+	if(lstate.input_idx == 0) {
+		const auto remaining_matches = lstate.state.matches_count - lstate.state.matches_idx;
+		// Only reset if this chunk is _actually_ new
+		if(remaining_matches == 0) {
+			lstate.join_probe_chunk.Reset();
+			lstate.join_probe_executor.Execute(input, lstate.join_probe_chunk);
+			lstate.join_build_chunk.data[0].ToUnifiedFormat(input.size(), lstate.join_probe_vformat);
+		}
+	}
+
+	idx_t output_count = chunk.GetCapacity();
+	idx_t output_index = 0;
+
+	while (true) {
+		//--------------------------------------------------------------------------------------------------------------
+		// Case 1: The output chunk is full
+		//--------------------------------------------------------------------------------------------------------------
+		const auto remaining_output = output_count - output_index;
+		if(remaining_output == 0) {
+			break;
+		}
+
+		//--------------------------------------------------------------------------------------------------------------
+		// Case 2: We have matches to output
+		//--------------------------------------------------------------------------------------------------------------
+		const auto remaining_matches = lstate.state.matches_count - lstate.state.matches_idx;
+		if(remaining_matches != 0) {
+
+			const auto batch_size = MinValue<idx_t>(remaining_output, remaining_matches);
+
+			for(idx_t i = 0; i < batch_size; i++) {
+
+			}
+
+			continue;
+		}
+
+		//--------------------------------------------------------------------------------------------------------------
+		// Case 3:
+		//--------------------------------------------------------------------------------------------------------------
+		if(rtree.Scan(lstate.state)) {
+			// We got a next set of matches, so continue to output them
+			continue;
+		}
+
+		//--------------------------------------------------------------------------------------------------------------
+		// Case 4: We dont have any more input
+		//--------------------------------------------------------------------------------------------------------------
+		const auto remaining_input = input.size() - lstate.input_idx;
+		if(remaining_input == 0) {
+			// We are out of input
+			lstate.input_idx = 0;
+			break;
+		}
+
+		//--------------------------------------------------------------------------------------------------------------
+		// Case 5: We need to initialize the next probe batch
+		//--------------------------------------------------------------------------------------------------------------
+		const auto &probe_geom = lstate.join_probe_vformat;
+		const auto geom_idx = probe_geom.sel->get_index(lstate.input_idx);
+		// TODO: Make an inner loop here so we dont have to reset the whole state machine
+		if (!probe_geom.validity.RowIsValid(geom_idx)) {
+			// If the geometry is invalid, skip it
+			lstate.input_idx++;
+			continue;
+		}
+
+		const auto &geom = UnifiedVectorFormat::GetData<geometry_t>(probe_geom)[geom_idx];
+		Box2D<double> bbox;
+		if (!geom.TryGetCachedBounds(bbox)) {
+			// If the geometry is empty, skip it
+			lstate.input_idx++;
+			continue;
+		}
+
+		Box2D<float> bbox_f;
+		bbox_f.min.x = static_cast<float>(bbox.min.x);
+		bbox_f.min.y = static_cast<float>(bbox.min.y);
+		bbox_f.max.x = static_cast<float>(bbox.max.x);
+		bbox_f.max.y = static_cast<float>(bbox.max.y);
+
+		// Probe the R-Tree for new matches and increment the input idx
+		rtree.InitScan(lstate.state, bbox_f);
+		rtree.Scan(lstate.state);
+
+		// Increment the input idx
+		lstate.input_idx++;
+	}
+
+
+
+
+
+
 }
 
 /*
@@ -706,7 +735,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 	return is_full ? OperatorResultType::HAVE_MORE_OUTPUT : OperatorResultType::NEED_MORE_INPUT;
 }
 */
-OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
+static OperatorResultType EExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
                                                         GlobalOperatorState &gstate_p, OperatorState &state_p) const {
 
 	// Probe the rtree
