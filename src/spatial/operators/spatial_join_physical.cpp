@@ -287,7 +287,7 @@ PhysicalSpatialJoin::PhysicalSpatialJoin(LogicalOperator &op, unique_ptr<Physica
 	build_side_key = func.children[1].get();
 
 	// Only inner joins for now!
-	D_ASSERT(join_type == JoinType::INNER);
+	D_ASSERT(join_type == JoinType::INNER || join_type == JoinType::LEFT);
 
 	// Always make sure we have a consistent order of the output columns, regardless if we have projection maps or not
 
@@ -471,6 +471,11 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 		const auto geom_ptr = FlatVector::GetData<geometry_t>(geom_vec);
 		// Push the bounding boxes into the R-Tree
 		for (idx_t row_idx = 0; row_idx < row_count; row_idx++) {
+			if(FlatVector::IsNull(geom_vec, row_idx)) {
+				// Skip null geometries
+				continue;
+			}
+
 			const auto &geom = geom_ptr[row_idx];
 			Box2D<double> bbox;
 			if (!geom.TryGetCachedBounds(bbox)) {
@@ -499,11 +504,15 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 // Operator Interface
 //----------------------------------------------------------------------------------------------------------------------
 // This is where we do the probing of the rtree.
+
+enum class JoinState { INIT = 0, NEXT, NO_MATCH, SCAN, };
+
 class SpatialJoinLocalOperatorState final : public CachingOperatorState {
 public:
-	idx_t input_idx = 0;
+	idx_t input_index = 0;
+	JoinState state = JoinState::INIT;
 
-	FlatRTree::LookupState state;
+	FlatRTree::LookupState scan;
 
 	DataChunk probe_side_row_chunk; // holds the projected lhs columns
 	DataChunk probe_side_key_chunk; // holds the lhs probe key
@@ -513,7 +522,7 @@ public:
 	ExpressionExecutor join_probe_executor; // used to compute the probe key
 	ExpressionExecutor join_match_executor; // used to compute the predicate
 
-	UnifiedVectorFormat join_probe_vformat;
+	UnifiedVectorFormat probe_side_key_vformat;
 
 	unique_ptr<Expression> match_expr;
 
@@ -574,6 +583,255 @@ unique_ptr<GlobalOperatorState> PhysicalSpatialJoin::GetGlobalOperatorState(Clie
 
 OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
 														GlobalOperatorState &gstate_p, OperatorState &lstate_p) const {
+	auto &gstate = gstate_p.Cast<SpatialJoinGlobalOperatorState>();
+	auto &lstate = lstate_p.Cast<SpatialJoinLocalOperatorState>();
+
+	D_ASSERT(join_type == JoinType::INNER || join_type == JoinType::LEFT);
+
+	// Check if the build side is empty
+	if (gstate.rtree == nullptr || gstate.rtree->Count() == 0) {
+		if(EmptyResultIfRHSIsEmpty()) {
+			return OperatorResultType::FINISHED;
+		}
+		PhysicalComparisonJoin::ConstructEmptyJoinResult(join_type, false, input, chunk);
+		return OperatorResultType::NEED_MORE_INPUT;
+	}
+
+	const auto &rtree = *gstate.rtree;
+
+	idx_t output_index = 0;
+	idx_t output_count = chunk.GetCapacity();
+
+	while(true) {
+		switch(lstate.state) {
+		//--------------------------------------------------------------------------------------------------------------
+		// Init
+		//--------------------------------------------------------------------------------------------------------------
+		case JoinState::INIT: {
+			// We have a new input chunk
+			// Execute the probe side join key expression, and initialize the vformat
+			lstate.join_probe_executor.Execute(input, lstate.probe_side_key_chunk);
+			lstate.probe_side_key_chunk.data[0].ToUnifiedFormat(input.size(), lstate.probe_side_key_vformat);
+
+			// Reset the input index and move on to the next state
+			lstate.input_index = 0;
+
+			lstate.state = JoinState::NEXT;
+			continue;
+		}
+		//--------------------------------------------------------------------------------------------------------------
+		// Next
+		//--------------------------------------------------------------------------------------------------------------
+		case JoinState::NEXT: {
+			if(lstate.input_index == input.size()) {
+				// We are out of input
+				lstate.state = JoinState::INIT;
+				break;
+			}
+
+			const auto geom_idx = lstate.probe_side_key_vformat.sel->get_index(lstate.input_index);
+			if(!lstate.probe_side_key_vformat.validity.RowIsValid(geom_idx)) {
+				// NULL cant match
+				lstate.state = JoinState::NO_MATCH;
+				continue;
+			}
+
+			const auto geom_ptr = FlatVector::GetData<geometry_t>(lstate.probe_side_key_chunk.data[0]);
+			const auto &geom = geom_ptr[lstate.input_index];
+			Box2D<double> bbox;
+			if (!geom.TryGetCachedBounds(bbox)) {
+				// EMPTY geometries cant match
+				lstate.state = JoinState::NO_MATCH;
+				continue;
+			}
+
+			Box2D<float> bbox_f;
+			bbox_f.min.x = static_cast<float>(bbox.min.x);
+			bbox_f.min.y = static_cast<float>(bbox.min.y);
+			bbox_f.max.x = static_cast<float>(bbox.max.x);
+			bbox_f.max.y = static_cast<float>(bbox.max.y);
+
+			rtree.InitScan(lstate.scan, bbox_f);
+
+			const auto has_any_matches = rtree.Scan(lstate.scan);
+			if(!has_any_matches) {
+				// No matches
+				lstate.state = JoinState::NO_MATCH;
+				continue;
+			}
+
+			// Otherwise,
+			lstate.state = JoinState::SCAN;
+			continue;
+		}
+		//--------------------------------------------------------------------------------------------------------------
+		// Scan
+		//--------------------------------------------------------------------------------------------------------------
+		case JoinState::SCAN: {
+
+			const auto output_remaining = output_count - output_index;
+			if(output_remaining == 0) {
+				// We are out of output space, break out of the loop
+				break;
+			}
+
+			const auto matches_remaining = lstate.scan.matches_count - lstate.scan.matches_idx;
+			if(matches_remaining == 0) {
+
+				// We are out of matches. Try to scan again
+				if(rtree.Scan(lstate.scan)) {
+					// We have more matches, stay where we are and try to emit more
+					lstate.state = JoinState::SCAN;
+					continue;
+				} else {
+					// Otherwise, we've exhausted the matches for this LHS entry, get a new one!
+					lstate.input_index++;
+					lstate.state = JoinState::NEXT;
+					continue;
+				}
+			}
+
+			const auto scan_count = MinValue<idx_t>(output_remaining, matches_remaining);
+			for(idx_t i = 0; i < scan_count; i++) {
+				// These control what we gather from the build side
+				lstate.build_side_target_sel.set_index(i, output_index + i);
+				lstate.build_side_source_sel.set_index(i, lstate.scan.matches_idx + i);
+
+				// This stores which probe side row we used to gather the build side
+				lstate.probe_side_source_sel.set_index(output_index + i, lstate.input_index);
+			}
+
+			// Fetch each column from the build side
+			const auto build_side_col_count = build_side_output_columns.size();
+			const auto probe_side_col_count = probe_side_output_columns.size();
+
+			auto &row_pointers = lstate.scan.matches;
+
+			for (idx_t i = 0; i < build_side_col_count; i++) {
+
+				// + 1 to skip the build side join key column, which is always first in the layout
+				auto build_side_col_idx = build_side_output_columns[i] + 1;
+				auto &target = chunk.data[probe_side_col_count + i];
+
+				D_ASSERT(gstate.collection->GetLayout().GetTypes()[build_side_col_idx] == target.GetType());
+
+				gstate.collection->Gather(row_pointers, lstate.build_side_source_sel, scan_count,
+										  build_side_col_idx, target, lstate.build_side_target_sel,
+										  nullptr);
+			}
+
+			// Also collect the build side join key (at index 0)
+			gstate.collection->Gather(row_pointers, lstate.build_side_source_sel, scan_count, 0,
+				lstate.build_side_key_chunk.data[0],
+				lstate.build_side_target_sel,
+				nullptr
+			);
+
+			// Increment the output and match index
+			output_index += scan_count;
+			lstate.scan.matches_idx += scan_count;
+
+			// Stay in the scan state.
+			continue;
+		}
+		//--------------------------------------------------------------------------------------------------------------
+		// No Match
+		//--------------------------------------------------------------------------------------------------------------
+		case JoinState::NO_MATCH: {
+			// We get here if the geometry is null or empty or does not intersect the bbox
+
+			if(join_type == JoinType::LEFT) {
+
+				if(output_index == output_count) {
+					// We are out of output space, we cant emit this null row just yet
+					// break out of the loop
+					break;
+				}
+
+				// TODO:
+				// Trick: Only emit the probe side at the end. And only do it when NEED_MORE_INPUT is returned.
+				// We can track null rows separately in a bitmask. When we call NEED_MORE_INPUT we have a last chance
+				// to inspect the input chunk.
+				// This is how the physical_blockwise_nl_join.cpp:158 works.
+
+				// Include the left side even though we had no match
+				lstate.probe_side_source_sel.set_index(output_index, lstate.input_index);
+				// Emit a null for the right side
+				for(idx_t i = 0; i < build_side_output_columns.size(); i++) {
+					auto &target = chunk.data[probe_side_output_columns.size() + i];
+					FlatVector::SetNull(target, output_index, true);
+				}
+				// Also null the build side join key
+				//FlatVector::SetNull(lstate.build_side_key_chunk.data[0], output_index, true);
+
+				output_index++;
+			}
+
+			lstate.input_index++;
+			lstate.state = JoinState::NEXT;
+			continue;
+		}
+		default: D_ASSERT(false); break;
+		} break;
+	}
+
+	// Once we break out of the state machine. We need to first slice in the LHS columns
+
+	// Reference the columns that we want to output from the LHS
+	lstate.probe_side_row_chunk.ReferenceColumns(input, probe_side_output_columns);
+	// Now slice with the LHS selection
+	chunk.Slice(lstate.probe_side_row_chunk, lstate.probe_side_source_sel, output_index);
+
+	// By this point, we will have all the matches that intersect on their bounding boxes.
+	// Now we need to actually compute the predicate on the join key columns for real.
+	// So start by combining the LHS and RHS join keys into the match_pred_arg_chunk
+
+	lstate.match_pred_arg_chunk.data[0].Slice(lstate.probe_side_key_chunk.data[0], lstate.probe_side_source_sel, output_index);
+	lstate.match_pred_arg_chunk.data[1].Reference(lstate.build_side_key_chunk.data[0]);
+	lstate.match_pred_arg_chunk.SetCardinality(output_index);
+
+
+	DataChunk mask;
+	mask.Initialize(context.client, {LogicalType::BOOLEAN} );
+	lstate.join_match_executor.Execute(lstate.match_pred_arg_chunk, mask);
+
+	SelectionVector mask_sel(STANDARD_VECTOR_SIZE);
+	UnifiedVectorFormat mask_vformat;
+	mask.data[0].ToUnifiedFormat(output_index, mask_vformat);
+
+	idx_t mask_count = 0;
+	for(idx_t i = 0; i < output_index; i++) {
+		auto mask_idx = mask_vformat.sel->get_index(i);
+		if(!mask_vformat.validity.RowIsValid(mask_idx)) {
+			// No match, but is this a left join?
+			if(join_type == JoinType::LEFT) {
+				mask_sel.set_index(mask_count++, i);
+			}
+		} else {
+			// Match, add the row
+			auto val = UnifiedVectorFormat::GetData<bool>(mask_vformat)[mask_idx];
+			if(val) {
+				mask_sel.set_index(mask_count++, i);
+			}
+		}
+	}
+
+	chunk.Slice(mask_sel, mask_count);
+
+	//const auto filtered = lstate.join_match_executor.SelectExpression(lstate.match_pred_arg_chunk, lstate.match_sel);
+	//chunk.Slice(lstate.match_sel, filtered);
+
+	chunk.Verify();
+
+	// Return the result, depending on if we filled up the output chunk or not
+	return output_index == output_count ? OperatorResultType::HAVE_MORE_OUTPUT : OperatorResultType::NEED_MORE_INPUT;
+}
+
+
+
+
+OperatorResultType PhysicalSpatialJoin::ExecuteProbeJoin(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
+														GlobalOperatorState &gstate_p, OperatorState &lstate_p) const {
 
 	auto &gstate = gstate_p.Cast<SpatialJoinGlobalOperatorState>();
 	auto &lstate = lstate_p.Cast<SpatialJoinLocalOperatorState>();
@@ -593,13 +851,13 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 	lstate.probe_side_row_chunk.ReferenceColumns(input, probe_side_output_columns);
 
 	// Reset and execute join key expression on each new input chunk
-	if(lstate.input_idx == 0) {
-		const auto remaining_matches = lstate.state.matches_count - lstate.state.matches_idx;
+	if(lstate.input_index == 0) {
+		const auto remaining_matches = lstate.scan.matches_count - lstate.scan.matches_idx;
 		// Only reset if this chunk is _actually_ new
 		if(remaining_matches == 0) {
 			lstate.probe_side_key_chunk.Reset();
 			lstate.join_probe_executor.Execute(input, lstate.probe_side_key_chunk);
-			lstate.probe_side_key_chunk.data[0].ToUnifiedFormat(input.size(), lstate.join_probe_vformat);
+			lstate.probe_side_key_chunk.data[0].ToUnifiedFormat(input.size(), lstate.probe_side_key_vformat);
 		}
 	}
 
@@ -618,19 +876,19 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		//--------------------------------------------------------------------------------------------------------------
 		// Case 2: We have matches to output
 		//--------------------------------------------------------------------------------------------------------------
-		const auto remaining_matches = lstate.state.matches_count - lstate.state.matches_idx;
+		const auto remaining_matches = lstate.scan.matches_count - lstate.scan.matches_idx;
 		if(remaining_matches != 0) {
 
 			const auto batch_count = MinValue<idx_t>(remaining_output, remaining_matches);
 
 			for(idx_t i = 0; i < batch_count; i++) {
 				lstate.build_side_target_sel.set_index(i, output_index + i);
-				lstate.build_side_source_sel.set_index(i, lstate.state.matches_idx + i);
+				lstate.build_side_source_sel.set_index(i, lstate.scan.matches_idx + i);
 
-				lstate.probe_side_source_sel.set_index(output_index + i, lstate.input_idx - 1);
+				lstate.probe_side_source_sel.set_index(output_index + i, lstate.input_index - 1);
 			}
 
-			auto &pointers = lstate.state.matches;
+			auto &pointers = lstate.scan.matches;
 
 			// Fetch each column from the build side
 			const auto build_side_col_count = build_side_output_columns.size();
@@ -657,7 +915,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			);
 
 			output_index +=	batch_count;
-			lstate.state.matches_idx += batch_count;
+			lstate.scan.matches_idx += batch_count;
 
 			// Keep going
 			continue;
@@ -666,7 +924,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		//--------------------------------------------------------------------------------------------------------------
 		// Case 3:
 		//--------------------------------------------------------------------------------------------------------------
-		if(rtree.Scan(lstate.state)) {
+		if(rtree.Scan(lstate.scan)) {
 			// We got a next set of matches, so continue to output them
 			continue;
 		}
@@ -674,22 +932,22 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		//--------------------------------------------------------------------------------------------------------------
 		// Case 4: We dont have any more input
 		//--------------------------------------------------------------------------------------------------------------
-		const auto remaining_input = lstate.probe_side_row_chunk.size() - lstate.input_idx;
+		const auto remaining_input = lstate.probe_side_row_chunk.size() - lstate.input_index;
 		if(remaining_input == 0) {
 			// We are out of input
-			lstate.input_idx = 0;
+			lstate.input_index = 0;
 			break;
 		}
 
 		//--------------------------------------------------------------------------------------------------------------
 		// Case 5: We need to initialize the next probe batch
 		//--------------------------------------------------------------------------------------------------------------
-		const auto &probe_geom = lstate.join_probe_vformat;
-		const auto geom_idx = probe_geom.sel->get_index(lstate.input_idx);
+		const auto &probe_geom = lstate.probe_side_key_vformat;
+		const auto geom_idx = probe_geom.sel->get_index(lstate.input_index);
 		// TODO: Make an inner loop here so we dont have to reset the whole state machine
 		if (!probe_geom.validity.RowIsValid(geom_idx)) {
 			// If the geometry is invalid, skip it
-			lstate.input_idx++;
+			lstate.input_index++;
 			continue;
 		}
 
@@ -697,7 +955,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		Box2D<double> bbox;
 		if (!geom.TryGetCachedBounds(bbox)) {
 			// If the geometry is empty, skip it
-			lstate.input_idx++;
+			lstate.input_index++;
 			continue;
 		}
 
@@ -708,11 +966,17 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		bbox_f.max.y = static_cast<float>(bbox.max.y);
 
 		// Probe the R-Tree for new matches and increment the input idx
-		rtree.InitScan(lstate.state, bbox_f);
-		rtree.Scan(lstate.state);
+		rtree.InitScan(lstate.scan, bbox_f);
+
+		auto any_matches = rtree.Scan(lstate.scan);
+
+		//if(!any_matches) {
+			// LHS geometry does not intersect with any of the RHS geometries.
+			// if this is left outer, we need to output some shit here.
+		//}
 
 		// Increment the input idx
-		lstate.input_idx++;
+		lstate.input_index++;
 	}
 
 	// Now slice with the LHS selection

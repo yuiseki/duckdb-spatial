@@ -37,6 +37,10 @@ protected:
 	OperatorResultType ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
 	                                   GlobalOperatorState &gstate, OperatorState &state) const override;
 
+
+	// CachingOperatorState Interface
+	OperatorResultType ExecuteProbeJoin(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
+					   GlobalOperatorState &gstate, OperatorState &state) const;
 public:
 	// Sink interface
 	unique_ptr<GlobalSinkState> GetGlobalSinkState(ClientContext &context) const override;

@@ -19,8 +19,8 @@ static void InsertSpatialJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 
 	auto &any_join = op.Cast<LogicalAnyJoin>();
 
-	// We also only support INNER joins for now
-	if (any_join.join_type != JoinType::INNER) {
+	// We also only support INNER and LEFT joins for now
+	if (any_join.join_type != JoinType::INNER && any_join.join_type != JoinType::LEFT) {
 		return;
 	}
 
@@ -99,7 +99,7 @@ static void InsertSpatialJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 	// TODO: Push a filter for the extra conditions?
 
 	// Cool, now we have spatial join conditions. Proceed to create a new LogicalSpatialJoin operator
-	auto spatial_join = make_uniq<LogicalSpatialJoin>(JoinType::INNER);
+	auto spatial_join = make_uniq<LogicalSpatialJoin>(any_join.join_type);
 
 	// Steal the properties from the any join
 	spatial_join->spatial_predicate = std::move(spatial_pred_expr);
