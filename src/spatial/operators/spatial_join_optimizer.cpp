@@ -44,7 +44,12 @@ static void InsertSpatialJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 		return;
 	}
 
-	vector<SpatialJoinCondition> join_conditions;
+
+	// The spatial join condition
+	unique_ptr<Expression> spatial_pred_expr = nullptr;
+
+	// Extra predicates that are not spatial predicates
+	vector<unique_ptr<Expression>> extra_predicates;
 
 	// Now, check each expression to see if it contains a spatial predicate
 	for (auto &expr : expressions) {
@@ -52,53 +57,53 @@ static void InsertSpatialJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 
 		if (total_side != JoinSide::BOTH) {
 			// Throw?. No, push down the filter
-			return;
+			extra_predicates.push_back(std::move(expr));
+			continue;;
 		}
 
 		// Check if the expression is a spatial predicate
 		if (expr->type != ExpressionType::BOUND_FUNCTION) {
-			return;
+			extra_predicates.push_back(std::move(expr));
+			continue;
 		}
 
 		auto &func = expr->Cast<BoundFunctionExpression>();
 		if (func.function.name != "ST_Intersects") {
-			return;
+			extra_predicates.push_back(std::move(expr));
+			continue;
 		}
 
 		auto left_side = JoinSide::GetJoinSide(*func.children[0], left_bindings, right_bindings);
 		auto right_side = JoinSide::GetJoinSide(*func.children[1], left_bindings, right_bindings);
 
-		// The condition can be cleanly split into two sides
-		if (left_side != JoinSide::BOTH && right_side != JoinSide::BOTH) {
-			SpatialJoinCondition condition;
-
-			// TODO: Support more predicates, and flip/invert them if neccessary
-			condition.predicate = "ST_Intersects";
-
-			auto left = std::move(func.children[0]);
-			auto right = std::move(func.children[1]);
-			if (left_side == JoinSide::RIGHT) {
-				std::swap(left, right);
-				// TODO: flip predicate here if neccessary
-			}
-
-			condition.left = std::move(left);
-			condition.right = std::move(right);
-
-			join_conditions.push_back(std::move(condition));
+		// Can the condition can be cleanly split into two sides?
+		if(left_side == JoinSide::BOTH || right_side == JoinSide::BOTH) {
+			extra_predicates.push_back(std::move(expr));
+			continue;
 		}
+
+		// TODO: Support more predicates, and flip/invert them if neccessary
+		if (left_side == JoinSide::RIGHT) {
+			// TODO: Flip function here if needed (if not symmetric)
+			std::swap(func.children[0], func.children[1]);
+		}
+
+		spatial_pred_expr = std::move(expr);
 	}
 
-	// Nope!
-	if (join_conditions.size() != 1) {
+	// Nope! No spatial predicate found
+	if (!spatial_pred_expr) {
 		return;
 	}
+
+	// TODO: Push a filter for the extra conditions?
 
 	// Cool, now we have spatial join conditions. Proceed to create a new LogicalSpatialJoin operator
 	auto spatial_join = make_uniq<LogicalSpatialJoin>(JoinType::INNER);
 
 	// Steal the properties from the any join
-	spatial_join->conditions = std::move(join_conditions);
+	spatial_join->spatial_predicate = std::move(spatial_pred_expr);
+	spatial_join->extra_conditions = std::move(extra_predicates);
 	spatial_join->children = std::move(any_join.children);
 	spatial_join->expressions = std::move(any_join.expressions);
 	spatial_join->types = std::move(any_join.types);

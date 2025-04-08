@@ -1,14 +1,16 @@
 #include "spatial/operators/spatial_join_physical.hpp"
-#include "spatial_join_logical.hpp"
-#include "spatial/geometry/sgl.hpp"
-#include "spatial/geometry/geometry_type.hpp"
-#include "spatial/spatial_types.hpp"
 
+#include "duckdb/common/types/row/tuple_data_collection.hpp"
 #include "duckdb/common/types/row/tuple_data_iterator.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
-#include "duckdb/common/types/row/tuple_data_collection.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
+#include "spatial/geometry/geometry_type.hpp"
+#include "spatial/geometry/sgl.hpp"
+#include "spatial/spatial_types.hpp"
+#include "spatial_join_logical.hpp"
+
+#include <duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp>
 
 namespace duckdb {
 
@@ -286,7 +288,38 @@ PhysicalSpatialJoin::PhysicalSpatialJoin(LogicalOperator &op, unique_ptr<Physica
 	// Only inner joins for now!
 	D_ASSERT(join_type == JoinType::INNER);
 
-	// const auto &lop = op.Cast<LogicalJoin>();
+	// Always make sure we have a consistent order of the output columns, regardless if we have projection maps or not
+
+	const auto &lop = op.Cast<LogicalJoin>();
+
+	// Probe-side
+	const auto &probe_side_input_types = children[0]->types;
+	probe_side_output_columns = lop.left_projection_map;
+	if (probe_side_output_columns.empty()) {
+		probe_side_output_columns.reserve(probe_side_input_types.size());
+		for (idx_t i = 0; i < probe_side_input_types.size(); i++) {
+			probe_side_output_columns.emplace_back(i);
+		}
+	}
+
+	for(const auto &probe_col_idx : probe_side_output_columns) {
+		const auto type = probe_side_input_types[probe_col_idx];
+		probe_side_output_types.push_back(type);
+	}
+
+	// Build-side
+	const auto &build_side_input_types = children[1]->types;
+	build_side_output_columns = lop.right_projection_map;
+	if(build_side_output_columns.empty()) {
+		build_side_output_columns.reserve(build_side_input_types.size());
+		for (idx_t i = 0; i < build_side_input_types.size(); i++) {
+			build_side_output_columns.emplace_back(i);
+		}
+	}
+	for(const auto &build_col_idx : build_side_output_columns) {
+		const auto type = build_side_input_types[build_col_idx];
+		build_side_output_types.push_back(type);
+	}
 }
 
 InsertionOrderPreservingMap<string> PhysicalSpatialJoin::ParamsToString() const {
@@ -314,17 +347,16 @@ public:
 };
 
 unique_ptr<GlobalSinkState> PhysicalSpatialJoin::GetGlobalSinkState(ClientContext &context) const {
+
+	auto gstate = make_uniq<SpatialJoinGlobalState>();
+
+	// Add the build side key to the layout, which is always the first column
 	vector<LogicalType> layout_types;
-
-	// Add the type of the build-side join key
-	layout_types.push_back(build_side_key->return_type);
-
-	// And then add the rest of the types in the RHS
-	for (const auto &type : children[1]->types) {
+	layout_types.push_back(probe_side_key->return_type);
+	for(const auto &type : build_side_output_types) {
 		layout_types.push_back(type);
 	}
 
-	auto gstate = make_uniq<SpatialJoinGlobalState>();
 	gstate->layout.Initialize(layout_types);
 	gstate->collection = make_uniq<TupleDataCollection>(BufferManager::GetBufferManager(context), gstate->layout);
 
@@ -334,27 +366,26 @@ unique_ptr<GlobalSinkState> PhysicalSpatialJoin::GetGlobalSinkState(ClientContex
 class SpatialJoinLocalState final : public LocalSinkState {
 public:
 	SpatialJoinLocalState(const PhysicalSpatialJoin &op, ClientContext &context, const TupleDataLayout &layout)
-	    : join_build_executor(context) {
-
+		: build_side_key_executor(context) {
 		// Dont keep the tuples in memory after appending.
 		collection = make_uniq<TupleDataCollection>(BufferManager::GetBufferManager(context), layout);
 		collection->InitializeAppend(append_state, TupleDataPinProperties::UNPIN_AFTER_DONE);
 
-		// Initialize join key executor/chunk
-		// TODO: Use buffer allocator for chunk
-		join_build_executor.AddExpression(*op.build_side_key);
-		join_build_chunk.Initialize(context, {op.build_side_key->return_type});
+		build_side_key_executor.AddExpression(*op.build_side_key);
 
-		append_chunk.InitializeEmpty(layout.GetTypes());
+		build_side_key_chunk.Initialize(context, {op.build_side_key->return_type});
+		build_side_row_chunk.InitializeEmpty(layout.GetTypes());
 	}
 
 	TupleDataAppendState append_state;
 	unique_ptr<TupleDataCollection> collection;
-	ExpressionExecutor join_build_executor;
-	DataChunk join_build_chunk;
 
-	// The append chunk just references the vectors from the join key chunk and the input chunk
-	DataChunk append_chunk;
+	// Owning DataChunk containing the build side join-key
+	DataChunk build_side_key_chunk;
+	// Referencing DataChunk chunk, having the same layout as the collection
+	DataChunk build_side_row_chunk;
+	// Used to execute the build side join key expression
+	ExpressionExecutor build_side_key_executor;
 };
 
 unique_ptr<LocalSinkState> PhysicalSpatialJoin::GetLocalSinkState(ExecutionContext &context) const {
@@ -365,27 +396,28 @@ unique_ptr<LocalSinkState> PhysicalSpatialJoin::GetLocalSinkState(ExecutionConte
 
 SinkResultType PhysicalSpatialJoin::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
 
-	// auto &gstate = input.global_state.Cast<SpatialJoinGlobalState>();
 	auto &lstate = input.local_state.Cast<SpatialJoinLocalState>();
 
-	// Execute the join key expression
-	lstate.join_build_chunk.Reset();
-	lstate.join_build_executor.Execute(chunk, lstate.join_build_chunk);
+	// Reset chunks
+	lstate.build_side_key_chunk.Reset();
+	lstate.build_side_row_chunk.Reset();
 
-	// Now combine the join key with the payload columns
-	lstate.append_chunk.Reset();
+	// Execute the build side join key expression
+	lstate.build_side_key_executor.Execute(chunk, lstate.build_side_key_chunk);
 
-	// Reference the join key column
-	lstate.append_chunk.data[0].Reference(lstate.join_build_chunk.data[0]);
+	// Make the first column of the build side row chunk a reference to the build side join key
+	lstate.build_side_row_chunk.data[0].Reference(lstate.build_side_key_chunk.data[0]);
 
-	// Reference the rest of the input columns
-	for(idx_t i = 0; i < chunk.ColumnCount(); i++) {
-		lstate.append_chunk.data[i + 1].Reference(chunk.data[i]);
+	// Reference the remaining input columns
+	for(idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
+		lstate.build_side_row_chunk.data[col_idx + 1].Reference(chunk.data[col_idx]);
 	}
 
-	// Append the combined chunk to the collection
-	lstate.append_chunk.SetCardinality(chunk);
-	lstate.collection->Append(lstate.append_state, lstate.append_chunk);
+	// Set the cardinality to match the input
+	lstate.build_side_row_chunk.SetCardinality(chunk.size());
+
+	// Sink the build side chunk
+	lstate.collection->Append(lstate.append_state, lstate.build_side_row_chunk);
 
 	return SinkResultType::NEED_MORE_INPUT;
 }
@@ -472,12 +504,13 @@ public:
 
 	FlatRTree::LookupState state;
 
-	DataChunk join_probe_chunk; // holds the lhs probe key
-	DataChunk join_build_chunk; // holds the rhs build key
-	DataChunk join_match_chunk; // references the lhs probe key and the rhs build key, used to compute the predicate
+	DataChunk probe_side_row_chunk; // holds the projected lhs columns
+	DataChunk probe_side_key_chunk; // holds the lhs probe key
+	DataChunk build_side_key_chunk; // holds the rhs build key
+	DataChunk match_pred_arg_chunk; // references the lhs probe key and the rhs build key, used to compute the predicate
 
-	ExpressionExecutor join_probe_executor;
-	ExpressionExecutor join_match_executor;
+	ExpressionExecutor join_probe_executor; // used to compute the probe key
+	ExpressionExecutor join_match_executor; // used to compute the predicate
 
 	UnifiedVectorFormat join_probe_vformat;
 
@@ -514,13 +547,14 @@ unique_ptr<OperatorState> PhysicalSpatialJoin::GetOperatorState(ExecutionContext
 
 	lstate->join_match_executor.AddExpression(*lstate->match_expr);
 
-	// Also add the probe side joinkey expression
+	// Add the probe side join key expression
 	lstate->join_probe_executor.AddExpression(*probe_side_key);
 
 	// The chunks we need for the join
-	lstate->join_probe_chunk.Initialize(context.client, {probe_side_key->return_type});
-	lstate->join_build_chunk.Initialize(context.client, {build_side_key->return_type});
-	lstate->join_match_chunk.Initialize(context.client, {probe_side_key->return_type, build_side_key->return_type});
+	lstate->probe_side_row_chunk.Initialize(context.client, probe_side_output_types);
+	lstate->probe_side_key_chunk.Initialize(context.client, {probe_side_key->return_type});
+	lstate->build_side_key_chunk.Initialize(context.client, {build_side_key->return_type});
+	lstate->match_pred_arg_chunk.Initialize(context.client, {probe_side_key->return_type, build_side_key->return_type});
 
 	return std::move(lstate);
 }
@@ -549,14 +583,17 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 
 	const auto &rtree = *gstate.rtree;
 
+	// Project the probe side columns into the probe side row chunk
+	lstate.probe_side_row_chunk.ReferenceColumns(input, probe_side_output_columns);
+
 	// Reset and execute join key expression on each new input chunk
 	if(lstate.input_idx == 0) {
 		const auto remaining_matches = lstate.state.matches_count - lstate.state.matches_idx;
 		// Only reset if this chunk is _actually_ new
 		if(remaining_matches == 0) {
-			lstate.join_probe_chunk.Reset();
-			lstate.join_probe_executor.Execute(input, lstate.join_probe_chunk);
-			lstate.join_build_chunk.data[0].ToUnifiedFormat(input.size(), lstate.join_probe_vformat);
+			lstate.probe_side_key_chunk.Reset();
+			lstate.join_probe_executor.Execute(input, lstate.probe_side_key_chunk);
+			lstate.probe_side_key_chunk.data[0].ToUnifiedFormat(input.size(), lstate.join_probe_vformat);
 		}
 	}
 
@@ -578,10 +615,10 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		const auto remaining_matches = lstate.state.matches_count - lstate.state.matches_idx;
 		if(remaining_matches != 0) {
 
-			const auto batch_size = MinValue<idx_t>(remaining_output, remaining_matches);
+			const auto batch_count = MinValue<idx_t>(remaining_output, remaining_matches);
 
-			for(idx_t i = 0; i < batch_size; i++) {
-				lstate.build_side_target_sel.set_index(i, output_index + 1);
+			for(idx_t i = 0; i < batch_count; i++) {
+				lstate.build_side_target_sel.set_index(i, output_index + i);
 				lstate.build_side_source_sel.set_index(i, lstate.state.matches_idx + i);
 
 				lstate.probe_side_source_sel.set_index(output_index + i, lstate.input_idx - 1);
@@ -590,20 +627,31 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			auto &pointers = lstate.state.matches;
 
 			// Fetch each column from the build side
-			//
+			const auto build_side_col_count = build_side_output_columns.size();
+			const auto probe_side_col_count = probe_side_output_columns.size();
+
+			for (idx_t i = 0; i < build_side_col_count; i++) {
+
+				// + 1 to skip the build side join key column, which is always first in the layout
+				auto build_side_col_idx = build_side_output_columns[i] + 1;
+				auto &target = chunk.data[probe_side_col_count + i];
+
+				D_ASSERT(gstate.collection->GetLayout().GetTypes()[build_side_col_idx] == target.GetType());
+
+				gstate.collection->Gather(pointers, lstate.build_side_source_sel, batch_count,
+										  build_side_col_idx, target, lstate.build_side_target_sel,
+										  nullptr);
+			}
 
 			// Also collect the build side join key (at index 0) while were here
-			gstate.collection->Gather(pointers,
-				lstate.build_side_source_sel,
-				batch_size,
-				0,
-				lstate.join_build_chunk.data[0],
+			gstate.collection->Gather(pointers, lstate.build_side_source_sel, batch_count, 0,
+				lstate.build_side_key_chunk.data[0],
 				lstate.build_side_target_sel,
 				nullptr
 			);
 
-			output_index +=	batch_size;
-			lstate.state.matches_idx += batch_size;
+			output_index +=	batch_count;
+			lstate.state.matches_idx += batch_count;
 
 			// Keep going
 			continue;
@@ -620,7 +668,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		//--------------------------------------------------------------------------------------------------------------
 		// Case 4: We dont have any more input
 		//--------------------------------------------------------------------------------------------------------------
-		const auto remaining_input = input.size() - lstate.input_idx;
+		const auto remaining_input = lstate.probe_side_row_chunk.size() - lstate.input_idx;
 		if(remaining_input == 0) {
 			// We are out of input
 			lstate.input_idx = 0;
@@ -661,293 +709,24 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		lstate.input_idx++;
 	}
 
-	chunk.Slice(lstate.probe_side_source_sel, output_index);
+	// Now slice with the LHS selection
+	chunk.Slice(lstate.probe_side_row_chunk, lstate.probe_side_source_sel, output_index);
 
-	lstate.join_match_chunk.data[0].Slice(lstate.join_probe_chunk.data[0], lstate.probe_side_source_sel, output_index);
-	lstate.join_match_chunk.data[1].Reference(lstate.join_build_chunk.data[0]);
-	lstate.join_match_chunk.SetCardinality(output_index);
+	// By this point, we will have all the matches that intersect on their bounding boxes.
+	// Now we need to actually compute the predicate on the join key columns for real.
+	// So start by combining the LHS and RHS join keys into the match_pred_arg_chunk
 
-	const auto filtered = lstate.join_match_executor.SelectExpression(lstate.join_match_chunk, lstate.match_sel);
+	lstate.match_pred_arg_chunk.data[0].Slice(lstate.probe_side_key_chunk.data[0], lstate.probe_side_source_sel, output_index);
+	lstate.match_pred_arg_chunk.data[1].Reference(lstate.build_side_key_chunk.data[0]);
+	lstate.match_pred_arg_chunk.SetCardinality(output_index);
+
+	const auto filtered = lstate.join_match_executor.SelectExpression(lstate.match_pred_arg_chunk, lstate.match_sel);
+
 	chunk.Slice(lstate.match_sel, filtered);
 
 	chunk.Verify();
 
 	return output_index == output_count ? OperatorResultType::HAVE_MORE_OUTPUT : OperatorResultType::NEED_MORE_INPUT;
-}
-
-/*
-OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
-														GlobalOperatorState &gstate_p, OperatorState &state_p) const {
-	// Probe the rtree
-	auto &gstate = gstate_p.Cast<SpatialJoinGlobalOperatorState>();
-	auto &lstate = state_p.Cast<SpatialJoinOperatorState>();
-
-	// Return FINISHED if the rtree is empty
-	if (gstate.rtree == nullptr || gstate.rtree->Count() == 0) {
-		D_ASSERT(join_type == JoinType::INNER);
-		return OperatorResultType::FINISHED;
-	}
-
-	idx_t incoming_index = 0;
-	idx_t incoming_count = input.size();
-
-	idx_t outgoing_index = 0;
-	idx_t outgoing_count = chunk.GetCapacity();
-
-	idx_t matching_index = 0;
-	idx_t matching_count = 0;
-
-	Vector build_side_pointers(LogicalType::POINTER);
-
-	// Used to select the rows from the build side
-	SelectionVector build_side_target_sel(STANDARD_VECTOR_SIZE);
-	SelectionVector build_side_source_sel(STANDARD_VECTOR_SIZE);
-	SelectionVector probe_side_probed_sel(STANDARD_VECTOR_SIZE);
-
-	// Used to apply the exact join predicate on the final chunk
-	SelectionVector exact_join_filter_sel(STANDARD_VECTOR_SIZE);
-	DataChunk join_chunk;
-
-	while(true) {
-		if(outgoing_index == outgoing_count) {
-			// There is no more space to output
-			break;
-		}
-
-		if(matching_index == matching_count) {
-			// We are out of matches, try to get another batch
-			if(!rtree.Scan(lstate.state)) {
-
-				// We got a next set of matches, so continue to output them
-				while(incoming_index != incoming_count) {
-
-				}
-				if(incoming_index == incoming_count) {
-					// We are out of input
-					break;
-				}
-			}
-		}
-
-		// Emit as many matches as we can
-		const auto remaining_matching = matching_count - matching_index;
-		const auto remaining_outgoing = outgoing_count - outgoing_index;
-
-		const auto remaining = MinValue(remaining_matching, remaining_outgoing);
-
-		for(idx_t i = 0; i < remaining; i++) {
-			// We select from our matching index, and output to the outgoing index
-			build_side_source_sel.set_index(i, matching_index + i);
-			build_side_target_sel.set_index(i, outgoing_index + i);
-
-			// We also need to select the corresponding row from the probe side
-			probe_side_probed_sel.set_index(i, incoming_index - 1);
-		}
-
-		// Gather the build side join key
-		gstate.collection->Gather(build_side_pointers, build_side_source_sel, remaining, 0, join_chunk.data[0], build_side_target_sel, nullptr);
-
-		// Gather the rest of the build side columns
-		for (idx_t i = 0; i < build_side_output_columns.size(); i++) {
-			// TODO: Is this correct?
-			auto &build_side_col_idx = build_side_output_columns[i];
-			auto &target = chunk.data[lstate.lhs_output.ColumnCount() + i];
-
-			D_ASSERT(gstate.collection->GetLayout().GetTypes()[build_side_col_idx] == target.GetType());
-
-			gstate.collection->Gather(build_side_pointers, build_side_source_sel, remaining,
-									  build_side_col_idx, target, build_side_target_sel, nullptr);
-		}
-
-		outgoing_index += remaining;
-		matching_index += remaining;
-	}
-
-	// Filter the output using the exact predicate
-	auto exact_join_count = lstate.predicate_executor.SelectExpression(join_chunk, exact_join_filter_sel);
-	chunk.Slice(exact_join_filter_sel, exact_join_count);
-
-	// Return HAVE_MORE_OUTPUT if we have more output
-	const auto is_full = outgoing_index == outgoing_count;
-	return is_full ? OperatorResultType::HAVE_MORE_OUTPUT : OperatorResultType::NEED_MORE_INPUT;
-}
-*/
-static OperatorResultType EExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
-                                                        GlobalOperatorState &gstate_p, OperatorState &state_p) const {
-
-	// Probe the rtree
-	auto &gstate = gstate_p.Cast<SpatialJoinGlobalOperatorState>();
-	auto &lstate = state_p.Cast<SpatialJoinOperatorState>();
-
-	// Return FINISHED if the rtree is empty
-	if (gstate.rtree == nullptr || gstate.rtree->Count() == 0) {
-		D_ASSERT(join_type == JoinType::INNER);
-		return OperatorResultType::FINISHED;
-	}
-
-	const auto &rtree = *gstate.rtree;
-
-	// Reference he probe side output columns
-	lstate.lhs_output.ReferenceColumns(input, probe_side_output_columns);
-
-	// Execute the probe side join key expression
-	// TODO: This is innefficient to do on each cycle
-	if (lstate.input_idx == 0 && (lstate.state.matches_count - lstate.state.matches_idx) == 0) {
-		// Reset and execute the join key expression on each new input chunk
-		lstate.join_key_chunk.Reset();
-		lstate.join_key_executor.Execute(input, lstate.join_key_chunk);
-	}
-
-
-	// Create unified format for the geometry column
-	UnifiedVectorFormat probe_geom_format;
-	lstate.join_key_chunk.data[0].ToUnifiedFormat(input.size(), probe_geom_format);
-
-	SelectionVector lhs_sel(chunk.GetCapacity());
-	SelectionVector target_sel(chunk.GetCapacity());
-	SelectionVector source_sel(chunk.GetCapacity());
-
-	idx_t output_count = chunk.GetCapacity();
-	idx_t output_idx = 0;
-
-	while (true) {
-		//--------------------------------------------------------------------------------------------------------------
-		// Case 1: The output chunk is full
-		//--------------------------------------------------------------------------------------------------------------
-		const auto remaining_output = output_count - output_idx;
-		if (remaining_output == 0) {
-			break;
-		}
-
-		//--------------------------------------------------------------------------------------------------------------
-		// Case 2: We have matches to output
-		//--------------------------------------------------------------------------------------------------------------
-		const auto remaining_matches = lstate.state.matches_count - lstate.state.matches_idx;
-		if (remaining_matches != 0) {
-
-			// Output as many as we can in one batch
-			const auto batch_size = MinValue<idx_t>(remaining_output, remaining_matches);
-
-			for (idx_t i = 0; i < batch_size; i++) {
-				// Offset the selection vector, so that we gather into the target columns at the correct index
-				target_sel.set_index(i, output_idx + i);
-
-				// This output idx corresponds to the current input idx
-				// TODO: Dont subtract one here
-				lhs_sel.set_index(output_idx + i, lstate.input_idx - 1);
-
-				source_sel.set_index(i, lstate.state.matches_idx + i);
-			}
-
-			// Fetch each column from the build side
-			auto &pointers = lstate.state.matches;
-			for (idx_t i = 0; i < build_side_output_columns.size(); i++) {
-
-				// TODO: Is this correct?
-				auto &build_side_col_idx = build_side_output_columns[i];
-				auto &target = chunk.data[lstate.lhs_output.ColumnCount() + i];
-
-				D_ASSERT(gstate.collection->GetLayout().GetTypes()[build_side_col_idx] == target.GetType());
-
-				gstate.collection->Gather(pointers, source_sel, batch_size,
-				                          build_side_col_idx, target, target_sel, nullptr);
-			}
-
-			// Also collect the build-side join key (at index 0) while were here
-			gstate.collection->Gather(pointers, source_sel, batch_size, 0,
-			                          lstate.build_side_joinkey_chunk.data[0], target_sel, nullptr);
-
-			// Increment the counters
-			output_idx += batch_size;
-			lstate.state.matches_idx += batch_size;
-
-			continue; // keep going
-		}
-
-		//--------------------------------------------------------------------------------------------------------------
-		// Case 3: We need to get the next lookup batch
-		//--------------------------------------------------------------------------------------------------------------
-		// Get the next set of matches from the R-Tree
-		if(rtree.Scan(lstate.state)) {
-			// We got a next set of matches, so continue to output them
-			continue;
-		}
-
-		//--------------------------------------------------------------------------------------------------------------
-		// Case 4: We dont have any more input
-		//--------------------------------------------------------------------------------------------------------------
-		const auto remaining_input = lstate.lhs_output.size() - lstate.input_idx;
-		if (remaining_input == 0) {
-			// Also reset the input idx
-			lstate.input_idx = 0;
-			break;
-		}
-
-		//--------------------------------------------------------------------------------------------------------------
-		// Case 5: We need to initialize the next probe
-		//--------------------------------------------------------------------------------------------------------------
-		const auto geom_idx = probe_geom_format.sel->get_index(lstate.input_idx);
-		if (!probe_geom_format.validity.RowIsValid(geom_idx)) {
-			// If the geometry is invalid, skip it
-			lstate.input_idx++;
-			continue;
-		}
-
-		const auto &geom = UnifiedVectorFormat::GetData<geometry_t>(probe_geom_format)[geom_idx];
-		Box2D<double> bbox;
-		if (!geom.TryGetCachedBounds(bbox)) {
-			// If the geometry is empty, skip it
-			lstate.input_idx++;
-			continue;
-		}
-
-		Box2D<float> bbox_f;
-		bbox_f.min.x = static_cast<float>(bbox.min.x);
-		bbox_f.min.y = static_cast<float>(bbox.min.y);
-		bbox_f.max.x = static_cast<float>(bbox.max.x);
-		bbox_f.max.y = static_cast<float>(bbox.max.y);
-
-		// Probe the R-Tree for new matches and increment the input idx
-		rtree.InitScan(lstate.state, bbox_f);
-		rtree.Scan(lstate.state);
-
-		// Increment the input idx
-		lstate.input_idx++;
-	}
-
-	//------------------------------------------------------------------------------------------------------------------
-	// Finalize the output chunk
-	//------------------------------------------------------------------------------------------------------------------
-	// When we break out of the loop, we're ready to return.
-
-	// Slice the LHS output columns
-	chunk.Slice(lstate.lhs_output, lhs_sel, output_idx);
-
-	// All this is kind of a mess...
-	// The idea: Combine the join key we gathered from the build side (first column in the layout)
-	// and the join key we just computed for the probe side, and then apply the spatial predicate
-	// on both keys.
-
-	DataChunk pred_chunk;
-	pred_chunk.InitializeEmpty({probe_side_condition_types[0], build_side_condition_types[0]});
-	// Note: We have to slice here again so that we get the right join keys matching the columns
-	pred_chunk.data[0].Slice(lstate.join_key_chunk.data[0], lhs_sel, output_idx);
-	pred_chunk.data[1].Reference(lstate.build_side_joinkey_chunk.data[0]);
-	pred_chunk.SetCardinality(output_idx);
-
-	// Actually apply the spatial predicate, and slice again
-	SelectionVector valid_sel(output_idx);
-	idx_t filtered = lstate.predicate_executor.SelectExpression(pred_chunk, valid_sel);
-	chunk.Slice(valid_sel, filtered);
-
-
-	// TODO: Because we end up slicing quite a bit here, it might make sense to combine multiple batches into one
-
-	// Verify
-	chunk.Verify();
-
-	// Return based on if there are more outputs or if we need more input
-	return output_idx == output_count ? OperatorResultType::HAVE_MORE_OUTPUT : OperatorResultType::NEED_MORE_INPUT;
 }
 
 } // namespace duckdb

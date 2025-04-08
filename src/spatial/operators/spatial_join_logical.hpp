@@ -34,8 +34,13 @@ public:
 	JoinType join_type;
 	//! Table index used to refer to the MARK column (in case of a MARK join)
 	idx_t mark_index {};
-	//! The conditions of the join
-	vector<SpatialJoinCondition> conditions;
+
+	//! The spatial predicate of the join
+	unique_ptr<Expression> spatial_predicate;
+
+	//! Extra conditions to be applied after the join, e.g. for filtering
+	vector<unique_ptr<Expression>> extra_conditions;
+
 	//! The columns of the LHS that are output by the join
 	vector<idx_t> left_projection_map;
 	//! The columns of the RHS that are output by the join

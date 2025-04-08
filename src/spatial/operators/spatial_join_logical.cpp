@@ -48,17 +48,15 @@ vector<ColumnBinding> LogicalSpatialJoin::GetColumnBindings() {
 
 void LogicalSpatialJoin::ResolveColumnBindings(ColumnBindingResolver &res, vector<ColumnBinding> &bindings) {
 
+	auto &cond = spatial_predicate->Cast<BoundFunctionExpression>();
+
 	res.VisitOperator(*children[0]);
-	for (auto &cond : conditions) {
-		res.VisitExpression(&cond.left);
-	}
+	res.VisitExpression(&cond.children[0]);
 
 	// TODO: Duplicate eliminated joins?
 
 	res.VisitOperator(*children[1]);
-	for (auto &cond : conditions) {
-		res.VisitExpression(&cond.right);
-	}
+	res.VisitExpression(&cond.children[1]);
 
 	// Finally, update the bindings
 	bindings = GetColumnBindings();
@@ -99,7 +97,7 @@ unique_ptr<PhysicalOperator> LogicalSpatialJoin::CreatePlan(ClientContext &conte
 	auto right = generator.CreatePlan(std::move(children[1]));
 
 	return make_uniq_base<PhysicalOperator, PhysicalSpatialJoin>(
-	    *this, std::move(left), std::move(right), std::move(conditions), join_type, estimated_cardinality);
+	    *this, std::move(left), std::move(right), std::move(spatial_predicate), join_type, estimated_cardinality);
 }
 
 } // namespace duckdb

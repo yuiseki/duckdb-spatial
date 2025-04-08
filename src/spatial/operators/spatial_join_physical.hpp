@@ -10,12 +10,18 @@ public:
 
 public:
 	PhysicalSpatialJoin(LogicalOperator &op, unique_ptr<PhysicalOperator> left, unique_ptr<PhysicalOperator> right,
-	                    unique_ptr<Expression>, JoinType join_type, idx_t estimated_cardinality);
+	                    unique_ptr<Expression> spatial_predicate, JoinType join_type, idx_t estimated_cardinality);
 
 	//! The condition of the join
 	unique_ptr<Expression> condition;
 	optional_ptr<Expression> build_side_key;
 	optional_ptr<Expression> probe_side_key;
+
+	vector<column_t> build_side_output_columns;
+	vector<column_t> probe_side_output_columns;
+
+	vector<LogicalType> probe_side_output_types;
+	vector<LogicalType> build_side_output_types;
 
 public:
 	// Operator Interface
@@ -48,6 +54,7 @@ public:
 		return true;
 	}
 public:
+	/*
 	// Source interface
 	unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const override;
 	unique_ptr<LocalSourceState> GetLocalSourceState(ExecutionContext &context, GlobalSourceState &gstate) const override;
@@ -60,7 +67,7 @@ public:
 	bool ParallelSource() const override {
 		return true;
 	}
-
+	*/
 public:
 	InsertionOrderPreservingMap<string> ParamsToString() const override;
 	string GetName() const override;
