@@ -11,6 +11,7 @@
 #include "spatial_join_logical.hpp"
 
 #include <duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp>
+#include <duckdb/execution/operator/join/physical_comparison_join.hpp>
 
 namespace duckdb {
 
@@ -440,7 +441,7 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
                                                OperatorSinkFinalizeInput &input) const {
 	auto &gstate = input.global_state.Cast<SpatialJoinGlobalState>();
 
-	if (gstate.collection->Count() == 0) {
+	if (gstate.collection->Count() == 0 && EmptyResultIfRHSIsEmpty()) {
 		return SinkFinalizeType::NO_OUTPUT_POSSIBLE;
 	}
 
@@ -577,8 +578,13 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 	auto &gstate = gstate_p.Cast<SpatialJoinGlobalOperatorState>();
 	auto &lstate = lstate_p.Cast<SpatialJoinLocalOperatorState>();
 
+	// Check if the build side is empty
 	if (gstate.rtree == nullptr || gstate.rtree->Count() == 0) {
-		return OperatorResultType::FINISHED;
+		if(EmptyResultIfRHSIsEmpty()) {
+			return OperatorResultType::FINISHED;
+		}
+		PhysicalComparisonJoin::ConstructEmptyJoinResult(join_type, false, input, chunk);
+		return OperatorResultType::NEED_MORE_INPUT;
 	}
 
 	const auto &rtree = *gstate.rtree;
