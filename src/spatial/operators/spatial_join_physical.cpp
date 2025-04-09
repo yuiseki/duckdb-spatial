@@ -530,14 +530,14 @@ public:
 	ExpressionExecutor join_probe_executor; // used to compute the probe key
 	ExpressionExecutor join_match_executor; // used to compute the predicate
 
-	UnifiedVectorFormat probe_side_key_vformat;
+	UnifiedVectorFormat probe_side_key_vformat; // used to access the probe side key, after its been computed
 
 	unique_ptr<Expression> match_expr;
 
-	SelectionVector probe_side_source_sel;
-	SelectionVector build_side_source_sel;
-	SelectionVector build_side_target_sel;
-	SelectionVector match_sel;
+	SelectionVector probe_side_source_sel; // maps what output rows correspond to which input lhs rows
+	SelectionVector build_side_source_sel; // used when gathering the build side
+	SelectionVector build_side_target_sel; // used when gathering the build side
+	SelectionVector match_sel;             // used to select the output rows, by executing the predicate
 
 	uint8_t left_outer_marker[STANDARD_VECTOR_SIZE] = {};
 
@@ -601,7 +601,13 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		if (EmptyResultIfRHSIsEmpty()) {
 			return OperatorResultType::FINISHED;
 		}
-		PhysicalComparisonJoin::ConstructEmptyJoinResult(join_type, false, input, chunk);
+
+		// Slice the input chunk to what we need
+		lstate.probe_side_row_chunk.ReferenceColumns(input, probe_side_output_columns);
+
+		// Construct empty join result
+		PhysicalComparisonJoin::ConstructEmptyJoinResult(join_type, false, lstate.probe_side_row_chunk, chunk);
+
 		return OperatorResultType::NEED_MORE_INPUT;
 	}
 
@@ -729,7 +735,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			}
 
 			const auto output_remaining = output_count - output_index;
-			auto scan_count = MinValue(output_remaining, matches_remaining);
+			const auto scan_count = MinValue(output_remaining, matches_remaining);
 
 			D_ASSERT(scan_count != 0);
 
