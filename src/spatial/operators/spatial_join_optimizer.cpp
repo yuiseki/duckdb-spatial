@@ -44,7 +44,6 @@ static void InsertSpatialJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 		return;
 	}
 
-
 	// The spatial join condition
 	unique_ptr<Expression> spatial_pred_expr = nullptr;
 
@@ -58,7 +57,8 @@ static void InsertSpatialJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 		if (total_side != JoinSide::BOTH) {
 			// Throw?. No, push down the filter
 			extra_predicates.push_back(std::move(expr));
-			continue;;
+			continue;
+			;
 		}
 
 		// Check if the expression is a spatial predicate
@@ -77,7 +77,7 @@ static void InsertSpatialJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 		auto right_side = JoinSide::GetJoinSide(*func.children[1], left_bindings, right_bindings);
 
 		// Can the condition can be cleanly split into two sides?
-		if(left_side == JoinSide::BOTH || right_side == JoinSide::BOTH) {
+		if (left_side == JoinSide::BOTH || right_side == JoinSide::BOTH) {
 			extra_predicates.push_back(std::move(expr));
 			continue;
 		}

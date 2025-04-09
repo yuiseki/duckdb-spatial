@@ -37,10 +37,10 @@ protected:
 	OperatorResultType ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
 	                                   GlobalOperatorState &gstate, OperatorState &state) const override;
 
-
 	// CachingOperatorState Interface
 	OperatorResultType ExecuteProbeJoin(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
-					   GlobalOperatorState &gstate, OperatorState &state) const;
+	                                    GlobalOperatorState &gstate, OperatorState &state) const;
+
 public:
 	// Sink interface
 	unique_ptr<GlobalSinkState> GetGlobalSinkState(ClientContext &context) const override;
@@ -57,19 +57,21 @@ public:
 	bool ParallelSink() const override {
 		return true;
 	}
+
 public:
 	/*
 	// Source interface
 	unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const override;
-	unique_ptr<LocalSourceState> GetLocalSourceState(ExecutionContext &context, GlobalSourceState &gstate) const override;
-	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
+	unique_ptr<LocalSourceState> GetLocalSourceState(ExecutionContext &context, GlobalSourceState &gstate) const
+	override; SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const
+	override;
 
 	bool IsSource() const override {
-		return PropagatesBuildSide(join_type);
+	    return PropagatesBuildSide(join_type);
 	}
 
 	bool ParallelSource() const override {
-		return true;
+	    return true;
 	}
 	*/
 public:
