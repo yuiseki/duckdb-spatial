@@ -550,7 +550,7 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 //----------------------------------------------------------------------------------------------------------------------
 // This is where we do the probing of the rtree.
 
-enum class JoinState { INIT = 0, PROBE, SCAN, EMIT_LHS };
+enum class JoinState { INIT = 0, PROBE, SCAN, EMIT, EMIT_LHS };
 
 class SpatialJoinLocalOperatorState final : public CachingOperatorState {
 public:
@@ -580,6 +580,8 @@ public:
 	SelectionVector build_side_target_sel; // used when gathering the build side
 	SelectionVector match_sel;             // used to select the output rows, by executing the predicate
 
+	SelectionVector lhs_match_sel; // this is only used when emitting the lhs side of the join
+
 	uint8_t left_outer_marker[STANDARD_VECTOR_SIZE] = {};
 
 	idx_t build_side_match_offset = 0;
@@ -587,7 +589,7 @@ public:
 	explicit SpatialJoinLocalOperatorState(ClientContext &context)
 	    : join_probe_executor(context), join_match_executor(context), probe_side_source_sel(STANDARD_VECTOR_SIZE),
 	      build_side_source_sel(STANDARD_VECTOR_SIZE), build_side_target_sel(STANDARD_VECTOR_SIZE),
-	      match_sel(STANDARD_VECTOR_SIZE) {
+	      match_sel(STANDARD_VECTOR_SIZE), lhs_match_sel(STANDARD_VECTOR_SIZE) {
 	}
 };
 
@@ -692,53 +694,13 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		//--------------------------------------------------------------------------------------------------------------
 		case JoinState::PROBE: {
 			if (lstate.input_index == input.size()) {
-
-				// TODO: Move this common code into a method
-				// Start by adding the lhs columns
-				chunk.Slice(lstate.probe_side_row_chunk, lstate.probe_side_source_sel, output_index);
-
-				// Now, lets actually evaluate the predicate
-				lstate.match_pred_arg_chunk.data[0].Slice(lstate.probe_side_key_chunk.data[0],
-				                                          lstate.probe_side_source_sel, output_index);
-				lstate.match_pred_arg_chunk.data[1].Reference(lstate.build_side_key_chunk.data[0]);
-				lstate.match_pred_arg_chunk.SetCardinality(output_index);
-
-				const auto filtered =
-				    lstate.join_match_executor.SelectExpression(lstate.match_pred_arg_chunk, lstate.match_sel);
-				// Also mark lhs rows
-				for (idx_t i = 0; i < filtered; i++) {
-					// This is kinda crazy
-					// We're first selecting all the output rows that matched.
-					// And then figuring out which lhs row that belongs to, by using the probe_side_source_sel vector
-					lstate.left_outer_marker[lstate.probe_side_source_sel.get_index(lstate.match_sel.get_index(i))] = 1;
-				}
-
-				if (PropagatesBuildSide(join_type)) {
-					for (idx_t i = 0; i < filtered; i++) {
-						auto ptr = reinterpret_cast<bool *>(build_side_ptrs[lstate.match_sel.get_index(i)] +
-						                                    lstate.build_side_match_offset);
-						*ptr = true;
-					}
-				}
-
-				chunk.Slice(lstate.match_sel, filtered);
-				// TODO: Stop moving into function
-
-				if (join_type == JoinType::LEFT || join_type == JoinType::OUTER) {
-					// TODO: early out if there are no matches?
-					lstate.state = JoinState::EMIT_LHS;
-					return OperatorResultType::HAVE_MORE_OUTPUT;
-				}
-
-				lstate.state = JoinState::INIT;
-				return OperatorResultType::NEED_MORE_INPUT;
+				lstate.state = JoinState::EMIT;
+				continue;
 			}
 
 			const auto geom_idx = lstate.probe_side_key_vformat.sel->get_index(lstate.input_index);
 			if (!lstate.probe_side_key_vformat.validity.RowIsValid(geom_idx)) {
-				// NULL cant match
-				// lstate.left_outer_marker[lstate.input_index] = 1;
-				lstate.input_index++; // TODO: Mark left as missing
+				lstate.input_index++;
 				continue;
 			}
 
@@ -746,9 +708,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			const auto &geom = geom_ptr[lstate.input_index];
 			Box2D<double> bbox;
 			if (!geom.TryGetCachedBounds(bbox)) {
-				// EMPTY geometries cant match
-				// lstate.left_outer_marker[lstate.input_index] = 1;
-				lstate.input_index++; // TODO: Mark left as missing
+				lstate.input_index++;
 				continue;
 			}
 
@@ -761,9 +721,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			rtree.InitScan(lstate.scan, bbox_f);
 
 			if (!rtree.Scan(lstate.scan)) {
-				// No matches
-				// lstate.left_outer_marker[lstate.input_index] = 1;
-				lstate.input_index++; // TODO: Mark left as missing
+				lstate.input_index++;
 				continue;
 			}
 
@@ -776,11 +734,12 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			const auto matches_remaining = lstate.scan.matches_count - lstate.scan.matches_idx;
 			if (matches_remaining == 0) {
 				// We are out of matches. Try to get the next probe
-				if (!rtree.Scan(lstate.scan)) {
-					lstate.input_index++;
-					lstate.state = JoinState::PROBE;
+				if (rtree.Scan(lstate.scan)) {
+					continue;
 				}
-				// Otherwise, we stay in the scan state
+				// Otherwise, we are done with this probe
+				lstate.input_index++;
+				lstate.state = JoinState::PROBE;
 				continue;
 			}
 
@@ -805,10 +764,14 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 
 			auto &row_pointers = lstate.scan.matches;
 
+			// Collect the build side join key (at index 0)
+			gstate.collection->Gather(row_pointers, lstate.build_side_source_sel, scan_count, build_side_key_col,
+			                          lstate.build_side_key_chunk.data[0], lstate.build_side_target_sel, nullptr);
+
+			// Now, lets collect the rest of the build side columns
 			for (idx_t i = 0; i < build_side_output_columns.size(); i++) {
 
-				// + 1 to skip the build side join key column, which is always first in the layout
-				auto build_side_col_idx = payload_offset + i;
+				const auto build_side_col_idx = payload_offset + i;
 				auto &target = chunk.data[probe_side_col_count + i];
 
 				D_ASSERT(gstate.collection->GetLayout().GetTypes()[build_side_col_idx] == target.GetType());
@@ -816,10 +779,6 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 				gstate.collection->Gather(row_pointers, lstate.build_side_source_sel, scan_count, build_side_col_idx,
 				                          target, lstate.build_side_target_sel, nullptr);
 			}
-
-			// Also collect the build side join key (at index 0)
-			gstate.collection->Gather(row_pointers, lstate.build_side_source_sel, scan_count, build_side_key_col,
-			                          lstate.build_side_key_chunk.data[0], lstate.build_side_target_sel, nullptr);
 
 			// Also collect the build side row pointers (if we have a match column)
 			if (PropagatesBuildSide(join_type)) {
@@ -838,7 +797,13 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 				continue;
 			}
 
-			// TODO: Move this common code into a method
+			lstate.state = JoinState::EMIT;
+		} // fall through
+		//--------------------------------------------------------------------------------------------------------------
+		// EMIT
+		//--------------------------------------------------------------------------------------------------------------
+		case JoinState::EMIT: {
+
 			// Start by adding the lhs columns
 			chunk.Slice(lstate.probe_side_row_chunk, lstate.probe_side_source_sel, output_index);
 
@@ -859,6 +824,8 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			}
 
 			if (PropagatesBuildSide(join_type)) {
+				// Mark each row in the build side as being matched.
+				// We need to do this so we dont emit them again in the right-outer join phase
 				for (idx_t i = 0; i < filtered; i++) {
 					auto ptr = reinterpret_cast<bool *>(build_side_ptrs[lstate.match_sel.get_index(i)] +
 					                                    lstate.build_side_match_offset);
@@ -867,10 +834,19 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			}
 
 			chunk.Slice(lstate.match_sel, filtered);
-			// TODO: Stop moving into function
 
-			chunk.Verify();
+			if (lstate.input_index == input.size()) {
+				if (join_type == JoinType::LEFT || join_type == JoinType::OUTER) {
+					// TODO: early out if there are no matches?
+					lstate.state = JoinState::EMIT_LHS;
+					return OperatorResultType::HAVE_MORE_OUTPUT;
+				}
 
+				lstate.state = JoinState::INIT;
+				return OperatorResultType::NEED_MORE_INPUT;
+			}
+
+			lstate.state = JoinState::SCAN;
 			return OperatorResultType::HAVE_MORE_OUTPUT;
 		}
 		//--------------------------------------------------------------------------------------------------------------
@@ -879,16 +855,15 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		case JoinState::EMIT_LHS: {
 			// Emit the outer left side
 
-			SelectionVector sel(STANDARD_VECTOR_SIZE);
 			idx_t remaining_count = 0;
 			for (idx_t i = 0; i < input.size(); i++) {
 				if (!lstate.left_outer_marker[i]) {
-					sel.set_index(remaining_count++, i);
+					lstate.lhs_match_sel.set_index(remaining_count++, i);
 				}
 			}
 
 			if (remaining_count > 0) {
-				chunk.Slice(lstate.probe_side_row_chunk, sel, remaining_count);
+				chunk.Slice(lstate.probe_side_row_chunk, lstate.lhs_match_sel, remaining_count);
 
 				// Null the RHS columns
 				for (idx_t i = 0; i < build_side_output_columns.size(); i++) {
