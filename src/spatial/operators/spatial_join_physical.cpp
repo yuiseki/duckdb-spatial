@@ -929,7 +929,8 @@ public:
 
 class SpatialJoinLocalSourceState final : public LocalSourceState {
 public:
-	explicit SpatialJoinLocalSourceState(const PhysicalSpatialJoin &op) {
+	explicit SpatialJoinLocalSourceState(const PhysicalSpatialJoin &op) : match_sel(STANDARD_VECTOR_SIZE) {
+
 		D_ASSERT(op.sink_state);
 		const auto &state = op.op_state->Cast<SpatialJoinGlobalOperatorState>();
 
@@ -949,6 +950,7 @@ public:
 
 	TupleDataLocalScanState scan_state;
 	DataChunk scan_chunk;
+	SelectionVector match_sel;
 };
 
 unique_ptr<GlobalSourceState> PhysicalSpatialJoin::GetGlobalSourceState(ClientContext &context) const {
@@ -971,8 +973,6 @@ SourceResultType PhysicalSpatialJoin::GetData(ExecutionContext &context, DataChu
 
 	const auto &tuples = gstate.op.op_state->Cast<SpatialJoinGlobalOperatorState>().collection;
 
-	SelectionVector sel(STANDARD_VECTOR_SIZE);
-
 	while (tuples->Scan(gstate.scan_state, lstate.scan_state, lstate.scan_chunk)) {
 		gstate.tuples_scanned += lstate.scan_chunk.size();
 
@@ -981,7 +981,7 @@ SourceResultType PhysicalSpatialJoin::GetData(ExecutionContext &context, DataChu
 		idx_t result_count = 0;
 		for (idx_t i = 0; i < lstate.scan_chunk.size(); i++) {
 			if (!matches[i]) {
-				sel.set_index(result_count++, i);
+				lstate.match_sel.set_index(result_count++, i);
 			}
 		}
 
@@ -1001,7 +1001,7 @@ SourceResultType PhysicalSpatialJoin::GetData(ExecutionContext &context, DataChu
 			for (idx_t i = 0; i < rhs_col_count; i++) {
 				auto &target = chunk.data[lhs_col_count + i];
 				// Offset by one here to skip the match column
-				target.Slice(lstate.scan_chunk.data[i + 1], sel, result_count);
+				target.Slice(lstate.scan_chunk.data[i + 1], lstate.match_sel, result_count);
 			}
 
 			chunk.SetCardinality(result_count);
