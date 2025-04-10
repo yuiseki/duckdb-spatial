@@ -19,8 +19,19 @@ static void InsertSpatialJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 
 	auto &any_join = op.Cast<LogicalAnyJoin>();
 
-	// We also only support INNER and LEFT joins for now
-	if (any_join.join_type != JoinType::INNER && any_join.join_type != JoinType::LEFT) {
+	// We also only support simple join types
+	auto join_supported = false;
+	switch (any_join.join_type) {
+	case JoinType::INNER:
+	case JoinType::LEFT:
+	case JoinType::RIGHT:
+	case JoinType::OUTER:
+		join_supported = true;
+		break;
+	default:
+		break;
+	}
+	if (!join_supported) {
 		return;
 	}
 

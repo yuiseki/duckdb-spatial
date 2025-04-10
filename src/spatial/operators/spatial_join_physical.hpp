@@ -24,6 +24,13 @@ public:
 	vector<LogicalType> build_side_output_types;
 
 public:
+	// Layout helpers
+	idx_t BuildSideKeyColumn() const;
+	idx_t BuildSideMatchColumn() const;
+	idx_t BuildSidePayloadBeg() const;
+	idx_t BuildSidePayloadEnd() const;
+
+public:
 	// Operator Interface
 	unique_ptr<OperatorState> GetOperatorState(ExecutionContext &context) const override;
 	unique_ptr<GlobalOperatorState> GetGlobalOperatorState(ClientContext &context) const override;
@@ -59,21 +66,21 @@ public:
 	}
 
 public:
-	/*
 	// Source interface
 	unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const override;
-	unique_ptr<LocalSourceState> GetLocalSourceState(ExecutionContext &context, GlobalSourceState &gstate) const
-	override; SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const
-	override;
+	unique_ptr<LocalSourceState> GetLocalSourceState(ExecutionContext &context,
+	                                                 GlobalSourceState &gstate) const override;
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
 
 	bool IsSource() const override {
-	    return PropagatesBuildSide(join_type);
+		// The PhysicalSpatialJoin is only a source if the join type is RIGHT/OUTER
+		return PropagatesBuildSide(join_type);
 	}
 
 	bool ParallelSource() const override {
-	    return true;
+		return true;
 	}
-	*/
+
 public:
 	InsertionOrderPreservingMap<string> ParamsToString() const override;
 	string GetName() const override;
