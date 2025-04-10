@@ -2412,7 +2412,7 @@ struct ST_Extent_Approx {
 				if (blob.TryGetCachedBounds(bbox)) {
 					min_x_data[i] = bbox.min.x;
 					min_y_data[i] = bbox.min.y;
-					max_x_data[i] =	bbox.max.x;
+					max_x_data[i] = bbox.max.x;
 					max_y_data[i] = bbox.max.y;
 				} else {
 					// No bounding box, return null
@@ -4969,9 +4969,8 @@ struct ST_Hilbert {
 		UnaryExecutor::ExecuteWithNulls<geometry_t, uint32_t>(
 		    args.data[0], result, args.size(),
 		    [&](const geometry_t &geom, ValidityMask &mask, idx_t out_idx) -> uint32_t {
-
-		    	// TODO: This is shit, dont rely on cached bounds
-		    	Box2D<float> bounds;
+			    // TODO: This is shit, dont rely on cached bounds
+			    Box2D<float> bounds;
 			    if (!geom.TryGetCachedBounds(bounds)) {
 				    mask.SetInvalid(out_idx);
 				    return 0;

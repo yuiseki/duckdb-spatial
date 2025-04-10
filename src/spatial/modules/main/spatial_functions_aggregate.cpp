@@ -50,9 +50,9 @@ struct ExtentAggFunction {
 		Serde::Deserialize(geom, aggregate.input.allocator, input.GetDataUnsafe(), input.GetSize());
 
 		auto bbox = sgl::box_xy::smallest();
-		if(sgl::ops::try_get_extent_xy(&geom, &bbox)) {
+		if (sgl::ops::try_get_extent_xy(&geom, &bbox)) {
 
-			if(!state.is_set) {
+			if (!state.is_set) {
 				state.is_set = true;
 				state.xmin = bbox.min.x;
 				state.xmax = bbox.max.x;

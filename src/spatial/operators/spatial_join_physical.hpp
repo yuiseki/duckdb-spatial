@@ -44,10 +44,6 @@ protected:
 	OperatorResultType ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
 	                                   GlobalOperatorState &gstate, OperatorState &state) const override;
 
-	// CachingOperatorState Interface
-	OperatorResultType ExecuteProbeJoin(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
-	                                    GlobalOperatorState &gstate, OperatorState &state) const;
-
 public:
 	// Sink interface
 	unique_ptr<GlobalSinkState> GetGlobalSinkState(ClientContext &context) const override;
@@ -82,6 +78,9 @@ public:
 	}
 
 public:
+	//! Returns the current progress percentage, or a negative value if progress bars are not supported
+	ProgressData GetProgress(ClientContext &context, GlobalSourceState &gstate) const override;
+
 	InsertionOrderPreservingMap<string> ParamsToString() const override;
 	string GetName() const override;
 };

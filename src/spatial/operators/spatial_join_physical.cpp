@@ -1,17 +1,15 @@
 #include "spatial/operators/spatial_join_physical.hpp"
-
-#include "duckdb/common/types/row/tuple_data_collection.hpp"
-#include "duckdb/common/types/row/tuple_data_iterator.hpp"
-#include "duckdb/planner/expression/bound_function_expression.hpp"
-#include "duckdb/planner/expression/bound_reference_expression.hpp"
-#include "duckdb/storage/buffer_manager.hpp"
 #include "spatial/geometry/geometry_type.hpp"
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/spatial_types.hpp"
 #include "spatial_join_logical.hpp"
 
-#include <duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp>
-#include <duckdb/execution/operator/join/physical_comparison_join.hpp>
+#include "duckdb/common/types/row/tuple_data_collection.hpp"
+#include "duckdb/common/types/row/tuple_data_iterator.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include "duckdb/execution/operator/join/physical_comparison_join.hpp"
+#include "duckdb/storage/buffer_manager.hpp"
 
 namespace duckdb {
 
@@ -810,8 +808,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			const auto filtered =
 			    lstate.join_match_executor.SelectExpression(lstate.match_pred_arg_chunk, lstate.match_sel);
 
-
-			if(IsLeftOuterJoin(join_type)) {
+			if (IsLeftOuterJoin(join_type)) {
 				for (idx_t i = 0; i < filtered; i++) {
 					// This is kinda crazy
 					// We're first selecting all the output rows that matched.
@@ -827,7 +824,8 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 				// We need to do this so we dont emit them again in the right-outer join phase
 				for (idx_t i = 0; i < filtered; i++) {
 					const auto match_source_idx = lstate.match_sel.get_index(i);
-					const auto data_ptr = (lstate.build_side_pointers[match_source_idx] + lstate.build_side_match_offset);
+					const auto data_ptr =
+					    (lstate.build_side_pointers[match_source_idx] + lstate.build_side_match_offset);
 					const auto bool_ptr = reinterpret_cast<bool *>(data_ptr);
 
 					*bool_ptr = true;
@@ -836,13 +834,13 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 
 			chunk.Slice(lstate.match_sel, filtered);
 
-			if(lstate.input_index != input.size()) {
+			if (lstate.input_index != input.size()) {
 				// We still have more input rows to process
 				lstate.state = JoinState::SCAN;
 				return OperatorResultType::HAVE_MORE_OUTPUT;
 			}
 
-			if(IsLeftOuterJoin(join_type)) {
+			if (IsLeftOuterJoin(join_type)) {
 				// Before we can ask for more input, we need to emit the outer left side
 				// But we need a clean output chunk, so we need to return here (cant just fall through)
 
@@ -908,10 +906,16 @@ public:
 
 		// We dont need to keep the tuples aroun after scanning
 		state.collection->InitializeScan(scan_state, std::move(column_ids), TupleDataPinProperties::DESTROY_AFTER_DONE);
+
+		tuples_maximum = state.collection->Count();
 	}
 
 	const PhysicalSpatialJoin &op;
 	TupleDataParallelScanState scan_state;
+
+	// How many tuples we have scanned so far
+	idx_t tuples_maximum = 0;
+	atomic<idx_t> tuples_scanned = {0};
 
 public:
 	idx_t MaxThreads() override {
@@ -970,6 +974,8 @@ SourceResultType PhysicalSpatialJoin::GetData(ExecutionContext &context, DataChu
 	SelectionVector sel(STANDARD_VECTOR_SIZE);
 
 	while (tuples->Scan(gstate.scan_state, lstate.scan_state, lstate.scan_chunk)) {
+		gstate.tuples_scanned += lstate.scan_chunk.size();
+
 		const auto matches = FlatVector::GetData<bool>(lstate.scan_chunk.data[0]);
 
 		idx_t result_count = 0;
@@ -1004,6 +1010,22 @@ SourceResultType PhysicalSpatialJoin::GetData(ExecutionContext &context, DataChu
 	}
 
 	return SourceResultType::FINISHED;
+}
+
+//----------------------------------------------------------------------------------------------------------------------
+// Misc
+//----------------------------------------------------------------------------------------------------------------------
+
+ProgressData PhysicalSpatialJoin::GetProgress(ClientContext &context, GlobalSourceState &gstate) const {
+	const auto &state = gstate.Cast<SpatialJoinGlobalSourceState>();
+	ProgressData res;
+	if (state.tuples_maximum) {
+		res.done = state.tuples_scanned.load();
+		res.total = state.tuples_maximum;
+	} else {
+		res.SetInvalid();
+	}
+	return res;
 }
 
 } // namespace duckdb
