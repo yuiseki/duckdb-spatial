@@ -542,14 +542,14 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 //----------------------------------------------------------------------------------------------------------------------
 // This is where we do the probing of the rtree.
 
-enum class JoinState { START = 0, INIT, PROBE, SCAN, EMIT, EMIT_LHS };
+enum class SpatialJoinState { START = 0, INIT, PROBE, SCAN, EMIT, EMIT_LHS };
 
 class SpatialJoinLocalOperatorState final : public CachingOperatorState {
 public:
 	bool is_initialized = false;
 
 	idx_t input_index = 0;
-	JoinState state = JoinState::START;
+	SpatialJoinState state = SpatialJoinState::START;
 
 	DataChunk overflow_matches;
 
@@ -647,7 +647,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		//--------------------------------------------------------------------------------------------------------------
 		// START
 		//--------------------------------------------------------------------------------------------------------------
-		case JoinState::START: {
+		case SpatialJoinState::START: {
 			// Check if the build side is empty
 			if (gstate.rtree == nullptr || gstate.rtree->Count() == 0) {
 				if (EmptyResultIfRHSIsEmpty()) {
@@ -665,12 +665,12 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 				return OperatorResultType::NEED_MORE_INPUT;
 			}
 
-			lstate.state = JoinState::INIT;
+			lstate.state = SpatialJoinState::INIT;
 		} // fall through
 		//--------------------------------------------------------------------------------------------------------------
 		// INIT
 		//--------------------------------------------------------------------------------------------------------------
-		case JoinState::INIT: {
+		case SpatialJoinState::INIT: {
 			// We have a new fresh input chunk
 			lstate.join_probe_executor.Execute(input, lstate.probe_side_key_chunk);
 			lstate.probe_side_key_chunk.data[0].ToUnifiedFormat(input.size(), lstate.probe_side_key_vformat);
@@ -683,15 +683,15 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 
 			// Reset the input index and move on to the next state
 			lstate.input_index = 0;
-			lstate.state = JoinState::PROBE;
+			lstate.state = SpatialJoinState::PROBE;
 
 		} // fall through
 		//--------------------------------------------------------------------------------------------------------------
 		// PROBE
 		//--------------------------------------------------------------------------------------------------------------
-		case JoinState::PROBE: {
+		case SpatialJoinState::PROBE: {
 			if (lstate.input_index == input.size()) {
-				lstate.state = JoinState::EMIT;
+				lstate.state = SpatialJoinState::EMIT;
 				continue;
 			}
 
@@ -717,12 +717,12 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 				continue;
 			}
 
-			lstate.state = JoinState::SCAN;
+			lstate.state = SpatialJoinState::SCAN;
 		} // fall through
 		//--------------------------------------------------------------------------------------------------------------
 		// SCAN
 		//--------------------------------------------------------------------------------------------------------------
-		case JoinState::SCAN: {
+		case SpatialJoinState::SCAN: {
 			const auto matches_remaining = lstate.scan.matches_count - lstate.scan.matches_idx;
 			if (matches_remaining == 0) {
 				// We are out of matches. Try to get the next probe
@@ -731,7 +731,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 				}
 				// Otherwise, we are done with this probe
 				lstate.input_index++;
-				lstate.state = JoinState::PROBE;
+				lstate.state = SpatialJoinState::PROBE;
 				continue;
 			}
 
@@ -789,12 +789,12 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 				continue;
 			}
 
-			lstate.state = JoinState::EMIT;
+			lstate.state = SpatialJoinState::EMIT;
 		} // fall through
 		//--------------------------------------------------------------------------------------------------------------
 		// EMIT
 		//--------------------------------------------------------------------------------------------------------------
-		case JoinState::EMIT: {
+		case SpatialJoinState::EMIT: {
 
 			// Start by adding the lhs columns
 			chunk.Slice(lstate.probe_side_row_chunk, lstate.probe_side_source_sel, output_index);
@@ -836,7 +836,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 
 			if (lstate.input_index != input.size()) {
 				// We still have more input rows to process
-				lstate.state = JoinState::SCAN;
+				lstate.state = SpatialJoinState::SCAN;
 				return OperatorResultType::HAVE_MORE_OUTPUT;
 			}
 
@@ -844,18 +844,18 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 				// Before we can ask for more input, we need to emit the outer left side
 				// But we need a clean output chunk, so we need to return here (cant just fall through)
 
-				lstate.state = JoinState::EMIT_LHS;
+				lstate.state = SpatialJoinState::EMIT_LHS;
 				return OperatorResultType::HAVE_MORE_OUTPUT;
 			}
 
 			// Otherwise, we need to wait for more input
-			lstate.state = JoinState::INIT;
+			lstate.state = SpatialJoinState::INIT;
 			return OperatorResultType::NEED_MORE_INPUT;
 		}
 		//--------------------------------------------------------------------------------------------------------------
 		// EMIT LEFT OUTER
 		//--------------------------------------------------------------------------------------------------------------
-		case JoinState::EMIT_LHS: {
+		case SpatialJoinState::EMIT_LHS: {
 			// Emit the outer left side
 
 			idx_t remaining_count = 0;
@@ -876,7 +876,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 				}
 			}
 
-			lstate.state = JoinState::INIT;
+			lstate.state = SpatialJoinState::INIT;
 			return OperatorResultType::NEED_MORE_INPUT;
 		}
 		default:
