@@ -2408,12 +2408,12 @@ struct ST_Extent_Approx {
 				auto &blob = input_data[row_idx];
 
 				// Try to get the cached bounding box from the blob
-				Box2D<double> bbox;
+				Box2D<float> bbox;
 				if (blob.TryGetCachedBounds(bbox)) {
-					min_x_data[i] = MathUtil::DoubleToFloatDown(bbox.min.x);
-					min_y_data[i] = MathUtil::DoubleToFloatDown(bbox.min.y);
-					max_x_data[i] = MathUtil::DoubleToFloatUp(bbox.max.x);
-					max_y_data[i] = MathUtil::DoubleToFloatUp(bbox.max.y);
+					min_x_data[i] = bbox.min.x;
+					min_y_data[i] = bbox.min.y;
+					max_x_data[i] =	bbox.max.x;
+					max_y_data[i] = bbox.max.y;
 				} else {
 					// No bounding box, return null
 					FlatVector::SetNull(result, i, true);
@@ -4969,21 +4969,16 @@ struct ST_Hilbert {
 		UnaryExecutor::ExecuteWithNulls<geometry_t, uint32_t>(
 		    args.data[0], result, args.size(),
 		    [&](const geometry_t &geom, ValidityMask &mask, idx_t out_idx) -> uint32_t {
-			    // TODO: This is shit, dont rely on cached bounds
-			    Box2D<double> bounds;
+
+		    	// TODO: This is shit, dont rely on cached bounds
+		    	Box2D<float> bounds;
 			    if (!geom.TryGetCachedBounds(bounds)) {
 				    mask.SetInvalid(out_idx);
 				    return 0;
 			    }
 
-			    Box2D<float> bounds_f;
-			    bounds_f.min.x = MathUtil::DoubleToFloatDown(bounds.min.x);
-			    bounds_f.min.y = MathUtil::DoubleToFloatDown(bounds.min.y);
-			    bounds_f.max.x = MathUtil::DoubleToFloatUp(bounds.max.x);
-			    bounds_f.max.y = MathUtil::DoubleToFloatUp(bounds.max.y);
-
-			    const auto dx = bounds_f.min.x + (bounds_f.max.x - bounds_f.min.x) / 2;
-			    const auto dy = bounds_f.min.y + (bounds_f.max.y - bounds_f.min.y) / 2;
+			    const auto dx = bounds.min.x + (bounds.max.x - bounds.min.x) / 2;
+			    const auto dy = bounds.min.y + (bounds.max.y - bounds.min.y) / 2;
 
 			    const auto hx = sgl::util::hilbert_f32_to_u32(dx);
 			    const auto hy = sgl::util::hilbert_f32_to_u32(dy);

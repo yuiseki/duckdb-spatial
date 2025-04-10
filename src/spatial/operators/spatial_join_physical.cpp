@@ -522,20 +522,14 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 			}
 
 			const auto &geom = geom_ptr[row_idx];
-			Box2D<double> bbox;
+			Box2D<float> bbox;
 			if (!geom.TryGetCachedBounds(bbox)) {
 				// Skip empty geometries
 				continue;
 			}
 
-			Box2D<float> bbox_f;
-			bbox_f.min.x = static_cast<float>(bbox.min.x);
-			bbox_f.min.y = static_cast<float>(bbox.min.y);
-			bbox_f.max.x = static_cast<float>(bbox.max.x);
-			bbox_f.max.y = static_cast<float>(bbox.max.y);
-
 			// Push the bounding box into the R-Tree
-			gstate.rtree->Push(bbox_f, rows_ptr[row_idx]);
+			gstate.rtree->Push(bbox, rows_ptr[row_idx]);
 		}
 	} while (iterator.Next());
 
@@ -550,14 +544,14 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 //----------------------------------------------------------------------------------------------------------------------
 // This is where we do the probing of the rtree.
 
-enum class JoinState { INIT = 0, PROBE, SCAN, EMIT, EMIT_LHS };
+enum class JoinState { START = 0, INIT, PROBE, SCAN, EMIT, EMIT_LHS };
 
 class SpatialJoinLocalOperatorState final : public CachingOperatorState {
 public:
 	bool is_initialized = false;
 
 	idx_t input_index = 0;
-	JoinState state = JoinState::INIT;
+	JoinState state = JoinState::START;
 
 	DataChunk overflow_matches;
 
@@ -585,11 +579,14 @@ public:
 	uint8_t left_outer_marker[STANDARD_VECTOR_SIZE] = {};
 
 	idx_t build_side_match_offset = 0;
+	unsafe_unique_array<data_ptr_t> build_side_pointers = nullptr;
 
 	explicit SpatialJoinLocalOperatorState(ClientContext &context)
 	    : join_probe_executor(context), join_match_executor(context), probe_side_source_sel(STANDARD_VECTOR_SIZE),
 	      build_side_source_sel(STANDARD_VECTOR_SIZE), build_side_target_sel(STANDARD_VECTOR_SIZE),
 	      match_sel(STANDARD_VECTOR_SIZE), lhs_match_sel(STANDARD_VECTOR_SIZE) {
+
+		build_side_pointers = make_unsafe_uniq_array<data_ptr_t>(STANDARD_VECTOR_SIZE);
 	}
 };
 
@@ -644,32 +641,34 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 	auto &gstate = gstate_p.Cast<SpatialJoinGlobalOperatorState>();
 	auto &lstate = lstate_p.Cast<SpatialJoinLocalOperatorState>();
 
-	// Check if the build side is empty
-	if (gstate.rtree == nullptr || gstate.rtree->Count() == 0) {
-		if (EmptyResultIfRHSIsEmpty()) {
-			return OperatorResultType::FINISHED;
-		}
-
-		// TODO: Add test for this (empty rhs with lhs projection map)
-
-		// Slice the input chunk to what we need
-		lstate.probe_side_row_chunk.ReferenceColumns(input, probe_side_output_columns);
-
-		// Construct empty join result
-		PhysicalComparisonJoin::ConstructEmptyJoinResult(join_type, false, lstate.probe_side_row_chunk, chunk);
-
-		return OperatorResultType::NEED_MORE_INPUT;
-	}
-
-	const auto &rtree = *gstate.rtree;
-
 	idx_t output_index = 0;
 	idx_t output_count = chunk.GetCapacity();
 
-	vector<data_ptr_t> build_side_ptrs;
-
 	while (true) {
 		switch (lstate.state) {
+		//--------------------------------------------------------------------------------------------------------------
+		// START
+		//--------------------------------------------------------------------------------------------------------------
+		case JoinState::START: {
+			// Check if the build side is empty
+			if (gstate.rtree == nullptr || gstate.rtree->Count() == 0) {
+				if (EmptyResultIfRHSIsEmpty()) {
+					return OperatorResultType::FINISHED;
+				}
+
+				// TODO: Add test for this (empty rhs with lhs projection map)
+
+				// Slice the input chunk to what we need
+				lstate.probe_side_row_chunk.ReferenceColumns(input, probe_side_output_columns);
+
+				// Construct empty join result
+				PhysicalComparisonJoin::ConstructEmptyJoinResult(join_type, false, lstate.probe_side_row_chunk, chunk);
+
+				return OperatorResultType::NEED_MORE_INPUT;
+			}
+
+			lstate.state = JoinState::INIT;
+		} // fall through
 		//--------------------------------------------------------------------------------------------------------------
 		// INIT
 		//--------------------------------------------------------------------------------------------------------------
@@ -706,21 +705,16 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 
 			const auto geom_ptr = FlatVector::GetData<geometry_t>(lstate.probe_side_key_chunk.data[0]);
 			const auto &geom = geom_ptr[lstate.input_index];
-			Box2D<double> bbox;
+
+			Box2D<float> bbox;
 			if (!geom.TryGetCachedBounds(bbox)) {
 				lstate.input_index++;
 				continue;
 			}
 
-			Box2D<float> bbox_f;
-			bbox_f.min.x = static_cast<float>(bbox.min.x);
-			bbox_f.min.y = static_cast<float>(bbox.min.y);
-			bbox_f.max.x = static_cast<float>(bbox.max.x);
-			bbox_f.max.y = static_cast<float>(bbox.max.y);
+			gstate.rtree->InitScan(lstate.scan, bbox);
 
-			rtree.InitScan(lstate.scan, bbox_f);
-
-			if (!rtree.Scan(lstate.scan)) {
+			if (!gstate.rtree->Scan(lstate.scan)) {
 				lstate.input_index++;
 				continue;
 			}
@@ -734,7 +728,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			const auto matches_remaining = lstate.scan.matches_count - lstate.scan.matches_idx;
 			if (matches_remaining == 0) {
 				// We are out of matches. Try to get the next probe
-				if (rtree.Scan(lstate.scan)) {
+				if (gstate.rtree->Scan(lstate.scan)) {
 					continue;
 				}
 				// Otherwise, we are done with this probe
@@ -781,10 +775,10 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			}
 
 			// Also collect the build side row pointers (if we have a match column)
-			if (PropagatesBuildSide(join_type)) {
+			if (IsRightOuterJoin(join_type)) {
 				const auto ptrs = FlatVector::GetData<data_ptr_t>(row_pointers);
 				for (idx_t i = 0; i < scan_count; i++) {
-					build_side_ptrs.push_back(ptrs[i]);
+					lstate.build_side_pointers[output_index + i] = ptrs[i];
 				}
 			}
 
@@ -815,39 +809,50 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 
 			const auto filtered =
 			    lstate.join_match_executor.SelectExpression(lstate.match_pred_arg_chunk, lstate.match_sel);
-			// Also mark lhs rows
-			for (idx_t i = 0; i < filtered; i++) {
-				// This is kinda crazy
-				// We're first selecting all the output rows that matched.
-				// And then figuring out which lhs row that belongs to, by using the probe_side_source_sel vector
-				lstate.left_outer_marker[lstate.probe_side_source_sel.get_index(lstate.match_sel.get_index(i))] = 1;
+
+
+			if(IsLeftOuterJoin(join_type)) {
+				for (idx_t i = 0; i < filtered; i++) {
+					// This is kinda crazy
+					// We're first selecting all the output rows that matched.
+					// And then figuring out which lhs row that belongs to, by using the probe_side_source_sel vector
+					const auto match_source_idx = lstate.match_sel.get_index(i);
+					const auto probe_source_idx = lstate.probe_side_source_sel.get_index(match_source_idx);
+					lstate.left_outer_marker[probe_source_idx] = 1;
+				}
 			}
 
-			if (PropagatesBuildSide(join_type)) {
+			if (IsRightOuterJoin(join_type)) {
 				// Mark each row in the build side as being matched.
 				// We need to do this so we dont emit them again in the right-outer join phase
 				for (idx_t i = 0; i < filtered; i++) {
-					auto ptr = reinterpret_cast<bool *>(build_side_ptrs[lstate.match_sel.get_index(i)] +
-					                                    lstate.build_side_match_offset);
-					*ptr = true;
+					const auto match_source_idx = lstate.match_sel.get_index(i);
+					const auto data_ptr = (lstate.build_side_pointers[match_source_idx] + lstate.build_side_match_offset);
+					const auto bool_ptr = reinterpret_cast<bool *>(data_ptr);
+
+					*bool_ptr = true;
 				}
 			}
 
 			chunk.Slice(lstate.match_sel, filtered);
 
-			if (lstate.input_index == input.size()) {
-				if (join_type == JoinType::LEFT || join_type == JoinType::OUTER) {
-					// TODO: early out if there are no matches?
-					lstate.state = JoinState::EMIT_LHS;
-					return OperatorResultType::HAVE_MORE_OUTPUT;
-				}
-
-				lstate.state = JoinState::INIT;
-				return OperatorResultType::NEED_MORE_INPUT;
+			if(lstate.input_index != input.size()) {
+				// We still have more input rows to process
+				lstate.state = JoinState::SCAN;
+				return OperatorResultType::HAVE_MORE_OUTPUT;
 			}
 
-			lstate.state = JoinState::SCAN;
-			return OperatorResultType::HAVE_MORE_OUTPUT;
+			if(IsLeftOuterJoin(join_type)) {
+				// Before we can ask for more input, we need to emit the outer left side
+				// But we need a clean output chunk, so we need to return here (cant just fall through)
+
+				lstate.state = JoinState::EMIT_LHS;
+				return OperatorResultType::HAVE_MORE_OUTPUT;
+			}
+
+			// Otherwise, we need to wait for more input
+			lstate.state = JoinState::INIT;
+			return OperatorResultType::NEED_MORE_INPUT;
 		}
 		//--------------------------------------------------------------------------------------------------------------
 		// EMIT LEFT OUTER
@@ -965,11 +970,11 @@ SourceResultType PhysicalSpatialJoin::GetData(ExecutionContext &context, DataChu
 	SelectionVector sel(STANDARD_VECTOR_SIZE);
 
 	while (tuples->Scan(gstate.scan_state, lstate.scan_state, lstate.scan_chunk)) {
-		auto match_ptr = FlatVector::GetData<bool>(lstate.scan_chunk.data[0]);
+		const auto matches = FlatVector::GetData<bool>(lstate.scan_chunk.data[0]);
 
 		idx_t result_count = 0;
 		for (idx_t i = 0; i < lstate.scan_chunk.size(); i++) {
-			if (!match_ptr[i]) {
+			if (!matches[i]) {
 				sel.set_index(result_count++, i);
 			}
 		}

@@ -166,17 +166,11 @@ ErrorData RTreeIndex::Insert(IndexLock &lock, DataChunk &input, Vector &rowid_ve
 
 		const auto rowid = rowid_data[i];
 
-		Box2D<double> box_2d;
-		if (!geom_data[i].TryGetCachedBounds(box_2d)) {
+		Box2D<float> bbox;
+		if (!geom_data[i].TryGetCachedBounds(bbox)) {
 			valid_buffer[i] = false;
 			continue;
 		}
-
-		Box2D<float> bbox;
-		bbox.min.x = MathUtil::DoubleToFloatDown(box_2d.min.x);
-		bbox.min.y = MathUtil::DoubleToFloatDown(box_2d.min.y);
-		bbox.max.x = MathUtil::DoubleToFloatUp(box_2d.max.x);
-		bbox.max.y = MathUtil::DoubleToFloatUp(box_2d.max.y);
 
 		entry_buffer[i] = {RTree::MakeRowId(rowid), bbox};
 		valid_buffer[i] = true;
@@ -227,16 +221,10 @@ void RTreeIndex::Delete(IndexLock &lock, DataChunk &input, Vector &rowid_vec) {
 		auto &geom = UnifiedVectorFormat::GetData<geometry_t>(geom_format)[geom_idx];
 		auto &rowid = UnifiedVectorFormat::GetData<row_t>(rowid_format)[rowid_idx];
 
-		Box2D<double> raw_bounds;
-		if (!geom.TryGetCachedBounds(raw_bounds)) {
+		Box2D<float> approx_bounds;
+		if (!geom.TryGetCachedBounds(approx_bounds)) {
 			continue;
 		}
-
-		Box2D<float> approx_bounds;
-		approx_bounds.min.x = MathUtil::DoubleToFloatDown(raw_bounds.min.x);
-		approx_bounds.min.y = MathUtil::DoubleToFloatDown(raw_bounds.min.y);
-		approx_bounds.max.x = MathUtil::DoubleToFloatUp(raw_bounds.max.x);
-		approx_bounds.max.y = MathUtil::DoubleToFloatUp(raw_bounds.max.y);
 
 		RTreeEntry new_entry = {RTree::MakeRowId(rowid), approx_bounds};
 		tree->Delete(new_entry);
