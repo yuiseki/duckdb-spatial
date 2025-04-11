@@ -1,6 +1,7 @@
 #pragma once
 #include "duckdb/execution/operator/join/physical_join.hpp"
 #include "duckdb/planner/operator/logical_join.hpp"
+#include "duckdb/common/types/row/tuple_data_layout.hpp"
 
 namespace duckdb {
 
@@ -19,16 +20,16 @@ public:
 
 	vector<column_t> build_side_output_columns;
 	vector<column_t> probe_side_output_columns;
+	vector<column_t> build_side_payload_columns;
 
 	vector<LogicalType> probe_side_output_types;
 	vector<LogicalType> build_side_output_types;
+	vector<LogicalType> build_side_payload_types;
 
-public:
-	// Layout helpers
-	idx_t BuildSideKeyColumn() const;
-	idx_t BuildSideMatchColumn() const;
-	idx_t BuildSidePayloadBeg() const;
-	idx_t BuildSidePayloadEnd() const;
+	vector<LogicalType> build_side_key_types;
+
+	TupleDataLayout layout;
+	idx_t build_side_match_offset = 0; // This is the byte offset to the match column for right/outer joins
 
 public:
 	// Operator Interface

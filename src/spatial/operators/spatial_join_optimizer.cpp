@@ -69,7 +69,6 @@ static void InsertSpatialJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 			// Throw?. No, push down the filter
 			extra_predicates.push_back(std::move(expr));
 			continue;
-			;
 		}
 
 		// Check if the expression is a spatial predicate

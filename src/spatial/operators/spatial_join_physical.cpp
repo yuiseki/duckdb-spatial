@@ -311,43 +311,61 @@ PhysicalSpatialJoin::PhysicalSpatialJoin(LogicalOperator &op, unique_ptr<Physica
 		probe_side_output_types.push_back(type);
 	}
 
-	// Build-side
+	// The build side is slightly different.
+	// Here we reorder the layout so that join keys are first, and the payload columns.
+	// For right outer, the match column is added at the end
+
+	unordered_map<idx_t, idx_t> conditions_in_layout;
+	// TODO: Loop over multiple conds
+	if (build_side_key->GetExpressionClass() == ExpressionClass::BOUND_REF) {
+		conditions_in_layout.emplace(build_side_key->Cast<BoundReferenceExpression>().index, 0); // TODO: i, not 0
+	}
+	// TODO Add rest too
+	build_side_key_types.push_back(build_side_key->return_type);
+
 	const auto &build_side_input_types = children[1]->types;
-	build_side_output_columns = lop.right_projection_map;
-	if (build_side_output_columns.empty()) {
-		build_side_output_columns.reserve(build_side_input_types.size());
+	auto right_projection_map_copy = lop.right_projection_map;
+	if (right_projection_map_copy.empty()) {
+		right_projection_map_copy.reserve(build_side_input_types.size());
 		for (idx_t i = 0; i < build_side_input_types.size(); i++) {
-			build_side_output_columns.emplace_back(i);
+			right_projection_map_copy.emplace_back(i);
 		}
 	}
-	for (const auto &build_col_idx : build_side_output_columns) {
-		const auto type = build_side_input_types[build_col_idx];
-		build_side_output_types.push_back(type);
+
+	for (auto &rhs_col : right_projection_map_copy) {
+		auto &rhs_type = build_side_input_types[rhs_col];
+
+		auto it = conditions_in_layout.find(rhs_col);
+		if (it == conditions_in_layout.end()) {
+			// This column is not a condition, but we want to include it in the output.
+			// And thus need to add it to the layout
+			build_side_output_columns.push_back(build_side_key_types.size() + build_side_payload_types.size());
+			build_side_payload_types.push_back(rhs_type);
+			build_side_payload_columns.push_back(rhs_col);
+		} else {
+			// This condition is part of the layout already, so just project it out
+			// (conditions are added to the layout separately below)
+			build_side_output_columns.push_back(rhs_col);
+		}
+		build_side_output_types.push_back(rhs_type);
 	}
-}
-// Layout helpers
-idx_t PhysicalSpatialJoin::BuildSideKeyColumn() const {
-	return 0;
-}
 
-idx_t PhysicalSpatialJoin::BuildSideMatchColumn() const {
-	D_ASSERT(PropagatesBuildSide(join_type));
-	return 1;
-}
-
-idx_t PhysicalSpatialJoin::BuildSidePayloadBeg() const {
+	vector<LogicalType> layout_types;
+	// Insert all condition types
+	layout_types.insert(layout_types.end(), build_side_key_types.begin(), build_side_key_types.end());
+	layout_types.insert(layout_types.end(), build_side_payload_types.begin(), build_side_payload_types.end());
 	if (PropagatesBuildSide(join_type)) {
-		return 2;
-	} else {
-		return 1;
+		// Add it to the ned
+		layout_types.push_back(LogicalType::BOOLEAN);
 	}
-}
 
-idx_t PhysicalSpatialJoin::BuildSidePayloadEnd() const {
+	// Initialize the layout
+	layout.Initialize(std::move(layout_types));
+
+	// For right/outer joins, this is where the build side match column goes
 	if (PropagatesBuildSide(join_type)) {
-		return 2 + build_side_output_columns.size();
-	} else {
-		return 1 + build_side_output_columns.size();
+		const auto &offsets = layout.GetOffsets();
+		build_side_match_offset = offsets[build_side_key_types.size() + build_side_payload_types.size()];
 	}
 }
 
@@ -367,8 +385,6 @@ string PhysicalSpatialJoin::GetName() const {
 //----------------------------------------------------------------------------------------------------------------------
 class SpatialJoinGlobalState final : public GlobalSinkState {
 public:
-	// TODO: Move the layout to the operator instead of the global state.
-	TupleDataLayout layout;
 	unique_ptr<TupleDataCollection> collection;
 
 	// This is initialized in the finalize state
@@ -378,22 +394,7 @@ public:
 unique_ptr<GlobalSinkState> PhysicalSpatialJoin::GetGlobalSinkState(ClientContext &context) const {
 
 	auto gstate = make_uniq<SpatialJoinGlobalState>();
-
-	// Add the build side key to the layout, which is always the first column
-	vector<LogicalType> layout_types;
-	layout_types.push_back(build_side_key->return_type);
-
-	// If the join type is outer, we need to add a marker column
-	if (PropagatesBuildSide(join_type)) {
-		layout_types.push_back(LogicalType::BOOLEAN);
-	}
-
-	for (const auto &type : build_side_output_types) {
-		layout_types.push_back(type);
-	}
-
-	gstate->layout.Initialize(layout_types);
-	gstate->collection = make_uniq<TupleDataCollection>(BufferManager::GetBufferManager(context), gstate->layout);
+	gstate->collection = make_uniq<TupleDataCollection>(BufferManager::GetBufferManager(context), layout);
 
 	return std::move(gstate);
 }
@@ -406,10 +407,13 @@ public:
 		collection = make_uniq<TupleDataCollection>(BufferManager::GetBufferManager(context), layout);
 		collection->InitializeAppend(append_state, TupleDataPinProperties::UNPIN_AFTER_DONE);
 
+		// TODO: Add other join condition expressions here
 		build_side_key_executor.AddExpression(*op.build_side_key);
+		build_side_key_chunk.Initialize(context, op.build_side_key_types);
 
-		build_side_key_chunk.Initialize(context, {op.build_side_key->return_type});
 		build_side_row_chunk.InitializeEmpty(layout.GetTypes());
+
+		build_side_payload_chunk.InitializeEmpty(op.build_side_payload_types);
 	}
 
 	TupleDataAppendState append_state;
@@ -417,6 +421,7 @@ public:
 
 	// Owning DataChunk containing the build side join-key
 	DataChunk build_side_key_chunk;
+	DataChunk build_side_payload_chunk;
 	// Referencing DataChunk chunk, having the same layout as the collection
 	DataChunk build_side_row_chunk;
 	// Used to execute the build side join key expression
@@ -425,7 +430,7 @@ public:
 
 unique_ptr<LocalSinkState> PhysicalSpatialJoin::GetLocalSinkState(ExecutionContext &context) const {
 	auto &gstate = sink_state->Cast<SpatialJoinGlobalState>();
-	auto lstate = make_uniq<SpatialJoinLocalState>(*this, context.client, gstate.layout);
+	auto lstate = make_uniq<SpatialJoinLocalState>(*this, context.client, layout);
 	return std::move(lstate);
 }
 
@@ -433,29 +438,28 @@ SinkResultType PhysicalSpatialJoin::Sink(ExecutionContext &context, DataChunk &c
 
 	auto &lstate = input.local_state.Cast<SpatialJoinLocalState>();
 
-	// Reset chunks
 	lstate.build_side_key_chunk.Reset();
-	lstate.build_side_row_chunk.Reset();
-
-	// Execute the build side join key expression
 	lstate.build_side_key_executor.Execute(chunk, lstate.build_side_key_chunk);
 
-	// Make the first column of the build side row chunk a reference to the build side join key
-	const auto key_offset = BuildSideKeyColumn();
-	lstate.build_side_row_chunk.data[key_offset].Reference(lstate.build_side_key_chunk.data[0]);
-
-	// If we have a match column, we need to add it to the build side row chunk
-	if (PropagatesBuildSide(join_type)) {
-		const auto match_offset = BuildSideMatchColumn();
-		lstate.build_side_row_chunk.data[match_offset].Reference(Value::BOOLEAN(false));
+	if (build_side_payload_types.empty()) {
+		// There are only keys. Make the payload chunk empty
+		lstate.build_side_payload_chunk.SetCardinality(chunk.size());
+	} else {
+		lstate.build_side_payload_chunk.ReferenceColumns(chunk, build_side_payload_columns);
 	}
 
-	const auto payload_beg = BuildSidePayloadBeg();
-	const auto payload_end = BuildSidePayloadEnd();
+	// Now reference the key chunk, the payload chunk, and the build side match column (if needed)
+	idx_t layout_col_idx = 0;
+	for (auto &key_col : lstate.build_side_key_chunk.data) {
+		lstate.build_side_row_chunk.data[layout_col_idx++].Reference(key_col);
+	}
 
-	for (idx_t i = payload_beg; i < payload_end; i++) {
-		const auto col = build_side_output_columns[i - payload_beg];
-		lstate.build_side_row_chunk.data[i].Reference(chunk.data[col]);
+	for (auto &payload_col : lstate.build_side_payload_chunk.data) {
+		lstate.build_side_row_chunk.data[layout_col_idx++].Reference(payload_col);
+	}
+
+	if (PropagatesBuildSide(join_type)) {
+		lstate.build_side_row_chunk.data[layout_col_idx++].Reference(Value::BOOLEAN(false));
 	}
 
 	// Set the cardinality to match the input
@@ -508,7 +512,9 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 
 		// We only need to fetch the build-side key column to build the rtree.
 		// The key column is always the first column in the layout.
-		gstate.collection->Gather(row_pointer_vector, sel, row_count, BuildSideKeyColumn(), geom_vec, sel, nullptr);
+		constexpr auto build_side_key_col = 0;      // TODO: layout_key_col_idx
+		D_ASSERT(build_side_key_types.size() == 1); // TODO: remove this
+		gstate.collection->Gather(row_pointer_vector, sel, row_count, build_side_key_col, geom_vec, sel, nullptr);
 
 		// Get a pointer to what we just gathered
 		const auto geom_ptr = FlatVector::GetData<geometry_t>(geom_vec);
@@ -613,11 +619,6 @@ unique_ptr<OperatorState> PhysicalSpatialJoin::GetOperatorState(ExecutionContext
 	lstate->probe_side_key_chunk.Initialize(context.client, {probe_side_key->return_type});
 	lstate->build_side_key_chunk.Initialize(context.client, {build_side_key->return_type});
 	lstate->match_pred_arg_chunk.Initialize(context.client, {probe_side_key->return_type, build_side_key->return_type});
-
-	if (PropagatesBuildSide(join_type)) {
-		lstate->build_side_match_offset =
-		    sink_state->Cast<SpatialJoinGlobalState>().layout.GetOffsets()[BuildSideMatchColumn()];
-	}
 
 	return std::move(lstate);
 }
@@ -750,23 +751,22 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			}
 
 			// Fetch each column from the build side
-			const auto probe_side_col_count = probe_side_output_columns.size();
-			const auto build_side_key_col = BuildSideKeyColumn();
-			const auto payload_offset = BuildSidePayloadBeg();
+			D_ASSERT(build_side_key_types.size() == 1);
+			// TODO: Add more key conditions here
+			constexpr auto build_side_key_col = 0;
 
 			auto &row_pointers = lstate.scan.matches;
 
-			// Collect the build side join key (at index 0)
+			// Collect the build side join key(s)
+			// TODO: Multiple join keys
 			gstate.collection->Gather(row_pointers, lstate.build_side_source_sel, scan_count, build_side_key_col,
 			                          lstate.build_side_key_chunk.data[0], lstate.build_side_target_sel, nullptr);
 
 			// Now, lets collect the rest of the build side columns
 			for (idx_t i = 0; i < build_side_output_columns.size(); i++) {
-
-				const auto build_side_col_idx = payload_offset + i;
-				auto &target = chunk.data[probe_side_col_count + i];
-
-				D_ASSERT(gstate.collection->GetLayout().GetTypes()[build_side_col_idx] == target.GetType());
+				auto &target = chunk.data[probe_side_output_columns.size() + i];
+				const auto build_side_col_idx = build_side_output_columns[i];
+				D_ASSERT(target.GetType() == build_side_output_types[i]);
 
 				gstate.collection->Gather(row_pointers, lstate.build_side_source_sel, scan_count, build_side_col_idx,
 				                          target, lstate.build_side_target_sel, nullptr);
@@ -822,13 +822,15 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			if (IsRightOuterJoin(join_type)) {
 				// Mark each row in the build side as being matched.
 				// We need to do this so we dont emit them again in the right-outer join phase
+
+				// This is where the bool match offset is
+				const auto tuple_size = build_side_match_offset;
+
 				for (idx_t i = 0; i < filtered; i++) {
 					const auto match_source_idx = lstate.match_sel.get_index(i);
-					const auto data_ptr =
-					    (lstate.build_side_pointers[match_source_idx] + lstate.build_side_match_offset);
-					const auto bool_ptr = reinterpret_cast<bool *>(data_ptr);
-
-					*bool_ptr = true;
+					const auto data_ptr = lstate.build_side_pointers[match_source_idx] + tuple_size;
+					// Set the match column to true
+					Store<bool>(true, data_ptr);
 				}
 			}
 
@@ -897,12 +899,11 @@ public:
 
 		// Initialize a parallel scan
 		vector<column_t> column_ids;
-		// We dont want to scan the first column (which contains the build-side arg)
-		// But we do want to scan the match column
-		column_ids.push_back(op.BuildSideMatchColumn());
-		for (idx_t i = op.BuildSidePayloadBeg(); i < op.BuildSidePayloadEnd(); i++) {
-			column_ids.push_back(i);
-		}
+
+		column_ids.insert(column_ids.end(), op.build_side_output_columns.begin(), op.build_side_output_columns.end());
+
+		// Also add the match column
+		column_ids.push_back(op.build_side_key_types.size() + op.build_side_payload_types.size());
 
 		// We dont need to keep the tuples aroun after scanning
 		state.collection->InitializeScan(scan_state, std::move(column_ids), TupleDataPinProperties::DESTROY_AFTER_DONE);
@@ -934,14 +935,12 @@ public:
 		D_ASSERT(op.sink_state);
 		const auto &state = op.op_state->Cast<SpatialJoinGlobalOperatorState>();
 
-		// Initialize a parallel scan
 		vector<column_t> column_ids;
-		// We dont want to scan the first column (which contains the build-side arg)
-		// But we do want to scan the match column
-		column_ids.push_back(op.BuildSideMatchColumn());
-		for (idx_t i = op.BuildSidePayloadBeg(); i < op.BuildSidePayloadEnd(); i++) {
-			column_ids.push_back(i);
-		}
+
+		column_ids.insert(column_ids.end(), op.build_side_output_columns.begin(), op.build_side_output_columns.end());
+
+		// Also add the match column
+		column_ids.push_back(op.build_side_key_types.size() + op.build_side_payload_types.size());
 
 		// We dont need to keep the tuples aroun after scanning
 		state.collection->InitializeScan(scan_state, std::move(column_ids), TupleDataPinProperties::DESTROY_AFTER_DONE);
@@ -976,7 +975,7 @@ SourceResultType PhysicalSpatialJoin::GetData(ExecutionContext &context, DataChu
 	while (tuples->Scan(gstate.scan_state, lstate.scan_state, lstate.scan_chunk)) {
 		gstate.tuples_scanned += lstate.scan_chunk.size();
 
-		const auto matches = FlatVector::GetData<bool>(lstate.scan_chunk.data[0]);
+		const auto matches = FlatVector::GetData<bool>(lstate.scan_chunk.data.back());
 
 		idx_t result_count = 0;
 		for (idx_t i = 0; i < lstate.scan_chunk.size(); i++) {
@@ -1001,7 +1000,7 @@ SourceResultType PhysicalSpatialJoin::GetData(ExecutionContext &context, DataChu
 			for (idx_t i = 0; i < rhs_col_count; i++) {
 				auto &target = chunk.data[lhs_col_count + i];
 				// Offset by one here to skip the match column
-				target.Slice(lstate.scan_chunk.data[i + 1], lstate.match_sel, result_count);
+				target.Slice(lstate.scan_chunk.data[i], lstate.match_sel, result_count);
 			}
 
 			chunk.SetCardinality(result_count);
