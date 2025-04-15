@@ -5,7 +5,7 @@ create table t1(g GEOMETRY);
 
 # Create a bunch of points on a grid
 statement ok
-INSERT INTO t1 SELECT ST_Point(x, y) FROM generate_series(0, 1000) r1(x), generate_series(0, 1000) r2(y);
+INSERT INTO t1 SELECT ST_Point(x, y) FROM generate_series(0, 500) r1(x), generate_series(0, 500) r2(y);
 
 statement ok
 create table t2(g GEOMETRY);

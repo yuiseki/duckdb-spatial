@@ -1,0 +1,38 @@
+require spatial
+
+# Create a bunch of points on a grid
+# between 0 and 500 in both x and y directions
+statement ok
+CREATE TABLE lhs AS
+SELECT
+    ST_Point(x, y) as geom,
+    (y * 50) + x // 10 as id
+FROM
+    generate_series(0, 500, 10) r1(x),
+    generate_series(0, 500, 10) r2(y);
+
+# Make the RHS smaller, and completely out of the LHS
+statement ok
+CREATE TABLE rhs AS
+SELECT
+    ST_Buffer(ST_Point(x, y), 5) as geom,
+    (y * 50) + x // 10 as id
+FROM
+    generate_series(1000, 1100, 10) r1(x),
+    generate_series(1000, 1100, 10) r2(y);
+
+#-----------------------------------------------------------------------------------------------------------------------
+# First pass, disable extension optimizer
+#-----------------------------------------------------------------------------------------------------------------------
+statement ok
+pragma disabled_optimizers='extension'
+
+# There should be no matches
+query IIII
+SELECT * FROM lhs JOIN rhs ON st_intersects(lhs.geom, rhs.geom);
+----
+
+# Now, translate the RHS within range and join
+query IIII rowsort translate_res
+SELECT * FROM lhs JOIN rhs ON ST_Intersects(lhs.geom, ST_Translate(rhs.geom, -1000, -1000));
+----

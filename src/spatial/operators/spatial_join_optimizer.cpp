@@ -9,6 +9,11 @@
 
 namespace duckdb {
 
+// All of these imply bounding box intersection
+static case_insensitive_set_t spatial_predicate_map = {
+    "ST_Equals",   "ST_Intersects", "ST_Touches", "ST_Crosses",   "ST_Within",
+    "ST_Contains", "ST_Overlaps",   "ST_Covers",  "ST_CoveredBy", "ST_ContainsProperly"};
+
 static void InsertSpatialJoin(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
 	auto &op = *plan;
 
@@ -55,6 +60,10 @@ static void InsertSpatialJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 		return;
 	}
 
+	// TODO: This whole logic is a work in progress.
+	// it does a bunch of extra work trying to separate the predicates, which doesnt matter because we only support
+	// a single join condition for now anyway
+
 	// The spatial join condition
 	unique_ptr<Expression> spatial_pred_expr = nullptr;
 
@@ -78,7 +87,9 @@ static void InsertSpatialJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 		}
 
 		auto &func = expr->Cast<BoundFunctionExpression>();
-		if (func.function.name != "ST_Intersects") {
+
+		// The function must be a recognized spatial predicate
+		if (spatial_predicate_map.count(func.function.name) == 0) {
 			extra_predicates.push_back(std::move(expr));
 			continue;
 		}
@@ -92,7 +103,6 @@ static void InsertSpatialJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 			continue;
 		}
 
-		// TODO: Support more predicates, and flip/invert them if neccessary
 		if (left_side == JoinSide::RIGHT) {
 			// TODO: Flip function here if needed (if not symmetric)
 			std::swap(func.children[0], func.children[1]);
