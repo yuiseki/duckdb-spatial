@@ -2661,12 +2661,12 @@ struct ST_Extent_Approx {
 				auto &blob = input_data[row_idx];
 
 				// Try to get the cached bounding box from the blob
-				Box2D<double> bbox;
+				Box2D<float> bbox;
 				if (blob.TryGetCachedBounds(bbox)) {
-					min_x_data[i] = MathUtil::DoubleToFloatDown(bbox.min.x);
-					min_y_data[i] = MathUtil::DoubleToFloatDown(bbox.min.y);
-					max_x_data[i] = MathUtil::DoubleToFloatUp(bbox.max.x);
-					max_y_data[i] = MathUtil::DoubleToFloatUp(bbox.max.y);
+					min_x_data[i] = bbox.min.x;
+					min_y_data[i] = bbox.min.y;
+					max_x_data[i] = bbox.max.x;
+					max_y_data[i] = bbox.max.y;
 				} else {
 					// No bounding box, return null
 					FlatVector::SetNull(result, i, true);
@@ -5169,83 +5169,6 @@ struct ST_Distance_Sphere {
 struct ST_Hilbert {
 
 	//------------------------------------------------------------------------------------------------------------------
-	// Hilbert Curve Encoding
-	// From (Public Domain): https://github.com/rawrunprotected/hilbert_curves
-	//------------------------------------------------------------------------------------------------------------------
-	static uint32_t Interleave(uint32_t x) {
-		x = (x | (x << 8)) & 0x00FF00FF;
-		x = (x | (x << 4)) & 0x0F0F0F0F;
-		x = (x | (x << 2)) & 0x33333333;
-		x = (x | (x << 1)) & 0x55555555;
-		return x;
-	}
-
-	static uint32_t HilbertEncode(uint32_t n, uint32_t x, uint32_t y) {
-		x = x << (16 - n);
-		y = y << (16 - n);
-
-		// Initial prefix scan round, prime with x and y
-		uint32_t a = x ^ y;
-		uint32_t b = 0xFFFF ^ a;
-		uint32_t c = 0xFFFF ^ (x | y);
-		uint32_t d = x & (y ^ 0xFFFF);
-		uint32_t A = a | (b >> 1);
-		uint32_t B = (a >> 1) ^ a;
-		uint32_t C = ((c >> 1) ^ (b & (d >> 1))) ^ c;
-		uint32_t D = ((a & (c >> 1)) ^ (d >> 1)) ^ d;
-
-		a = A;
-		b = B;
-		c = C;
-		d = D;
-		A = ((a & (a >> 2)) ^ (b & (b >> 2)));
-		B = ((a & (b >> 2)) ^ (b & ((a ^ b) >> 2)));
-		C ^= ((a & (c >> 2)) ^ (b & (d >> 2)));
-		D ^= ((b & (c >> 2)) ^ ((a ^ b) & (d >> 2)));
-
-		a = A;
-		b = B;
-		c = C;
-		d = D;
-		A = ((a & (a >> 4)) ^ (b & (b >> 4)));
-		B = ((a & (b >> 4)) ^ (b & ((a ^ b) >> 4)));
-		C ^= ((a & (c >> 4)) ^ (b & (d >> 4)));
-		D ^= ((b & (c >> 4)) ^ ((a ^ b) & (d >> 4)));
-
-		// Final round and projection
-		a = A;
-		b = B;
-		c = C;
-		d = D;
-		C ^= ((a & (c >> 8)) ^ (b & (d >> 8)));
-		D ^= ((b & (c >> 8)) ^ ((a ^ b) & (d >> 8)));
-
-		// Undo transformation prefix scan
-		a = C ^ (C >> 1);
-		b = D ^ (D >> 1);
-
-		// Recover index bits
-		uint32_t i0 = x ^ y;
-		uint32_t i1 = b | (0xFFFF ^ (i0 | a));
-
-		return ((Interleave(i1) << 1) | Interleave(i0)) >> (32 - 2 * n);
-	}
-
-	static uint32_t FloatToUint32(float f) {
-		if (std::isnan(f)) {
-			return 0xFFFFFFFF;
-		}
-		uint32_t res;
-		memcpy(&res, &f, sizeof(res));
-		if ((res & 0x80000000) != 0) {
-			res ^= 0xFFFFFFFF;
-		} else {
-			res |= 0x80000000;
-		}
-		return res;
-	}
-
-	//------------------------------------------------------------------------------------------------------------------
 	// BOX_2D / BOX_2F
 	//------------------------------------------------------------------------------------------------------------------
 	template <class T>
@@ -5270,7 +5193,7 @@ struct ST_Hilbert {
 			    // TODO: Check for overflow
 			    const auto hilbert_x = static_cast<uint32_t>((x - bounds.a_val) * hilbert_width);
 			    const auto hilbert_y = static_cast<uint32_t>((y - bounds.b_val) * hilbert_height);
-			    const auto h = HilbertEncode(16, hilbert_x, hilbert_y);
+			    const auto h = sgl::util::hilbert_encode(16, hilbert_x, hilbert_y);
 			    return UINT32_TYPE {h};
 		    });
 	}
@@ -5294,7 +5217,7 @@ struct ST_Hilbert {
 			    // TODO: Check for overflow
 			    const auto hilbert_x = static_cast<uint32_t>((x.val - box.a_val) * hilbert_width);
 			    const auto hilbert_y = static_cast<uint32_t>((y.val - box.b_val) * hilbert_height);
-			    const auto h = HilbertEncode(16, hilbert_x, hilbert_y);
+			    const auto h = sgl::util::hilbert_encode(16, hilbert_x, hilbert_y);
 			    return UINT32_TYPE {h};
 		    });
 	}
@@ -5307,25 +5230,19 @@ struct ST_Hilbert {
 		    args.data[0], result, args.size(),
 		    [&](const geometry_t &geom, ValidityMask &mask, idx_t out_idx) -> uint32_t {
 			    // TODO: This is shit, dont rely on cached bounds
-			    Box2D<double> bounds;
+			    Box2D<float> bounds;
 			    if (!geom.TryGetCachedBounds(bounds)) {
 				    mask.SetInvalid(out_idx);
 				    return 0;
 			    }
 
-			    Box2D<float> bounds_f;
-			    bounds_f.min.x = MathUtil::DoubleToFloatDown(bounds.min.x);
-			    bounds_f.min.y = MathUtil::DoubleToFloatDown(bounds.min.y);
-			    bounds_f.max.x = MathUtil::DoubleToFloatUp(bounds.max.x);
-			    bounds_f.max.y = MathUtil::DoubleToFloatUp(bounds.max.y);
+			    const auto dx = bounds.min.x + (bounds.max.x - bounds.min.x) / 2;
+			    const auto dy = bounds.min.y + (bounds.max.y - bounds.min.y) / 2;
 
-			    const auto dx = bounds_f.min.x + (bounds_f.max.x - bounds_f.min.x) / 2;
-			    const auto dy = bounds_f.min.y + (bounds_f.max.y - bounds_f.min.y) / 2;
+			    const auto hx = sgl::util::hilbert_f32_to_u32(dx);
+			    const auto hy = sgl::util::hilbert_f32_to_u32(dy);
 
-			    const auto hx = FloatToUint32(dx);
-			    const auto hy = FloatToUint32(dy);
-
-			    return HilbertEncode(16, hx, hy);
+			    return sgl::util::hilbert_encode(16, hx, hy);
 		    });
 	}
 
@@ -5361,7 +5278,7 @@ struct ST_Hilbert {
 			    const auto hilbert_x = static_cast<uint32_t>((dx - bounds.a_val) * hilbert_width);
 			    const auto hilbert_y = static_cast<uint32_t>((dy - bounds.b_val) * hilbert_height);
 
-			    const auto h = HilbertEncode(16, hilbert_x, hilbert_y);
+			    const auto h = sgl::util::hilbert_encode(16, hilbert_x, hilbert_y);
 			    return UINT32_TYPE {h};
 		    });
 	}

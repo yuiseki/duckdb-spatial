@@ -14,6 +14,7 @@
 #include "spatial/spatial_optimizers.hpp"
 #include "spatial/spatial_types.hpp"
 #include "spatial/spatial_geoarrow.hpp"
+#include "spatial/operators/spatial_join_optimizer.hpp"
 
 namespace duckdb {
 
@@ -26,6 +27,7 @@ static void LoadInternal(DatabaseInstance &instance) {
 	RegisterSpatialScalarFunctions(instance);
 	RegisterSpatialAggregateFunctions(instance);
 	RegisterSpatialTableFunctions(instance);
+	SpatialJoinRule::Register(instance);
 	RegisterSpatialOptimizers(instance);
 	GeoArrow::Register(instance);
 

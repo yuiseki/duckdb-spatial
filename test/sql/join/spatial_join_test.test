@@ -1,0 +1,42 @@
+require spatial
+
+statement ok
+create table t1(g GEOMETRY);
+
+# Create a bunch of points on a grid
+statement ok
+INSERT INTO t1 SELECT ST_Point(x, y) FROM generate_series(0, 1000) r1(x), generate_series(0, 1000) r2(y);
+
+statement ok
+create table t2(g GEOMETRY);
+
+# Create a bunch of boxes, in a grid of 10x10
+statement ok
+INSERT INTO t2 SELECT ST_MakeEnvelope(x * 10, y * 10, (x+1) * 10, (y+1) * 10) FROM generate_series(0, 10) r1(x), generate_series(0, 10) r2(y);
+
+query I
+SELECT count(*) FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----
+14641
+
+query II
+EXPLAIN SELECT * FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----
+physical_plan	<REGEX>:.*SPATIAL_JOIN.*
+
+query II rowsort result
+SELECT * FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----
+
+# Now disable the optimization
+statement ok
+set disabled_optimizers='extension'
+
+query II
+EXPLAIN SELECT * FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----
+physical_plan	<REGEX>:.*BLOCKWISE_NL_JOIN.*
+
+query II rowsort result
+SELECT * FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----
