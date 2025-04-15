@@ -9,19 +9,6 @@
 
 namespace duckdb {
 
-unique_ptr<Expression> SpatialJoinCondition::ToExpr(ClientContext &context) const {
-	auto &catalog = Catalog::GetSystemCatalog(context);
-
-	auto &func_set = catalog.GetEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY, DEFAULT_SCHEMA, predicate)
-	                     .Cast<ScalarFunctionCatalogEntry>();
-
-	auto func = func_set.functions.GetFunctionByArguments(context, {left->return_type, right->return_type});
-	vector<unique_ptr<Expression>> args;
-	args.push_back(left->Copy());
-	args.push_back(right->Copy());
-	return make_uniq_base<Expression, BoundFunctionExpression>(func.return_type, func, std::move(args), nullptr);
-}
-
 LogicalSpatialJoin::LogicalSpatialJoin(JoinType join_type_p) : join_type(join_type_p) {
 }
 

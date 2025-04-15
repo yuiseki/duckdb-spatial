@@ -4,15 +4,6 @@
 
 namespace duckdb {
 
-struct SpatialJoinCondition {
-	unique_ptr<Expression> left;
-	unique_ptr<Expression> right;
-	string predicate;
-
-	// TODO: Make non-const, destroy children
-	unique_ptr<Expression> ToExpr(ClientContext &context) const;
-};
-
 class LogicalSpatialJoin final : public LogicalExtensionOperator {
 public:
 	static constexpr auto TYPE = LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR;

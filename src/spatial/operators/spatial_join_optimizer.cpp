@@ -148,7 +148,7 @@ static void TryInsertSpatialJoin(OptimizerExtensionInput &input, unique_ptr<Logi
 	}
 }
 
-void SpatialJoinRule::Register(DatabaseInstance &db) {
+void SpatialJoinOptimizer::Register(DatabaseInstance &db) {
 
 	OptimizerExtension optimizer;
 	optimizer.optimize_function = TryInsertSpatialJoin;

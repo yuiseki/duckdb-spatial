@@ -4,7 +4,7 @@ namespace duckdb {
 
 class DatabaseInstance;
 
-struct SpatialJoinRule {
+struct SpatialJoinOptimizer {
 	static void Register(DatabaseInstance &db);
 };
 
