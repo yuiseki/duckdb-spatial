@@ -42,6 +42,7 @@ public:
 		ptr = ptr_p;
 		len = len_p;
 	}
+
 private:
 	T *ptr = nullptr;
 	size_t len = 0;
@@ -80,7 +81,7 @@ public:
 
 		layer_bounds.push_back(nodes);
 
-		if(item_count_p == 0) {
+		if (item_count_p == 0) {
 			return;
 		}
 
@@ -89,7 +90,6 @@ public:
 			nodes += count;
 			layer_bounds.push_back(nodes);
 		} while (count > 1);
-
 
 		box_array_mem = alloc.Allocate(sizeof(Box) * nodes);
 		idx_array_mem = alloc.Allocate(sizeof(uint32_t) * nodes);
@@ -484,7 +484,7 @@ public:
 };
 
 unique_ptr<LocalSinkState> PhysicalSpatialJoin::GetLocalSinkState(ExecutionContext &context) const {
-	//auto &gstate = sink_state->Cast<SpatialJoinGlobalState>();
+	// auto &gstate = sink_state->Cast<SpatialJoinGlobalState>();
 	auto lstate = make_uniq<SpatialJoinLocalState>(*this, context.client, layout);
 	return std::move(lstate);
 }
