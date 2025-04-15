@@ -1037,7 +1037,7 @@ inline void affine_transform(sgl::allocator *alloc, sgl::geometry *geom, const s
 			}
 
 			// Now, apply the transformation
-			vertex_xyzm old_vertex = {0, 0, 0, 0};
+			vertex_xyzm old_vertex = {0, 0, 1, 1};
 			for (uint32_t i = 0; i < vertex_count; i++) {
 				memcpy(&old_vertex, old_vertex_data + i * vertex_width, vertex_width);
                 auto new_vertex = matrix->apply_xyz(old_vertex);

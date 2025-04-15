@@ -710,8 +710,6 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 					return OperatorResultType::FINISHED;
 				}
 
-				// TODO: Add test for this (empty rhs with lhs projection map)
-
 				// Slice the input chunk to what we need
 				lstate.probe_side_row_chunk.ReferenceColumns(input, probe_side_output_columns);
 
