@@ -1,0 +1,102 @@
+require spatial
+
+statement ok
+SELECT setseed(0.5);
+
+statement ok
+create table t1(g GEOMETRY);
+
+statement ok
+INSERT INTO t1
+	SELECT ST_Point(x + (random() * 2 - 1) * 10, y + (random() * 2 - 1) * 10)
+FROM generate_series(0, 1000, 20) r1(x), generate_series(0, 1000, 20) r2(y);
+
+statement ok
+create table t2(g GEOMETRY);
+
+# Generate a bunch of blobs (not quite squares) that overlap slightly
+statement ok
+INSERT INTO t2 SELECT
+	st_makepolygon(
+		st_makeline(
+			list_append(
+				list_prepend(
+					st_point(x + 70, y),
+					list_transform(
+						list_sort([{u: random() * 2 * 3.14, w: (random() * 2 - 1) * 15} for _ in range(1,16)]),
+						v -> st_point(x + cos(v.u) * 70 + cos(v.u) * v.w, y + sin(v.u) * 70 + sin(v.u) * v.w))
+				),
+				st_point(x + 70, y)
+			)
+		)
+	)
+FROM generate_series(0, 1000, 100) r1(x), generate_series(0, 1000, 100) r2(y);
+
+# Now disable the spatial join
+statement ok
+set disabled_optimizers='extension';
+
+query II
+EXPLAIN SELECT count(*) FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----
+physical_plan	<REGEX>:.*BLOCKWISE_NL_JOIN.*
+
+query I
+SELECT count(*) FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----
+3576
+
+# Now enable the spatial join again
+statement ok
+set disabled_optimizers='';
+
+# Check that we get a SPATIAL_JOIN plan
+query II
+EXPLAIN SELECT count(*) FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----
+physical_plan	<REGEX>:.*SPATIAL_JOIN.*
+
+query I
+SELECT count(*) FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----
+3576
+
+
+# Check that we get a SPATIAL_JOIN plan
+query II
+EXPLAIN SELECT count(*) FROM t1 JOIN t2 ON st_intersects(st_buffer(t1.g, 1), st_buffer(t2.g, 1));
+----
+physical_plan	<REGEX>:.*SPATIAL_JOIN.*
+
+# Also try with buffering
+query I
+SELECT count(*) FROM t1 JOIN t2 ON st_intersects(st_buffer(t1.g, 1), st_buffer(t2.g, 1));
+----
+3827
+
+statement ok
+set disabled_optimizers='extension';
+
+# Also try with buffering
+query II
+EXPLAIN SELECT count(*) FROM t1 JOIN t2 ON st_intersects(st_buffer(t1.g, 1), st_buffer(t2.g, 1));
+----
+physical_plan	<REGEX>:.*BLOCKWISE_NL_JOIN.*
+
+query I
+SELECT count(*) FROM t1 JOIN t2 ON st_intersects(st_buffer(t1.g, 1), st_buffer(t2.g, 1));
+----
+3827
+
+### Now do some real resultset checking
+query II rowsort resultset
+SELECT * FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----
+
+# Now enable the spatial join again
+statement ok
+set disabled_optimizers='';
+
+query II rowsort resultset
+SELECT * FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----

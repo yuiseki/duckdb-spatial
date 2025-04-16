@@ -11,9 +11,9 @@
 #include "spatial/modules/osm/osm_module.hpp"
 #include "spatial/modules/proj/proj_module.hpp"
 #include "spatial/modules/shapefile/shapefile_module.hpp"
-#include "spatial/spatial_optimizers.hpp"
 #include "spatial/spatial_types.hpp"
 #include "spatial/spatial_geoarrow.hpp"
+#include "spatial/operators/spatial_join_optimizer.hpp"
 
 namespace duckdb {
 
@@ -26,7 +26,7 @@ static void LoadInternal(DatabaseInstance &instance) {
 	RegisterSpatialScalarFunctions(instance);
 	RegisterSpatialAggregateFunctions(instance);
 	RegisterSpatialTableFunctions(instance);
-	RegisterSpatialOptimizers(instance);
+	SpatialJoinOptimizer::Register(instance);
 	GeoArrow::Register(instance);
 
 	RegisterProjModule(instance);

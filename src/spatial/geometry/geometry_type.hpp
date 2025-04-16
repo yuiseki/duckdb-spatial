@@ -1,11 +1,12 @@
 #pragma once
 
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/string_type.hpp"
 #include "spatial/geometry/bbox.hpp"
 #include "spatial/geometry/geometry_properties.hpp"
 #include "spatial/util/cursor.hpp"
 
-#include "duckdb/common/types/string_type.hpp"
-#include "duckdb/common/string_util.hpp"
+#include <spatial/util/math.hpp>
 
 namespace duckdb {
 
@@ -98,7 +99,7 @@ public:
 		return props;
 	}
 
-	bool TryGetCachedBounds(Box2D<double> &bbox) const {
+	bool TryGetCachedBounds(Box2D<float> &bbox) const {
 		Cursor cursor(data);
 
 		// Read the header
@@ -135,12 +136,12 @@ public:
 				return false;
 			}
 
-			auto x = cursor.Read<double>();
-			auto y = cursor.Read<double>();
-			bbox.min.x = x;
-			bbox.min.y = y;
-			bbox.max.x = x;
-			bbox.max.y = y;
+			const auto x = cursor.Read<double>();
+			const auto y = cursor.Read<double>();
+			bbox.min.x = MathUtil::DoubleToFloatDown(x);
+			bbox.min.y = MathUtil::DoubleToFloatDown(y);
+			bbox.max.x = MathUtil::DoubleToFloatUp(x);
+			bbox.max.y = MathUtil::DoubleToFloatUp(y);
 			return true;
 		}
 		return false;
