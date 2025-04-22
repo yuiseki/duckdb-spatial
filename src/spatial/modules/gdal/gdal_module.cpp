@@ -1241,6 +1241,9 @@ struct ST_Read_Meta {
 					CPLFree(projjson_ptr);
 
 					geometry_field_value_fields.emplace_back("crs", Value::STRUCT(crs_value_fields));
+				} else {
+					Value null_crs;
+					geometry_field_value_fields.emplace_back("crs", null_crs);
 				}
 
 				geometry_fields.push_back(Value::STRUCT(geometry_field_value_fields));
