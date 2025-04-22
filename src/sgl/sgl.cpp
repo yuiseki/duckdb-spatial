@@ -1239,28 +1239,30 @@ size_t to_wkb_size(const geometry *geom) {
 size_t to_wkb(const geometry *geom, uint8_t *buffer, size_t size) {
 
 #define WKB_WRITE_U8(PTR, VAL)                                                                                         \
-do {                                                                                                               \
-uint8_t v = VAL;                                                                                               \
-memcpy(PTR, &v, sizeof(uint8_t));                                                                              \
-PTR += sizeof(uint8_t);                                                                                        \
-} while (0)
+	do {                                                                                                               \
+		uint8_t v = VAL;                                                                                               \
+		memcpy(PTR, &v, sizeof(uint8_t));                                                                              \
+		PTR += sizeof(uint8_t);                                                                                        \
+	} while (0)
 #define WKB_WRITE_U32(PTR, VAL)                                                                                        \
-do {                                                                                                               \
-uint32_t v = VAL;                                                                                              \
-memcpy(PTR, &v, sizeof(uint32_t));                                                                             \
-PTR += sizeof(uint32_t);                                                                                       \
-} while (0)
+	do {                                                                                                               \
+		uint32_t v = VAL;                                                                                              \
+		memcpy(PTR, &v, sizeof(uint32_t));                                                                             \
+		PTR += sizeof(uint32_t);                                                                                       \
+	} while (0)
+
 #define WKB_WRITE_DOUBLE(PTR, VAL)                                                                                     \
-do {                                                                                                               \
-double v = VAL;                                                                                                \
-memcpy(PTR, &v, sizeof(double));                                                                               \
-PTR += sizeof(double);                                                                                         \
-} while (0)
+	do {                                                                                                               \
+		double v = VAL;                                                                                                \
+		memcpy(PTR, &v, sizeof(double));                                                                               \
+		PTR += sizeof(double);                                                                                         \
+	} while (0)
+
 #define WKB_WRITE_DATA(PTR, SRC, SIZE)                                                                                 \
-do {                                                                                                               \
-memcpy(PTR, SRC, SIZE);                                                                                        \
-PTR += SIZE;                                                                                                   \
-} while (0)
+	do {                                                                                                               \
+		memcpy(PTR, SRC, SIZE);                                                                                        \
+		PTR += SIZE;                                                                                                   \
+	} while (0)
 
 	auto ptr = buffer;
 
