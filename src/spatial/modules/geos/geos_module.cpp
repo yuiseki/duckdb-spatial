@@ -395,7 +395,7 @@ struct ST_Centroid {
 	}
 
 	static void Register(DatabaseInstance &db) {
-		FunctionBuilder::RegisterScalar(db, "ST_Centroid", [](ScalarFunctionBuilder &func) {
+		FunctionBuilder::RegisterScalar(db, "ST_Centroid_GEOS", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("geom", GeoTypes::GEOMETRY());
 				variant.SetReturnType(GeoTypes::GEOMETRY());

@@ -648,6 +648,7 @@ inline bool is_closed(const geometry *geom) {
 	return first == last;
 }
 
+// returns positive result if oriented clockwise
 inline double signed_area(const geometry *geom) {
 	SGL_ASSERT(geom->get_type() == geometry_type::LINESTRING);
 	SGL_ASSERT(is_closed(geom));
@@ -999,6 +1000,8 @@ void extract_polygons(sgl::geometry *result, sgl::geometry *geom);
 // TODO: this will only check that geometries have enough vertices to be valid.
 // It does NOT check topological validity.
 bool is_valid(const sgl::geometry *geom);
+
+bool get_centroid(const sgl::geometry *geom, vertex_xyzm *out);
 
 } // namespace ops
 
