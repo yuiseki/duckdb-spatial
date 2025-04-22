@@ -383,34 +383,6 @@ struct ST_BuildArea {
 	}
 };
 
-struct ST_Centroid {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		const auto &lstate = LocalState::ResetAndGet(state);
-
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
-			const auto geom = lstate.Deserialize(geom_blob);
-			const auto centroid = geom.get_centroid();
-			return lstate.Serialize(result, centroid);
-		});
-	}
-
-	static void Register(DatabaseInstance &db) {
-		FunctionBuilder::RegisterScalar(db, "ST_Centroid", [](ScalarFunctionBuilder &func) {
-			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-				variant.AddParameter("geom", GeoTypes::GEOMETRY());
-				variant.SetReturnType(GeoTypes::GEOMETRY());
-
-				variant.SetInit(LocalState::Init);
-				variant.SetFunction(Execute);
-			});
-
-			func.SetDescription("Returns the centroid of a geometry");
-			func.SetTag("ext", "spatial");
-			func.SetTag("category", "construction");
-		});
-	}
-};
-
 struct ST_Contains : AsymmetricPreparedBinaryFunction<ST_Contains> {
 	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
 		return lhs.contains(rhs);
@@ -2496,7 +2468,6 @@ void RegisterGEOSModule(DatabaseInstance &db) {
 	ST_Boundary::Register(db);
 	ST_Buffer::Register(db);
 	ST_BuildArea::Register(db);
-	ST_Centroid::Register(db);
 	ST_Contains::Register(db);
 	ST_ContainsProperly::Register(db);
 	ST_ConcaveHull::Register(db);
