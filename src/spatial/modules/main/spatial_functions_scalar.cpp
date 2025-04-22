@@ -1296,9 +1296,10 @@ struct ST_Centroid {
 
 			sgl::vertex_xyzm centroid = {0, 0, 0, 0};
 			if (!sgl::ops::get_centroid(&geom, &centroid)) {
-				// Couldnt get the centroid, return an empty geometrycollection.
+				// Couldnt get the centroid, return an empty point.
+				// NOTE: This is the PostGIS behavior, the docs are wrong.
 				sgl::geometry empty;
-				sgl::multi_geometry::init_empty(&empty, geom.has_z(), geom.has_m());
+				sgl::point::init_empty(&empty, geom.has_z(), geom.has_m());
 				return lstate.Serialize(result, empty);
 			}
 
