@@ -358,11 +358,6 @@ struct LinestringCasts {
 	static bool FromGeometryCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 		auto &lstate = LocalState::ResetAndGet(parameters);
 
-		auto &coord_vec = ListVector::GetEntry(result);
-		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
-		const auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
-		const auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
-
 		idx_t total_coords = 0;
 
 		UnaryExecutor::Execute<string_t, list_entry_t>(source, result, count, [&](const string_t &blob) {
@@ -379,6 +374,13 @@ struct LinestringCasts {
 			const auto entry = list_entry_t(total_coords, line_size);
 			total_coords += line_size;
 			ListVector::Reserve(result, total_coords);
+
+			// Re-fetch the coord vector children, as the ListVector::Reserve() call may have invalidated the pointers
+			auto &coord_vec = ListVector::GetEntry(result);
+			auto &coord_vec_children = StructVector::GetEntries(coord_vec);
+
+			const auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
+			const auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
 
 			for (idx_t i = 0; i < line_size; i++) {
 				const auto vertex = line.get_vertex_xy(i);

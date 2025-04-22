@@ -5209,7 +5209,7 @@ struct ST_Hilbert {
 		auto constexpr max_hilbert = std::numeric_limits<uint16_t>::max();
 
 		GenericExecutor::ExecuteTernary<DOUBLE_TYPE, DOUBLE_TYPE, BOX_TYPE, UINT32_TYPE>(
-		    args.data[0], args.data[1], args.data[3], result, args.size(),
+		    args.data[0], args.data[1], args.data[2], result, args.size(),
 		    [&](DOUBLE_TYPE x, DOUBLE_TYPE y, BOX_TYPE &box) {
 			    const auto hilbert_width = max_hilbert / (box.c_val - box.a_val);
 			    const auto hilbert_height = max_hilbert / (box.d_val - box.b_val);
