@@ -5,14 +5,56 @@
 #include "duckdb/planner/operator/logical_any_join.hpp"
 #include "spatial_join_logical.hpp"
 
-#include <duckdb/planner/operator/logical_filter.hpp>
+#include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
+#include "duckdb/planner/operator/logical_filter.hpp"
 
 namespace duckdb {
 
 // All of these imply bounding box intersection
 static case_insensitive_set_t spatial_predicate_map = {
-    "ST_Equals",   "ST_Intersects", "ST_Touches", "ST_Crosses",   "ST_Within",
-    "ST_Contains", "ST_Overlaps",   "ST_Covers",  "ST_CoveredBy", "ST_ContainsProperly"};
+    "ST_Equals",   "ST_Intersects", "ST_Touches",   "ST_Crosses",          "ST_Within",        "ST_Contains",
+    "ST_Overlaps", "ST_Covers",     "ST_CoveredBy", "ST_ContainsProperly", "ST_WithinProperly"};
+
+static case_insensitive_map_t<string> spatial_predicate_inverse_map = {
+    {"ST_Equals", "ST_Equals"},
+    {"ST_Intersects", "ST_Intersects"},           // Symmetric
+    {"ST_Touches", "ST_Touches"},                 // Symmetric
+    {"ST_Crosses", "ST_Crosses"},                 // Symmetric
+    {"ST_Within", "ST_Contains"},                 // Inverse
+    {"ST_Contains", "ST_Within"},                 // Inverse
+    {"ST_Overlaps", "ST_Overlaps"},               // Symmetric
+    {"ST_Covers", "ST_CoveredBy"},                // Inverse
+    {"ST_CoveredBy", "ST_Covers"},                // Inverse
+    {"ST_WithinProperly", "ST_ContainsProperly"}, // Inverse
+    {"ST_ContainsProperly", "ST_WithinProperly"}  // Inverse
+};
+
+unique_ptr<Expression> TryGetInversePredicate(ClientContext &context, unique_ptr<Expression> expr) {
+	auto &func = expr->Cast<BoundFunctionExpression>();
+	const auto it = spatial_predicate_inverse_map.find(func.function.name);
+
+	if (it == spatial_predicate_inverse_map.end()) {
+		// We cant do anything
+		return nullptr;
+	}
+
+	// Swap the arguments
+	std::swap(func.children[0], func.children[1]);
+
+	if (it->first == it->second) {
+		// We've already swapped the child, so just return the expression
+		return std::move(expr);
+	}
+
+	// Get the function from the catalog
+	auto &catalog = Catalog::GetSystemCatalog(context);
+	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, it->second);
+	auto inverse_func =
+	    entry.functions.GetFunctionByArguments(context, {func.children[0]->return_type, func.children[1]->return_type});
+
+	return make_uniq_base<Expression, BoundFunctionExpression>(func.return_type, inverse_func, std::move(func.children),
+	                                                           nullptr, func.is_operator);
+}
 
 static void InsertSpatialJoin(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
 	auto &op = *plan;
@@ -104,8 +146,11 @@ static void InsertSpatialJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 		}
 
 		if (left_side == JoinSide::RIGHT) {
-			// TODO: Flip function here if needed (if not symmetric)
-			std::swap(func.children[0], func.children[1]);
+			expr = TryGetInversePredicate(input.context, std::move(expr));
+			if (expr == nullptr) {
+				// We cant flip this, abort!
+				return;
+			}
 		}
 
 		spatial_pred_expr = std::move(expr);
