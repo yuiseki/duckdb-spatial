@@ -448,6 +448,39 @@ struct ST_ContainsProperly : AsymmetricPreparedBinaryFunction<ST_ContainsProperl
 	}
 };
 
+struct ST_WithinProperly : AsymmetricPreparedBinaryFunction<ST_WithinProperly> {
+	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
+		// We have no choice but to prepare the right geometry
+		const auto rhs_prep = rhs.get_prepared();
+		return rhs_prep.contains_properly(lhs);
+	}
+
+	static bool ExecutePredicatePrepared(const PreparedGeosGeometry &lhs, const GeosGeometry &rhs) {
+		return lhs.contains_properly(rhs);
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_WithinProperly", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom1", GeoTypes::GEOMETRY());
+				variant.AddParameter("geom2", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::BOOLEAN);
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(R"(
+				Returns true if the first geometry \"properly\" is contained by the second geometry
+
+				This function functions the same as `ST_ContainsProperly`, but the arguments are swapped.
+			)");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "relation");
+		});
+	}
+};
+
 struct ST_ConcaveHull {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		const auto &lstate = LocalState::ResetAndGet(state);
@@ -2470,6 +2503,7 @@ void RegisterGEOSModule(DatabaseInstance &db) {
 	ST_BuildArea::Register(db);
 	ST_Contains::Register(db);
 	ST_ContainsProperly::Register(db);
+	ST_WithinProperly::Register(db);
 	ST_ConcaveHull::Register(db);
 	ST_ConvexHull::Register(db);
 	ST_CoverageInvalidEdges::Register(db);
