@@ -6,7 +6,9 @@
 #include "index/rtree/rtree.hpp"
 #include "spatial/index/rtree/rtree_module.hpp"
 #include "spatial/modules/gdal/gdal_module.hpp"
+#if SPATIAL_USE_GEOS
 #include "spatial/modules/geos/geos_module.hpp"
+#endif
 #include "spatial/modules/main/spatial_functions.hpp"
 #include "spatial/modules/osm/osm_module.hpp"
 #include "spatial/modules/proj/proj_module.hpp"
@@ -31,7 +33,9 @@ static void LoadInternal(DatabaseInstance &instance) {
 
 	RegisterProjModule(instance);
 	RegisterGDALModule(instance);
+#if SPATIAL_USE_GEOS
 	RegisterGEOSModule(instance);
+#endif
 	RegisterOSMModule(instance);
 	RegisterShapefileModule(instance);
 
