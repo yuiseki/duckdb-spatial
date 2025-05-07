@@ -1227,6 +1227,10 @@ struct ST_AsSVG {
 			    sgl::geometry geom;
 			    lstate.Deserialize(blob, geom);
 
+			    if (max_digits < 0 || max_digits > 15) {
+				    throw InvalidInputException("ST_AsSVG: Precision must be between 0 and 15");
+			    }
+
 			    FormatRecursive(&geom, buffer, max_digits, rel);
 
 			    return StringVector::AddString(result, buffer.data(), buffer.size());
