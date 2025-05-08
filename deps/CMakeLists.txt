@@ -143,8 +143,22 @@ ExternalProject_Add(
     # Disable all external drivers unless explicitly enabled
     -DGDAL_USE_EXTERNAL_LIBS=OFF
     -DGDAL_USE_INTERNAL_LIBS=ON
+
+    # These are required
     -DGDAL_USE_ZLIB=ON
-    -DGDAL_USE_ZLIB_INTERNAL=OFF
+    -DGDAL_USE_ZLIB_INTERNAL=OFF # Dont use zlib bundled
+
+    # Disable these
+    -DGDAL_USE_PNG=OFF
+    -DGDAL_USE_JPEG=OFF
+    -DGDAL_USE_PNG_INTERNAL=OFF
+    -DGDAL_USE_JPEG_INTERNAL=OFF
+    -DGDAL_USE_GIF=OFF
+    -DGDAL_USE_GIF_INTERNAL=OFF
+    -DGDAL_USE_QHULL=OFF
+    -DGDAL_USE_QHULL_INTERNAL=OFF
+    -DGDAL_USE_LERC=OFF
+    -DGDAL_USE_LERC_INTERNAL=OFF
 
     # Supported drivers
     -DGDAL_USE_GEOS=${SPATIAL_USE_GEOS}
