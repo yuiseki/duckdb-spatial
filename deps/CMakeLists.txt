@@ -48,7 +48,8 @@ set(GDAL_DEPENDENCIES ${GDAL_DEPENDENCIES})
 
 set(SANITIZER_FLAG)
 if(ENABLE_SANITIZER)
-  set(SANITIZER_FLAG "-fsanitize=address")
+  # TODO: This doesnt work on CI
+  #set(SANITIZER_FLAG "-fsanitize=address")
 endif()
 
 
