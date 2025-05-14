@@ -77,14 +77,14 @@ string LogicalSpatialJoin::GetName() const {
 	return "SPATIAL_JOIN";
 }
 
-unique_ptr<PhysicalOperator> LogicalSpatialJoin::CreatePlan(ClientContext &context, PhysicalPlanGenerator &generator) {
+PhysicalOperator& LogicalSpatialJoin::CreatePlan(ClientContext &context, PhysicalPlanGenerator &generator) {
 
 	// Return a new PhysicalSpatialJoin operator
-	auto left = generator.CreatePlan(std::move(children[0]));
-	auto right = generator.CreatePlan(std::move(children[1]));
+	auto &left = generator.CreatePlan(*children[0]);
+	auto &right = generator.CreatePlan(*children[1]);
 
-	return make_uniq_base<PhysicalOperator, PhysicalSpatialJoin>(
-	    *this, std::move(left), std::move(right), std::move(spatial_predicate), join_type, estimated_cardinality);
+	return generator.Make<PhysicalSpatialJoin>(
+	    *this, left, right, std::move(spatial_predicate), join_type, estimated_cardinality);
 }
 
 } // namespace duckdb

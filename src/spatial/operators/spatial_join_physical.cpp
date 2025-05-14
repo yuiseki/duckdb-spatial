@@ -325,14 +325,14 @@ private:
 // Physical Spatial Join Operator
 //======================================================================================================================
 
-PhysicalSpatialJoin::PhysicalSpatialJoin(LogicalOperator &op, unique_ptr<PhysicalOperator> left,
-                                         unique_ptr<PhysicalOperator> right, unique_ptr<Expression> condition_p,
+PhysicalSpatialJoin::PhysicalSpatialJoin(LogicalOperator &op, PhysicalOperator &left,
+                                         PhysicalOperator &right, unique_ptr<Expression> condition_p,
                                          JoinType join_type, idx_t estimated_cardinality)
     : PhysicalJoin(op, PhysicalOperatorType::EXTENSION, join_type, estimated_cardinality),
       condition(std::move(condition_p)) {
 
-	children.push_back(std::move(left));
-	children.push_back(std::move(right));
+	children.emplace_back(left);
+	children.emplace_back(right);
 
 	auto &func = condition->Cast<BoundFunctionExpression>();
 
@@ -349,7 +349,7 @@ PhysicalSpatialJoin::PhysicalSpatialJoin(LogicalOperator &op, unique_ptr<Physica
 	const auto &lop = op.Cast<LogicalJoin>();
 
 	// Probe-side
-	const auto &probe_side_input_types = children[0]->types;
+	const auto &probe_side_input_types = children[0].get().types;
 	probe_side_output_columns = lop.left_projection_map;
 	if (probe_side_output_columns.empty()) {
 		probe_side_output_columns.reserve(probe_side_input_types.size());
@@ -375,7 +375,7 @@ PhysicalSpatialJoin::PhysicalSpatialJoin(LogicalOperator &op, unique_ptr<Physica
 	// TODO Add rest too
 	build_side_key_types.push_back(build_side_key->return_type);
 
-	const auto &build_side_input_types = children[1]->types;
+	const auto &build_side_input_types = children[1].get().types;
 	auto right_projection_map_copy = lop.right_projection_map;
 	if (right_projection_map_copy.empty()) {
 		right_projection_map_copy.reserve(build_side_input_types.size());
@@ -413,11 +413,12 @@ PhysicalSpatialJoin::PhysicalSpatialJoin(LogicalOperator &op, unique_ptr<Physica
 
 	// Initialize the layout
 	// TODO: Align?
-	layout.Initialize(std::move(layout_types), false);
+	layout = make_shared_ptr<TupleDataLayout>();
+	layout->Initialize(std::move(layout_types), false);
 
 	// For right/outer joins, this is where the build side match column goes
 	if (PropagatesBuildSide(join_type)) {
-		const auto &offsets = layout.GetOffsets();
+		const auto &offsets = layout->GetOffsets();
 		build_side_match_offset = offsets[build_side_key_types.size() + build_side_payload_types.size()];
 	}
 }
@@ -456,7 +457,7 @@ unique_ptr<GlobalSinkState> PhysicalSpatialJoin::GetGlobalSinkState(ClientContex
 
 class SpatialJoinLocalState final : public LocalSinkState {
 public:
-	SpatialJoinLocalState(const PhysicalSpatialJoin &op, ClientContext &context, const TupleDataLayout &layout)
+	SpatialJoinLocalState(const PhysicalSpatialJoin &op, ClientContext &context, const shared_ptr<TupleDataLayout> &layout)
 	    : build_side_key_executor(context) {
 		// Dont keep the tuples in memory after appending.
 		collection = make_uniq<TupleDataCollection>(BufferManager::GetBufferManager(context), layout);
@@ -466,7 +467,7 @@ public:
 		build_side_key_executor.AddExpression(*op.build_side_key);
 		build_side_key_chunk.Initialize(context, op.build_side_key_types);
 
-		build_side_row_chunk.InitializeEmpty(layout.GetTypes());
+		build_side_row_chunk.InitializeEmpty(layout->GetTypes());
 
 		build_side_payload_chunk.InitializeEmpty(op.build_side_payload_types);
 	}

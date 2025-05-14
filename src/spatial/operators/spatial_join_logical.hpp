@@ -19,7 +19,7 @@ public:
 
 	string GetName() const override;
 	string GetExtensionName() const override;
-	unique_ptr<PhysicalOperator> CreatePlan(ClientContext &context, PhysicalPlanGenerator &generator) override;
+	PhysicalOperator& CreatePlan(ClientContext &context, PhysicalPlanGenerator &generator) override;
 
 	//! The type of the join (INNER, OUTER, etc...)
 	JoinType join_type;

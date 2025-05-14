@@ -10,7 +10,7 @@ public:
 	static constexpr auto TYPE = PhysicalOperatorType::EXTENSION;
 
 public:
-	PhysicalSpatialJoin(LogicalOperator &op, unique_ptr<PhysicalOperator> left, unique_ptr<PhysicalOperator> right,
+	PhysicalSpatialJoin(LogicalOperator &op, PhysicalOperator &left, PhysicalOperator &right,
 	                    unique_ptr<Expression> spatial_predicate, JoinType join_type, idx_t estimated_cardinality);
 
 	//! The condition of the join
@@ -28,7 +28,7 @@ public:
 
 	vector<LogicalType> build_side_key_types;
 
-	TupleDataLayout layout;
+	shared_ptr<TupleDataLayout> layout;
 	idx_t build_side_match_offset = 0; // This is the byte offset to the match column for right/outer joins
 
 public:

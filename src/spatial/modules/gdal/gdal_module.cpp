@@ -1981,7 +1981,7 @@ struct ST_Write {
 						    got_name);
 					}
 
-					if (feature->SetGeometry(geom.get()) != OGRERR_NONE) {
+					if (feature->SetGeometryDirectly(geom.release()) != OGRERR_NONE) {
 						throw IOException("Could not set geometry");
 					}
 				} else {
