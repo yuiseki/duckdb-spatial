@@ -284,7 +284,6 @@ struct ST_Buffer {
 
 			    const auto buffer = geom.get_buffer_style(radius, segments, cap_style, join_style, mitre_limit);
 			    return lstate.Serialize(result, buffer);
-			    ;
 		    });
 	}
 
@@ -384,34 +383,6 @@ struct ST_BuildArea {
 	}
 };
 
-struct ST_Centroid {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		const auto &lstate = LocalState::ResetAndGet(state);
-
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
-			const auto geom = lstate.Deserialize(geom_blob);
-			const auto centroid = geom.get_centroid();
-			return lstate.Serialize(result, centroid);
-		});
-	}
-
-	static void Register(DatabaseInstance &db) {
-		FunctionBuilder::RegisterScalar(db, "ST_Centroid", [](ScalarFunctionBuilder &func) {
-			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-				variant.AddParameter("geom", GeoTypes::GEOMETRY());
-				variant.SetReturnType(GeoTypes::GEOMETRY());
-
-				variant.SetInit(LocalState::Init);
-				variant.SetFunction(Execute);
-			});
-
-			func.SetDescription("Returns the centroid of a geometry");
-			func.SetTag("ext", "spatial");
-			func.SetTag("category", "construction");
-		});
-	}
-};
-
 struct ST_Contains : AsymmetricPreparedBinaryFunction<ST_Contains> {
 	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
 		return lhs.contains(rhs);
@@ -470,6 +441,39 @@ struct ST_ContainsProperly : AsymmetricPreparedBinaryFunction<ST_ContainsProperl
 
 				In contrast to `ST_Contains`, this function does not return true if `geom2` is contained strictly on the boundary of `geom1`.
 				A geometry always `ST_Contains` itself, but does not `ST_ContainsProperly` itself.
+			)");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "relation");
+		});
+	}
+};
+
+struct ST_WithinProperly : AsymmetricPreparedBinaryFunction<ST_WithinProperly> {
+	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
+		// We have no choice but to prepare the right geometry
+		const auto rhs_prep = rhs.get_prepared();
+		return rhs_prep.contains_properly(lhs);
+	}
+
+	static bool ExecutePredicatePrepared(const PreparedGeosGeometry &lhs, const GeosGeometry &rhs) {
+		return lhs.contains_properly(rhs);
+	}
+
+	static void Register(DatabaseInstance &db) {
+		FunctionBuilder::RegisterScalar(db, "ST_WithinProperly", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom1", GeoTypes::GEOMETRY());
+				variant.AddParameter("geom2", GeoTypes::GEOMETRY());
+				variant.SetReturnType(LogicalType::BOOLEAN);
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(R"(
+				Returns true if the first geometry \"properly\" is contained by the second geometry
+
+				This function functions the same as `ST_ContainsProperly`, but the arguments are swapped.
 			)");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "relation");
@@ -2497,9 +2501,9 @@ void RegisterGEOSModule(DatabaseInstance &db) {
 	ST_Boundary::Register(db);
 	ST_Buffer::Register(db);
 	ST_BuildArea::Register(db);
-	ST_Centroid::Register(db);
 	ST_Contains::Register(db);
 	ST_ContainsProperly::Register(db);
+	ST_WithinProperly::Register(db);
 	ST_ConcaveHull::Register(db);
 	ST_ConvexHull::Register(db);
 	ST_CoverageInvalidEdges::Register(db);

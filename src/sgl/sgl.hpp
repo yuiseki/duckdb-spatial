@@ -648,6 +648,7 @@ inline bool is_closed(const geometry *geom) {
 	return first == last;
 }
 
+// returns positive result if oriented clockwise
 inline double signed_area(const geometry *geom) {
 	SGL_ASSERT(geom->get_type() == geometry_type::LINESTRING);
 	SGL_ASSERT(is_closed(geom));
@@ -1000,6 +1001,8 @@ void extract_polygons(sgl::geometry *result, sgl::geometry *geom);
 // It does NOT check topological validity.
 bool is_valid(const sgl::geometry *geom);
 
+bool get_centroid(const sgl::geometry *geom, vertex_xyzm *out);
+
 } // namespace ops
 
 } // namespace sgl
@@ -1037,7 +1040,7 @@ inline void affine_transform(sgl::allocator *alloc, sgl::geometry *geom, const s
 			}
 
 			// Now, apply the transformation
-			vertex_xyzm old_vertex = {0, 0, 0, 0};
+			vertex_xyzm old_vertex = {0, 0, 1, 1};
 			for (uint32_t i = 0; i < vertex_count; i++) {
 				memcpy(&old_vertex, old_vertex_data + i * vertex_width, vertex_width);
                 auto new_vertex = matrix->apply_xyz(old_vertex);
@@ -1779,6 +1782,83 @@ inline double haversine_distance(const double lat1_p, const double lon1_p, const
 	const auto c = 2.0 * std::atan2(std::sqrt(a), std::sqrt(1.0 - a));
 
 	return R * c;
+}
+
+//----------------------------------------------------------------------------------------------------------------------
+// Hilbert Curve Encoding
+// From (Public Domain): https://github.com/rawrunprotected/hilbert_curves
+//----------------------------------------------------------------------------------------------------------------------
+inline uint32_t hilbert_interleave(uint32_t x) {
+	x = (x | (x << 8)) & 0x00FF00FF;
+	x = (x | (x << 4)) & 0x0F0F0F0F;
+	x = (x | (x << 2)) & 0x33333333;
+	x = (x | (x << 1)) & 0x55555555;
+	return x;
+}
+
+inline uint32_t hilbert_encode(uint32_t n, uint32_t x, uint32_t y) {
+	x = x << (16 - n);
+	y = y << (16 - n);
+
+	// Initial prefix scan round, prime with x and y
+	uint32_t a = x ^ y;
+	uint32_t b = 0xFFFF ^ a;
+	uint32_t c = 0xFFFF ^ (x | y);
+	uint32_t d = x & (y ^ 0xFFFF);
+	uint32_t A = a | (b >> 1);
+	uint32_t B = (a >> 1) ^ a;
+	uint32_t C = ((c >> 1) ^ (b & (d >> 1))) ^ c;
+	uint32_t D = ((a & (c >> 1)) ^ (d >> 1)) ^ d;
+
+	a = A;
+	b = B;
+	c = C;
+	d = D;
+	A = ((a & (a >> 2)) ^ (b & (b >> 2)));
+	B = ((a & (b >> 2)) ^ (b & ((a ^ b) >> 2)));
+	C ^= ((a & (c >> 2)) ^ (b & (d >> 2)));
+	D ^= ((b & (c >> 2)) ^ ((a ^ b) & (d >> 2)));
+
+	a = A;
+	b = B;
+	c = C;
+	d = D;
+	A = ((a & (a >> 4)) ^ (b & (b >> 4)));
+	B = ((a & (b >> 4)) ^ (b & ((a ^ b) >> 4)));
+	C ^= ((a & (c >> 4)) ^ (b & (d >> 4)));
+	D ^= ((b & (c >> 4)) ^ ((a ^ b) & (d >> 4)));
+
+	// Final round and projection
+	a = A;
+	b = B;
+	c = C;
+	d = D;
+	C ^= ((a & (c >> 8)) ^ (b & (d >> 8)));
+	D ^= ((b & (c >> 8)) ^ ((a ^ b) & (d >> 8)));
+
+	// Undo transformation prefix scan
+	a = C ^ (C >> 1);
+	b = D ^ (D >> 1);
+
+	// Recover index bits
+	uint32_t i0 = x ^ y;
+	uint32_t i1 = b | (0xFFFF ^ (i0 | a));
+
+	return ((hilbert_interleave(i1) << 1) | hilbert_interleave(i0)) >> (32 - 2 * n);
+}
+
+inline uint32_t hilbert_f32_to_u32(float f) {
+	if (std::isnan(f)) {
+		return 0xFFFFFFFF;
+	}
+	uint32_t res;
+	memcpy(&res, &f, sizeof(res));
+	if ((res & 0x80000000) != 0) {
+		res ^= 0xFFFFFFFF;
+	} else {
+		res |= 0x80000000;
+	}
+	return res;
 }
 
 } // namespace util

@@ -1243,6 +1243,9 @@ struct ST_Read_Meta {
 					CPLFree(projjson_ptr);
 
 					geometry_field_value_fields.emplace_back("crs", Value::STRUCT(crs_value_fields));
+				} else {
+					Value null_crs;
+					geometry_field_value_fields.emplace_back("crs", null_crs);
 				}
 
 				geometry_fields.push_back(Value::STRUCT(geometry_field_value_fields));
@@ -1275,9 +1278,10 @@ struct ST_Read_Meta {
 		auto &bind_data = input.bind_data->Cast<BindData>();
 		auto &state = input.global_state->Cast<State>();
 
-		auto out_size = MinValue<idx_t>(STANDARD_VECTOR_SIZE, bind_data.file_names.size() - state.current_idx);
+		const auto remaining = MinValue<idx_t>(STANDARD_VECTOR_SIZE, bind_data.file_names.size() - state.current_idx);
+		auto output_idx = 0;
 
-		for (idx_t out_idx = 0; out_idx < out_size; out_idx++, state.current_idx++) {
+		for (idx_t in_idx = 0; in_idx < remaining; in_idx++, state.current_idx++) {
 			auto &file = bind_data.file_names[state.current_idx];
 			auto prefixed_file_name = GDALClientContextState::GetOrCreate(context).GetPrefix(file.path);
 
@@ -1287,18 +1291,19 @@ struct ST_Read_Meta {
 				    GDALDataset::Open(prefixed_file_name.c_str(), GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR));
 			} catch (...) {
 				// Just skip anything we cant open
-				out_idx--;
-				out_size--;
 				continue;
 			}
 
-			output.data[0].SetValue(out_idx, file.path);
-			output.data[1].SetValue(out_idx, dataset->GetDriver()->GetDescription());
-			output.data[2].SetValue(out_idx, dataset->GetDriver()->GetMetadataItem(GDAL_DMD_LONGNAME));
-			output.data[3].SetValue(out_idx, GetLayerData(dataset));
+
+			output.data[0].SetValue(output_idx, file.path);
+			output.data[1].SetValue(output_idx, dataset->GetDriver()->GetDescription());
+			output.data[2].SetValue(output_idx, dataset->GetDriver()->GetMetadataItem(GDAL_DMD_LONGNAME));
+			output.data[3].SetValue(output_idx, GetLayerData(dataset));
+
+			output_idx++;
 		}
 
-		output.SetCardinality(out_size);
+		output.SetCardinality(output_idx);
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
