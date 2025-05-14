@@ -49,13 +49,15 @@ We bundle all the other required dependencies in the `third_party` directory, wh
 
 We also highly recommend that you install [Ninja](https://ninja-build.org) which you can select when building by setting the `GEN=ninja` environment variable.
 
-```
-git clone --recurse-submodules https://github.com/duckdblabs/duckdb_spatial
-cd duckdb_spatial
+```bash
+git clone --recurse-submodules https://github.com/duckdb/duckdb-spatial
+cd duckdb-spatial
 make debug
 ```
-You can then invoke the built DuckDB (with the extension statically linked)
-```
+
+You can then invoke the built DuckDB (with the extension statically linked):
+
+```bash
 ./build/debug/duckdb
 ```
 
