@@ -1,7 +1,9 @@
 add_subdirectory(main)
 add_subdirectory(proj)
 add_subdirectory(gdal)
-add_subdirectory(geos)
+if(SPATIAL_USE_GEOS)
+    add_subdirectory(geos)
+endif()
 add_subdirectory(osm)
 add_subdirectory(shapefile)
 

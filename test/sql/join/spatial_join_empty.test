@@ -1,0 +1,34 @@
+require spatial
+
+statement ok
+PRAGMA enable_verification
+
+# Create a bunch of points on a grid
+# between 0 and 500 in both x and y directions
+statement ok
+CREATE TABLE lhs AS
+SELECT
+    ST_Point(x, y) as geom,
+    (y * 50) + x // 10 as id
+FROM
+    generate_series(0, 500, 10) r1(x),
+    generate_series(0, 500, 10) r2(y);
+
+
+# Test joining with an empty RHS
+statement ok
+CREATE TABLE rhs(geom geometry, id integer);
+
+statement ok
+pragma disabled_optimizers='extension'
+
+query IIII rowsort left_join_result
+SELECT * FROM lhs LEFT JOIN rhs ON ST_Intersects(lhs.geom, rhs.geom);
+----
+
+statement ok
+pragma disabled_optimizers=''
+
+query IIII rowsort left_join_result
+SELECT * FROM lhs LEFT JOIN rhs ON ST_Intersects(lhs.geom, rhs.geom);
+----

@@ -14,6 +14,7 @@
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/operator_extension.hpp"
 #include "duckdb/storage/data_table.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/main/database.hpp"
 
 #include "spatial/geometry/bbox.hpp"
@@ -57,6 +58,21 @@ public:
 		    expr, [&](Expression &child) { RewriteIndexExpression(index, get, child, rewrite_possible); });
 	}
 
+	static void RewriteIndexExpressionForFilter(Index &index, LogicalGet &get, unique_ptr<Expression> &expr, idx_t filter_idx, bool &rewrite_possible) {
+		if (expr->type == ExpressionType::BOUND_COLUMN_REF) {
+			auto &bound_colref = expr->Cast<BoundColumnRefExpression>();
+			if (bound_colref.binding.column_index != filter_idx) {
+				rewrite_possible = false;
+				return;
+			}
+			// this column matches the index column - turn it into a BoundReference
+			expr = make_uniq<BoundReferenceExpression>(bound_colref.return_type, 0ULL);
+			return;
+		}
+		ExpressionIterator::EnumerateChildren(
+			*expr, [&](unique_ptr<Expression> &child) { RewriteIndexExpressionForFilter(index, get, child, filter_idx, rewrite_possible); });
+	}
+
 	static bool IsSpatialPredicate(const ScalarFunction &function, const unordered_set<string> &predicates) {
 
 		if (predicates.find(function.name) == predicates.end()) {
@@ -81,46 +97,59 @@ public:
 		return true;
 	}
 
-	static bool TryGetBoundingBox(const Value &value, Box2D<float> &bbox_f) {
+	static bool TryGetBoundingBox(const Value &value, Box2D<float> &bbox) {
 		const auto str = value.GetValueUnsafe<string_t>();
 		const geometry_t blob(str);
-
-		Box2D<double> bbox;
 		if (!blob.TryGetCachedBounds(bbox)) {
 			return false;
 		}
-
-		bbox_f.min.x = MathUtil::DoubleToFloatDown(bbox.min.x);
-		bbox_f.min.y = MathUtil::DoubleToFloatDown(bbox.min.y);
-		bbox_f.max.x = MathUtil::DoubleToFloatUp(bbox.max.x);
-		bbox_f.max.y = MathUtil::DoubleToFloatUp(bbox.max.y);
-
 		return true;
 	}
 
 	static bool TryOptimize(Binder &binder, ClientContext &context, unique_ptr<LogicalOperator> &plan,
 	                        unique_ptr<LogicalOperator> &root) {
 		// Look for a FILTER with a spatial predicate followed by a LOGICAL_GET table scan
+		// OR for a seq_scan with an ExpressionFilter
 		auto &op = *plan;
 
-		if (op.type != LogicalOperatorType::LOGICAL_FILTER) {
+		if (op.type == LogicalOperatorType::LOGICAL_FILTER) {
+			// extract the filter from the filter node
+			// Look for a spatial predicate
+			auto &filter = op.Cast<LogicalFilter>();
+
+			if (filter.expressions.size() != 1) {
+				// We can only optimize if there is a single expression right now
+				return false;
+			}
+			auto &filter_expr = filter.expressions[0];
+			// Look for a table scan
+			if (filter.children.front()->type != LogicalOperatorType::LOGICAL_GET) {
+				return false;
+			}
+			auto &get_ptr = filter.children.front();
+			return TryOptimizeGet(binder, context, get_ptr, root, filter, optional_idx(), filter_expr);
+		}
+		if (op.type == LogicalOperatorType::LOGICAL_GET) {
+			// this is a LogicalGet - check if there is an ExpressionFilter
+			auto &get = op.Cast<LogicalGet>();
+			for(auto &entry : get.table_filters.filters) {
+				if (entry.second->filter_type != TableFilterType::EXPRESSION_FILTER) {
+					// not an expression filter
+					continue;
+				}
+				auto &expr_filter = entry.second->Cast<ExpressionFilter>();
+				if (TryOptimizeGet(binder, context, plan, root, nullptr, entry.first, expr_filter.expr)) {
+					return true;
+				}
+			}
 			return false;
 		}
+		return false;
+	}
 
-		// Look for a spatial predicate
-		auto &filter = op.Cast<LogicalFilter>();
 
-		if (filter.expressions.size() != 1) {
-			// We can only optimize if there is a single expression right now
-			return false;
-		}
-		auto &filter_expr = filter.expressions[0];
-
-		// Look for a table scan
-		if (filter.children.front()->type != LogicalOperatorType::LOGICAL_GET) {
-			return false;
-		}
-		auto &get_ptr = filter.children.front();
+	static bool TryOptimizeGet(Binder &binder, ClientContext &context, unique_ptr<LogicalOperator> &get_ptr,
+							unique_ptr<LogicalOperator> &root, optional_ptr<LogicalFilter> filter, optional_idx filter_column_idx, unique_ptr<Expression> &filter_expr) {
 		auto &get = get_ptr->Cast<LogicalGet>();
 		if (get.function.name != "seq_scan") {
 			return false;
@@ -150,9 +179,13 @@ public:
 
 		table_info.GetIndexes().BindAndScan<RTreeIndex>(context, table_info, [&](RTreeIndex &index_entry) {
 			// Create the bind data for this index given the bounding box
-			auto index_expr = index_entry.unbound_expressions[0]->Copy();
 			bool rewrite_possible = true;
-			RewriteIndexExpression(index_entry, get, *index_expr, rewrite_possible);
+			auto index_expr = index_entry.unbound_expressions[0]->Copy();
+			if (filter_column_idx.IsValid()) {
+				RewriteIndexExpressionForFilter(index_entry, get, index_expr, filter_column_idx.GetIndex(), rewrite_possible);
+			} else {
+				RewriteIndexExpression(index_entry, get, *index_expr, rewrite_possible);
+			}
 			if (!rewrite_possible) {
 				// Could not rewrite!
 				return false;
@@ -202,8 +235,8 @@ public:
 		}
 
 		// Before we clear projection ids, replace projection map in the filter
-		if (!get.projection_ids.empty()) {
-			for (auto &id : filter.projection_map) {
+		if (!get.projection_ids.empty() && filter) {
+			for (auto &id : filter->projection_map) {
 				id = get.projection_ids[id];
 			}
 		}

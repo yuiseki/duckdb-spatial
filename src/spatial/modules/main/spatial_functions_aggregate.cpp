@@ -43,24 +43,30 @@ struct ExtentAggFunction {
 	}
 
 	template <class INPUT_TYPE, class STATE, class OP>
-	static void Operation(STATE &state, const INPUT_TYPE &input, AggregateUnaryInput &) {
-		Box2D<double> bbox;
-		if (!state.is_set) {
-			if (input.TryGetCachedBounds(bbox)) {
+	static void Operation(STATE &state, const INPUT_TYPE &input, AggregateUnaryInput &aggregate) {
+
+		// TODO: Vectorize this so we dont clear the arena after each row
+		sgl::geometry geom;
+		Serde::Deserialize(geom, aggregate.input.allocator, input.GetDataUnsafe(), input.GetSize());
+
+		auto bbox = sgl::box_xy::smallest();
+		if (sgl::ops::try_get_extent_xy(&geom, &bbox)) {
+
+			if (!state.is_set) {
 				state.is_set = true;
 				state.xmin = bbox.min.x;
 				state.xmax = bbox.max.x;
 				state.ymin = bbox.min.y;
 				state.ymax = bbox.max.y;
-			}
-		} else {
-			if (input.TryGetCachedBounds(bbox)) {
+			} else {
 				state.xmin = std::min(state.xmin, bbox.min.x);
 				state.xmax = std::max(state.xmax, bbox.max.x);
 				state.ymin = std::min(state.ymin, bbox.min.y);
 				state.ymax = std::max(state.ymax, bbox.max.y);
 			}
 		}
+
+		aggregate.input.allocator.Reset();
 	}
 
 	template <class INPUT_TYPE, class STATE, class OP>
@@ -101,8 +107,7 @@ struct ExtentAggFunction {
 			Serde::Serialize(bbox, blob.GetDataWriteable(), size);
 			blob.Finalize();
 
-			// TODO: dont use geometry_t here
-			target = geometry_t(blob);
+			target = blob;
 		}
 	}
 
@@ -137,7 +142,7 @@ static constexpr const char *DOC_ALIAS_DESCRIPTION = R"(
 void RegisterSpatialAggregateFunctions(DatabaseInstance &db) {
 
 	// TODO: Dont use geometry_t here
-	const auto agg = AggregateFunction::UnaryAggregate<ExtentAggState, geometry_t, geometry_t, ExtentAggFunction>(
+	const auto agg = AggregateFunction::UnaryAggregate<ExtentAggState, string_t, string_t, ExtentAggFunction>(
 	    GeoTypes::GEOMETRY(), GeoTypes::GEOMETRY());
 
 	FunctionBuilder::RegisterAggregate(db, "ST_Extent_Agg", [&](AggregateFunctionBuilder &func) {

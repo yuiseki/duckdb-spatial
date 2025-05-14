@@ -1,0 +1,63 @@
+require spatial
+
+statement ok
+PRAGMA enable_verification
+
+statement ok
+SELECT setseed(0.5);
+
+statement ok
+CREATE TABLE t1(i INT, g GEOMETRY, v VARCHAR);
+
+statement ok
+CREATE TABLE t2(v VARCHAR, i INT, g GEOMETRY);
+
+statement ok
+INSERT INTO t1 SELECT
+	x * 100 + y as i,
+	st_makepolygon(
+		st_makeline(
+			list_append(
+				list_prepend(
+					st_point(x + 70, y),
+					list_transform(
+						list_sort([{u: random() * 2 * 3.14, w: (random() * 2 - 1) * 15} for _ in range(1,16)]),
+						v -> st_point(x + cos(v.u) * 70 + cos(v.u) * v.w, y + sin(v.u) * 70 + sin(v.u) * v.w))
+				),
+				st_point(x + 70, y)
+			)
+		)
+	) as g,
+	x || ' ' || y as v
+FROM generate_series(0, 1000, 100) r1(x), generate_series(0, 1000, 100) r2(y);
+
+statement ok
+INSERT INTO t2 SELECT
+	x || ' ' || y as v,
+	x * 100 + y as i,
+	ST_Point(x + (random() * 2 - 1) * 10, y + (random() * 2 - 1) * 10) as g
+FROM generate_series(0, 1000, 20) r1(x), generate_series(0, 1000, 20) r2(y);
+
+statement ok
+set disabled_optimizers='extension';
+
+query II
+EXPLAIN SELECT * FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----
+physical_plan	<REGEX>:.*BLOCKWISE_NL_JOIN.*
+
+query I rowsort resultset
+SELECT t1.i, t2.i, t1.g, t2.g FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g) ORDER BY ALL;
+----
+
+statement ok
+set disabled_optimizers='';
+
+query II
+EXPLAIN SELECT * FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g);
+----
+physical_plan	<REGEX>:.*SPATIAL_JOIN.*
+
+query I rowsort resultset
+SELECT t1.i, t2.i, t1.g, t2.g FROM t1 JOIN t2 ON st_intersects(t1.g, t2.g) ORDER BY ALL;
+----

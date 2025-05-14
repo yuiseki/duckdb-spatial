@@ -375,7 +375,7 @@ public:
 
 		auto file_vector = fs.Glob(file_glob);
 		for (auto &file : file_vector) {
-			auto tmp = AddPrefix(file);
+			auto tmp = AddPrefix(file.path);
 			files.AddString(tmp.c_str());
 		}
 		return files.StealList();
@@ -1105,7 +1105,9 @@ struct ST_Read : ArrowTableFunction {
 		func.named_parameters["keep_wkb"] = LogicalType::BOOLEAN;
 		ExtensionUtil::RegisterFunction(db, func);
 
-		FunctionBuilder::AddTableFunctionDocs(db, "ST_Read", DOCUMENTATION, EXAMPLE, {{"ext", "spatial"}});
+		InsertionOrderPreservingMap<string> tags;
+		tags.insert("ext", "spatial");
+		FunctionBuilder::AddTableFunctionDocs(db, "ST_Read", DOCUMENTATION, EXAMPLE, tags);
 
 		// Replacement scan
 		auto &config = DBConfig::GetConfig(db);
@@ -1153,9 +1155,9 @@ struct ST_Read_Meta {
 	// Bind
 	//------------------------------------------------------------------------------------------------------------------
 	struct BindData final : TableFunctionData {
-		vector<string> file_names;
+		vector<OpenFileInfo> file_names;
 
-		explicit BindData(vector<string> file_names_p) : file_names(std::move(file_names_p)) {
+		explicit BindData(vector<OpenFileInfo> file_names_p) : file_names(std::move(file_names_p)) {
 		}
 	};
 
@@ -1241,6 +1243,9 @@ struct ST_Read_Meta {
 					CPLFree(projjson_ptr);
 
 					geometry_field_value_fields.emplace_back("crs", Value::STRUCT(crs_value_fields));
+				} else {
+					Value null_crs;
+					geometry_field_value_fields.emplace_back("crs", null_crs);
 				}
 
 				geometry_fields.push_back(Value::STRUCT(geometry_field_value_fields));
@@ -1273,11 +1278,12 @@ struct ST_Read_Meta {
 		auto &bind_data = input.bind_data->Cast<BindData>();
 		auto &state = input.global_state->Cast<State>();
 
-		auto out_size = MinValue<idx_t>(STANDARD_VECTOR_SIZE, bind_data.file_names.size() - state.current_idx);
+		const auto remaining = MinValue<idx_t>(STANDARD_VECTOR_SIZE, bind_data.file_names.size() - state.current_idx);
+		auto output_idx = 0;
 
-		for (idx_t out_idx = 0; out_idx < out_size; out_idx++, state.current_idx++) {
-			auto file_name = bind_data.file_names[state.current_idx];
-			auto prefixed_file_name = GDALClientContextState::GetOrCreate(context).GetPrefix(file_name);
+		for (idx_t in_idx = 0; in_idx < remaining; in_idx++, state.current_idx++) {
+			auto &file = bind_data.file_names[state.current_idx];
+			auto prefixed_file_name = GDALClientContextState::GetOrCreate(context).GetPrefix(file.path);
 
 			GDALDatasetUniquePtr dataset;
 			try {
@@ -1285,18 +1291,19 @@ struct ST_Read_Meta {
 				    GDALDataset::Open(prefixed_file_name.c_str(), GDAL_OF_VECTOR | GDAL_OF_VERBOSE_ERROR));
 			} catch (...) {
 				// Just skip anything we cant open
-				out_idx--;
-				out_size--;
 				continue;
 			}
 
-			output.data[0].SetValue(out_idx, file_name);
-			output.data[1].SetValue(out_idx, dataset->GetDriver()->GetDescription());
-			output.data[2].SetValue(out_idx, dataset->GetDriver()->GetMetadataItem(GDAL_DMD_LONGNAME));
-			output.data[3].SetValue(out_idx, GetLayerData(dataset));
+
+			output.data[0].SetValue(output_idx, file.path);
+			output.data[1].SetValue(output_idx, dataset->GetDriver()->GetDescription());
+			output.data[2].SetValue(output_idx, dataset->GetDriver()->GetMetadataItem(GDAL_DMD_LONGNAME));
+			output.data[3].SetValue(output_idx, GetLayerData(dataset));
+
+			output_idx++;
 		}
 
-		output.SetCardinality(out_size);
+		output.SetCardinality(output_idx);
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -1326,7 +1333,9 @@ struct ST_Read_Meta {
 		const TableFunction func("ST_Read_Meta", {LogicalType::VARCHAR}, Execute, Bind, Init);
 		ExtensionUtil::RegisterFunction(db, MultiFileReader::CreateFunctionSet(func));
 
-		FunctionBuilder::AddTableFunctionDocs(db, "ST_Read_Meta", DESCRIPTION, EXAMPLE, {{"ext", "spatial"}});
+		InsertionOrderPreservingMap<string> tags;
+		tags.insert("ext", "spatial");
+		FunctionBuilder::AddTableFunctionDocs(db, "ST_Read_Meta", DESCRIPTION, EXAMPLE, tags);
 	}
 };
 
@@ -1447,7 +1456,9 @@ struct ST_Drivers {
 		const TableFunction func("ST_Drivers", {}, Execute, Bind, Init);
 		ExtensionUtil::RegisterFunction(db, func);
 
-		FunctionBuilder::AddTableFunctionDocs(db, "ST_Drivers", DESCRIPTION, EXAMPLE, {{"ext", "spatial"}});
+		InsertionOrderPreservingMap<string> tags;
+		tags.insert("ext", "spatial");
+		FunctionBuilder::AddTableFunctionDocs(db, "ST_Drivers", DESCRIPTION, EXAMPLE, tags);
 	}
 };
 
@@ -1970,7 +1981,7 @@ struct ST_Write {
 						    got_name);
 					}
 
-					if (feature->SetGeometry(geom.get()) != OGRERR_NONE) {
+					if (feature->SetGeometryDirectly(geom.release()) != OGRERR_NONE) {
 						throw IOException("Could not set geometry");
 					}
 				} else {

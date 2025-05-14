@@ -11,3 +11,8 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 format:
 	find src/spatial -iname *.hpp -o -iname *.cpp | xargs clang-format --sort-includes=0 -style=file -i
 	cmake-format -i CMakeLists.txt
+
+relassert:
+	mkdir -p build/relassert
+	cmake $(GENERATOR) $(BUILD_FLAGS) $(EXT_RELEASE_FLAGS) -DFORCE_ASSERT=1 -DCMAKE_BUILD_TYPE=RelWithDebInfo -S $(DUCKDB_SRCDIR) -B build/relassert
+	cmake --build build/relassert

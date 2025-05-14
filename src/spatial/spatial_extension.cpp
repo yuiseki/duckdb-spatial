@@ -6,14 +6,18 @@
 #include "index/rtree/rtree.hpp"
 #include "spatial/index/rtree/rtree_module.hpp"
 #include "spatial/modules/gdal/gdal_module.hpp"
+#if SPATIAL_USE_GEOS
 #include "spatial/modules/geos/geos_module.hpp"
+#endif
+#include "operators/spatial_operator_extension.hpp"
 #include "spatial/modules/main/spatial_functions.hpp"
 #include "spatial/modules/osm/osm_module.hpp"
 #include "spatial/modules/proj/proj_module.hpp"
 #include "spatial/modules/shapefile/shapefile_module.hpp"
-#include "spatial/spatial_optimizers.hpp"
-#include "spatial/spatial_types.hpp"
+#include "spatial/operators/spatial_operator_extension.hpp"
+#include "spatial/operators/spatial_join_optimizer.hpp"
 #include "spatial/spatial_geoarrow.hpp"
+#include "spatial/spatial_types.hpp"
 
 namespace duckdb {
 
@@ -26,20 +30,23 @@ static void LoadInternal(DatabaseInstance &instance) {
 	RegisterSpatialScalarFunctions(instance);
 	RegisterSpatialAggregateFunctions(instance);
 	RegisterSpatialTableFunctions(instance);
-	RegisterSpatialOptimizers(instance);
+	SpatialJoinOptimizer::Register(instance);
 	GeoArrow::Register(instance);
 
 	RegisterProjModule(instance);
 	RegisterGDALModule(instance);
+#if SPATIAL_USE_GEOS
 	RegisterGEOSModule(instance);
+#endif
 	RegisterOSMModule(instance);
 	RegisterShapefileModule(instance);
 
 	RTreeModule::RegisterIndex(instance);
 	RTreeModule::RegisterIndexPragmas(instance);
 	RTreeModule::RegisterIndexScan(instance);
-	RTreeModule::RegisterIndexPlanCreate(instance);
 	RTreeModule::RegisterIndexPlanScan(instance);
+
+	RegisterSpatialOperatorExtension(instance);;
 }
 
 void SpatialExtension::Load(DuckDB &db) {

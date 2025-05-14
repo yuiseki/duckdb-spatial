@@ -169,7 +169,7 @@ void FunctionBuilder::Register(DatabaseInstance &db, const char *name, MacroFunc
 }
 
 void FunctionBuilder::AddTableFunctionDocs(DatabaseInstance &db, const char *name, const char *desc,
-                                           const char *example, const unordered_map<string, string> &tags) {
+                                           const char *example, const InsertionOrderPreservingMap<string> &tags) {
 
 	auto &catalog = Catalog::GetSystemCatalog(db);
 	auto transaction = CatalogTransaction::GetSystemTransaction(db);
@@ -185,7 +185,10 @@ void FunctionBuilder::AddTableFunctionDocs(DatabaseInstance &db, const char *nam
 	function_description.description = RemoveIndentAndTrailingWhitespace(desc);
 	function_description.examples.push_back(RemoveIndentAndTrailingWhitespace(example));
 	func_entry.descriptions.push_back(function_description);
-	func_entry.tags.insert(tags.begin(), tags.end());
+
+	for (const auto &tag : tags) {
+		func_entry.tags.insert(tag.first, tag.second);
+	}
 }
 
 } // namespace duckdb

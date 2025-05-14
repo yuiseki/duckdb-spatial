@@ -1,0 +1,85 @@
+require spatial
+
+statement ok
+PRAGMA enable_verification
+
+# Set up test tables
+statement ok
+CREATE TABLE lhs AS
+SELECT
+    ST_Point(x, y) as geom,
+    (y * 50) + x // 10 as id
+FROM
+    generate_series(0, 500, 10) r1(x),
+    generate_series(0, 500, 10) r2(y);
+
+statement ok
+CREATE TABLE rhs AS
+SELECT
+    ST_Buffer(ST_Point(x, y), 5) as geom,
+    (y * 50) + x // 10 as id
+FROM
+    generate_series(250, 750, 10) r1(x),
+    generate_series(250, 750, 10) r2(y);
+
+# Spatial joins are applied for the following join conditions
+# - ST_Equals
+# - ST_Intersects
+# - ST_Touches
+# - ST_Crosses
+# - ST_Within
+# - ST_Contains
+# - ST_Overlaps
+# - ST_Covers
+# - ST_CoveredBy
+# - ST_ContainsPropery
+
+query II
+EXPLAIN SELECT * FROM lhs JOIN rhs ON ST_Equals(lhs.geom, rhs.geom);
+----
+physical_plan	<REGEX>:.*SPATIAL_JOIN.*Join Type: INNER.*
+
+query II
+EXPLAIN SELECT * FROM lhs JOIN rhs ON ST_Intersects(lhs.geom, rhs.geom);
+----
+physical_plan	<REGEX>:.*SPATIAL_JOIN.*Join Type: INNER.*
+
+query II
+EXPLAIN SELECT * FROM lhs JOIN rhs ON ST_Touches(lhs.geom, rhs.geom);
+----
+physical_plan	<REGEX>:.*SPATIAL_JOIN.*Join Type: INNER.*
+
+query II
+EXPLAIN SELECT * FROM lhs JOIN rhs ON ST_Crosses(lhs.geom, rhs.geom);
+----
+physical_plan	<REGEX>:.*SPATIAL_JOIN.*Join Type: INNER.*
+
+query II
+EXPLAIN SELECT * FROM lhs JOIN rhs ON ST_Within(lhs.geom, rhs.geom);
+----
+physical_plan	<REGEX>:.*SPATIAL_JOIN.*Join Type: INNER.*
+
+query II
+EXPLAIN SELECT * FROM lhs JOIN rhs ON ST_Contains(lhs.geom, rhs.geom);
+----
+physical_plan	<REGEX>:.*SPATIAL_JOIN.*Join Type: INNER.*
+
+query II
+EXPLAIN SELECT * FROM lhs JOIN rhs ON ST_Overlaps(lhs.geom, rhs.geom);
+----
+physical_plan	<REGEX>:.*SPATIAL_JOIN.*Join Type: INNER.*
+
+query II
+EXPLAIN SELECT * FROM lhs JOIN rhs ON ST_Covers(lhs.geom, rhs.geom);
+----
+physical_plan	<REGEX>:.*SPATIAL_JOIN.*Join Type: INNER.*
+
+query II
+EXPLAIN SELECT * FROM lhs JOIN rhs ON ST_CoveredBy(lhs.geom, rhs.geom);
+----
+physical_plan	<REGEX>:.*SPATIAL_JOIN.*Join Type: INNER.*
+
+query II
+EXPLAIN SELECT * FROM lhs JOIN rhs ON ST_ContainsProperly(lhs.geom, rhs.geom);
+----
+physical_plan	<REGEX>:.*SPATIAL_JOIN.*Join Type: INNER.*

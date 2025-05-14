@@ -277,4 +277,31 @@ PhysicalOperator &LogicalCreateRTreeIndex::CreatePlan(ClientContext &context, Ph
 	return physical_create_index;
 }
 
+void LogicalCreateRTreeIndex::Serialize(Serializer &writer) const {
+	LogicalExtensionOperator::Serialize(writer);
+	writer.WritePropertyWithDefault(300, "operator_type", string(OPERATOR_TYPE_NAME));
+	writer.WritePropertyWithDefault<unique_ptr<CreateIndexInfo>>(400, "info", info);
+	writer.WritePropertyWithDefault<vector<unique_ptr<Expression>>>(401, "unbound_expressions",
+																	unbound_expressions);
+}
+
+unique_ptr<LogicalExtensionOperator> LogicalCreateRTreeIndex::Deserialize(Deserializer &reader) {
+	auto create_info = reader.ReadPropertyWithDefault<unique_ptr<CreateInfo>>(400, "info");
+	auto unbound_expressions =
+		reader.ReadPropertyWithDefault<vector<unique_ptr<Expression>>>(401, "unbound_expressions");
+
+	auto info = unique_ptr_cast<CreateInfo, CreateIndexInfo>(std::move(create_info));
+
+	// We also need to rebind the table
+	auto &context = reader.Get<ClientContext &>();
+	const auto &catalog = info->catalog;
+	const auto &schema = info->schema;
+	const auto &table_name = info->table;
+	auto &table_entry = Catalog::GetEntry<TableCatalogEntry>(context, catalog, schema, table_name);
+
+	// Return the new operator
+	return make_uniq_base<LogicalExtensionOperator, LogicalCreateRTreeIndex>(
+		std::move(info), std::move(unbound_expressions), table_entry);
+}
+
 } // namespace duckdb
