@@ -134,7 +134,10 @@ struct ST_GeneratePoints {
 		generate_points.arguments = {GeoTypes::BOX_2D(), LogicalType::BIGINT, LogicalType::BIGINT};
 		set.AddFunction(generate_points);
 		ExtensionUtil::RegisterFunction(db, set);
-		FunctionBuilder::AddTableFunctionDocs(db, "ST_GeneratePoints", DESCRIPTION, EXAMPLE, {{"ext", "spatial"}});
+
+		InsertionOrderPreservingMap<string> tags;
+		tags.insert("ext", "spatial");
+		FunctionBuilder::AddTableFunctionDocs(db, "ST_GeneratePoints", DESCRIPTION, EXAMPLE, tags);
 	}
 };
 

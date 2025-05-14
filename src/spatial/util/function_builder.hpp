@@ -4,6 +4,7 @@
 #include "duckdb/function/function_set.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/parser/parsed_data/create_function_info.hpp"
+#include "duckdb/common/insertion_order_preserving_map.hpp"
 
 #include <duckdb/catalog/default/default_functions.hpp>
 
@@ -30,7 +31,7 @@ public:
 
 	// TODO:
 	static void AddTableFunctionDocs(DatabaseInstance &db, const char *name, const char *desc, const char *example,
-	                                 const unordered_map<string, string> &tags);
+	                                 const InsertionOrderPreservingMap<string> &tags);
 
 	static string RemoveIndentAndTrailingWhitespace(const char *str);
 
@@ -114,7 +115,7 @@ private:
 
 	ScalarFunctionSet set;
 	vector<FunctionDescription> descriptions = {};
-	unordered_map<string, string> tags = {};
+	InsertionOrderPreservingMap<string> tags = {};
 
 	// If not set by a variant
 	string default_description;
@@ -192,7 +193,7 @@ private:
 	}
 	string description;
 	string example;
-	unordered_map<string, string> tags;
+	InsertionOrderPreservingMap<string> tags;
 	AggregateFunctionSet set;
 };
 

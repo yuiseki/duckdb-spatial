@@ -375,7 +375,7 @@ public:
 
 		auto file_vector = fs.Glob(file_glob);
 		for (auto &file : file_vector) {
-			auto tmp = AddPrefix(file);
+			auto tmp = AddPrefix(file.path);
 			files.AddString(tmp.c_str());
 		}
 		return files.StealList();
@@ -1105,7 +1105,9 @@ struct ST_Read : ArrowTableFunction {
 		func.named_parameters["keep_wkb"] = LogicalType::BOOLEAN;
 		ExtensionUtil::RegisterFunction(db, func);
 
-		FunctionBuilder::AddTableFunctionDocs(db, "ST_Read", DOCUMENTATION, EXAMPLE, {{"ext", "spatial"}});
+		InsertionOrderPreservingMap<string> tags;
+		tags.insert("ext", "spatial");
+		FunctionBuilder::AddTableFunctionDocs(db, "ST_Read", DOCUMENTATION, EXAMPLE, tags);
 
 		// Replacement scan
 		auto &config = DBConfig::GetConfig(db);
@@ -1153,9 +1155,9 @@ struct ST_Read_Meta {
 	// Bind
 	//------------------------------------------------------------------------------------------------------------------
 	struct BindData final : TableFunctionData {
-		vector<string> file_names;
+		vector<OpenFileInfo> file_names;
 
-		explicit BindData(vector<string> file_names_p) : file_names(std::move(file_names_p)) {
+		explicit BindData(vector<OpenFileInfo> file_names_p) : file_names(std::move(file_names_p)) {
 		}
 	};
 
@@ -1276,8 +1278,8 @@ struct ST_Read_Meta {
 		auto out_size = MinValue<idx_t>(STANDARD_VECTOR_SIZE, bind_data.file_names.size() - state.current_idx);
 
 		for (idx_t out_idx = 0; out_idx < out_size; out_idx++, state.current_idx++) {
-			auto file_name = bind_data.file_names[state.current_idx];
-			auto prefixed_file_name = GDALClientContextState::GetOrCreate(context).GetPrefix(file_name);
+			auto &file = bind_data.file_names[state.current_idx];
+			auto prefixed_file_name = GDALClientContextState::GetOrCreate(context).GetPrefix(file.path);
 
 			GDALDatasetUniquePtr dataset;
 			try {
@@ -1290,7 +1292,7 @@ struct ST_Read_Meta {
 				continue;
 			}
 
-			output.data[0].SetValue(out_idx, file_name);
+			output.data[0].SetValue(out_idx, file.path);
 			output.data[1].SetValue(out_idx, dataset->GetDriver()->GetDescription());
 			output.data[2].SetValue(out_idx, dataset->GetDriver()->GetMetadataItem(GDAL_DMD_LONGNAME));
 			output.data[3].SetValue(out_idx, GetLayerData(dataset));
@@ -1326,7 +1328,9 @@ struct ST_Read_Meta {
 		const TableFunction func("ST_Read_Meta", {LogicalType::VARCHAR}, Execute, Bind, Init);
 		ExtensionUtil::RegisterFunction(db, MultiFileReader::CreateFunctionSet(func));
 
-		FunctionBuilder::AddTableFunctionDocs(db, "ST_Read_Meta", DESCRIPTION, EXAMPLE, {{"ext", "spatial"}});
+		InsertionOrderPreservingMap<string> tags;
+		tags.insert("ext", "spatial");
+		FunctionBuilder::AddTableFunctionDocs(db, "ST_Read_Meta", DESCRIPTION, EXAMPLE, tags);
 	}
 };
 
@@ -1447,7 +1451,9 @@ struct ST_Drivers {
 		const TableFunction func("ST_Drivers", {}, Execute, Bind, Init);
 		ExtensionUtil::RegisterFunction(db, func);
 
-		FunctionBuilder::AddTableFunctionDocs(db, "ST_Drivers", DESCRIPTION, EXAMPLE, {{"ext", "spatial"}});
+		InsertionOrderPreservingMap<string> tags;
+		tags.insert("ext", "spatial");
+		FunctionBuilder::AddTableFunctionDocs(db, "ST_Drivers", DESCRIPTION, EXAMPLE, tags);
 	}
 };
 
