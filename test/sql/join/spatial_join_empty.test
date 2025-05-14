@@ -1,5 +1,8 @@
 require spatial
 
+statement ok
+PRAGMA enable_verification
+
 # Create a bunch of points on a grid
 # between 0 and 500 in both x and y directions
 statement ok

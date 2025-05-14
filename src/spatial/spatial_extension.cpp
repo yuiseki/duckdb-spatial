@@ -9,13 +9,15 @@
 #if SPATIAL_USE_GEOS
 #include "spatial/modules/geos/geos_module.hpp"
 #endif
+#include "operators/spatial_operator_extension.hpp"
 #include "spatial/modules/main/spatial_functions.hpp"
 #include "spatial/modules/osm/osm_module.hpp"
 #include "spatial/modules/proj/proj_module.hpp"
 #include "spatial/modules/shapefile/shapefile_module.hpp"
-#include "spatial/spatial_types.hpp"
-#include "spatial/spatial_geoarrow.hpp"
+#include "spatial/operators/spatial_operator_extension.hpp"
 #include "spatial/operators/spatial_join_optimizer.hpp"
+#include "spatial/spatial_geoarrow.hpp"
+#include "spatial/spatial_types.hpp"
 
 namespace duckdb {
 
@@ -42,8 +44,9 @@ static void LoadInternal(DatabaseInstance &instance) {
 	RTreeModule::RegisterIndex(instance);
 	RTreeModule::RegisterIndexPragmas(instance);
 	RTreeModule::RegisterIndexScan(instance);
-	RTreeModule::RegisterIndexPlanCreate(instance);
 	RTreeModule::RegisterIndexPlanScan(instance);
+
+	RegisterSpatialOperatorExtension(instance);;
 }
 
 void SpatialExtension::Load(DuckDB &db) {

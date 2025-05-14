@@ -1,11 +1,11 @@
 #include "spatial_join_logical.hpp"
-
-#include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
-#include "duckdb/planner/expression/bound_function_expression.hpp"
-#include "duckdb/planner/operator/logical_filter.hpp"
 #include "spatial_join_physical.hpp"
 
-#include <duckdb/execution/column_binding_resolver.hpp>
+#include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/planner/operator/logical_filter.hpp"
+#include "duckdb/execution/column_binding_resolver.hpp"
+#include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/common/serializer/deserializer.hpp"
 
 namespace duckdb {
 
@@ -69,14 +69,6 @@ void LogicalSpatialJoin::ResolveTypes() {
 	types.insert(types.end(), right_types.begin(), right_types.end());
 }
 
-string LogicalSpatialJoin::GetExtensionName() const {
-	return "duckdb_spatial";
-}
-
-string LogicalSpatialJoin::GetName() const {
-	return "SPATIAL_JOIN";
-}
-
 PhysicalOperator& LogicalSpatialJoin::CreatePlan(ClientContext &context, PhysicalPlanGenerator &generator) {
 
 	// Return a new PhysicalSpatialJoin operator
@@ -85,6 +77,36 @@ PhysicalOperator& LogicalSpatialJoin::CreatePlan(ClientContext &context, Physica
 
 	return generator.Make<PhysicalSpatialJoin>(
 	    *this, left, right, std::move(spatial_predicate), join_type, estimated_cardinality);
+}
+
+void LogicalSpatialJoin::Serialize(Serializer &writer) const {
+	LogicalExtensionOperator::Serialize(writer);
+	writer.WritePropertyWithDefault(300, "operator_type", string(OPERATOR_TYPE_NAME));
+
+	writer.WritePropertyWithDefault<JoinType>(400, "join_type", join_type, JoinType::INNER);
+	writer.WritePropertyWithDefault<idx_t>(401, "mark_index", mark_index);
+	writer.WritePropertyWithDefault<vector<idx_t>>(402, "left_projection_map", left_projection_map);
+	writer.WritePropertyWithDefault<vector<idx_t>>(403, "right_projection_map", right_projection_map);
+	writer.WritePropertyWithDefault<unique_ptr<Expression>>(404, "spatial_predicate", spatial_predicate);
+	writer.WritePropertyWithDefault<vector<unique_ptr<Expression>>>(405, "extra_conditions", extra_conditions);
+}
+
+unique_ptr<LogicalExtensionOperator> LogicalSpatialJoin::Deserialize(Deserializer &reader) {
+	auto join_type = reader.ReadPropertyWithExplicitDefault<JoinType>(400, "join_type", JoinType::INNER);
+	auto mark_index = reader.ReadPropertyWithDefault<idx_t>(401, "mark_index");
+	auto left_projection_map = reader.ReadPropertyWithDefault<vector<idx_t>>(402, "left_projection_map");
+	auto right_projection_map = reader.ReadPropertyWithDefault<vector<idx_t>>(403, "right_projection_map");
+	auto spatial_predicate = reader.ReadPropertyWithDefault<unique_ptr<Expression>>(404, "spatial_predicate");
+	auto extra_conditions = reader.ReadPropertyWithDefault<vector<unique_ptr<Expression>>>(405, "extra_conditions");
+
+	auto result = make_uniq<LogicalSpatialJoin>(join_type);
+	result->mark_index = mark_index;
+	result->left_projection_map = std::move(left_projection_map);
+	result->right_projection_map = std::move(right_projection_map);
+	result->spatial_predicate = std::move(spatial_predicate);
+	result->extra_conditions = std::move(extra_conditions);
+
+	return std::move(result);
 }
 
 } // namespace duckdb

@@ -1,5 +1,8 @@
 require spatial
 
+statement ok
+PRAGMA enable_verification
+
 # Set up test tables
 statement ok
 CREATE TABLE lhs AS
