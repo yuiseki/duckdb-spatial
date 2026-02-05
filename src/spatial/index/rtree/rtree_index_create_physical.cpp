@@ -78,7 +78,7 @@ unique_ptr<GlobalSinkState> PhysicalCreateRTreeIndex::GetGlobalSinkState(ClientC
 	auto &db = storage.db;
 	gstate->rtree =
 	    make_uniq<RTreeIndex>(info->index_name, constraint_type, storage_ids, table_manager, unbound_expressions, db,
-	                          info->options, IndexStorageInfo(), estimated_cardinality);
+	                          info->options, context, IndexStorageInfo(), estimated_cardinality);
 
 	gstate->max_node_capacity = gstate->rtree->tree->GetConfig().max_node_capacity;
 	gstate->entry_idx = gstate->max_node_capacity;

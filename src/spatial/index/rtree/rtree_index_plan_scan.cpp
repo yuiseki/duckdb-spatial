@@ -8,6 +8,7 @@
 #include "spatial/util/math.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/optimizer/column_binding_replacer.hpp"
 #include "duckdb/optimizer/column_lifetime_analyzer.hpp"
@@ -115,9 +116,37 @@ public:
 		return true;
 	}
 
-	static bool TryGetBoundingBox(const Value &value, Box2D<float> &bbox) {
-		const auto blob = value.GetValueUnsafe<string_t>();
-		return Serde::TryGetBounds(blob, bbox) != 0;
+	static bool TryGetBoundingBox(ClientContext &context, const Expression &expr, Box2D<float> &bbox) {
+
+		// make a new box expression
+		auto &catalog = Catalog::GetSystemCatalog(context);
+		auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_Extent_Approx");
+		auto func = entry.functions.GetFunctionByArguments(context, {LogicalType::GEOMETRY()});
+
+		vector<unique_ptr<Expression>> children;
+		children.push_back(expr.Copy());
+
+		const auto bbox_expr = make_uniq<BoundFunctionExpression>(GeoTypes::BOX_2DF(), func, std::move(children), nullptr);
+
+		Value result;
+		if (!ExpressionExecutor::TryEvaluateScalar(context, *bbox_expr, result)) {
+			return false;
+		}
+		if (result.IsNull()) {
+			return false;
+		}
+
+		auto &parts = StructValue::GetChildren(result);
+		if (parts.size() != 4) {
+			return false;
+		}
+
+		bbox.min.x = parts[0].GetValue<float>();
+		bbox.min.y = parts[1].GetValue<float>();
+		bbox.max.x = parts[2].GetValue<float>();
+		bbox.max.y = parts[3].GetValue<float>();
+
+		return true;
 	}
 
 	static bool TryOptimize(Binder &binder, ClientContext &context, unique_ptr<LogicalOperator> &plan,
@@ -232,9 +261,8 @@ public:
 			// 		bindings[2] = the constant
 
 			// Compute the bounding box
-			auto constant_value = bindings[2].get().Cast<BoundConstantExpression>().value;
 			Box2D<float> bbox;
-			if (!TryGetBoundingBox(constant_value, bbox)) {
+			if (!TryGetBoundingBox(context, bindings[2], bbox)) {
 				continue;
 			}
 
