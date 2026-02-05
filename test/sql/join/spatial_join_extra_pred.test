@@ -1,0 +1,18 @@
+require spatial
+
+statement ok
+PRAGMA enable_verification
+
+statement ok
+CREATE TABLE t1 AS
+SELECT
+    ST_Buffer(ST_Point(x, y), 5) as geom,
+    (y * 50) + x // 10 as id
+FROM
+    generate_series(500, 750, 10) r1(x),
+    generate_series(500, 750, 10) r2(y);
+
+query II
+EXPLAIN SELECT * FROM t1 p1 JOIN t1 p2 ON ST_Intersects(p1.geom, p2.geom) where ST_Area(ST_Intersection(p1.geom, p2.geom)) > 0;
+----
+physical_plan	<REGEX>:.*SPATIAL_JOIN.*Join Type: INNER.*
