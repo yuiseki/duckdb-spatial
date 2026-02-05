@@ -214,17 +214,16 @@ static unique_ptr<FunctionData> RTreeScanDeserialize(Deserializer &deserializer,
 	unique_ptr<RTreeIndexScanBindData> result = nullptr;
 
 	table_info.BindIndexes(context, RTreeIndex::TYPE_NAME);
-	table_info.GetIndexes().Scan([&](Index &index) {
+	for (auto &index : table_info.GetIndexes().Indexes()) {
 		if (!index.IsBound() || RTreeIndex::TYPE_NAME != index.GetIndexType()) {
-			return false;
+			continue;
 		}
 		auto &index_entry = index.Cast<RTreeIndex>();
 		if (index_entry.GetIndexName() == index_name) {
 			result = make_uniq<RTreeIndexScanBindData>(duck_table, index_entry, bbox);
-			return true;
+			break;
 		}
-		return false;
-	});
+	};
 
 	if (!result) {
 		throw SerializationException("Could not find index %s on table %s.%s", index_name, schema, table);

@@ -192,7 +192,8 @@ public:
 		                                            "ST_CoveredBy", "ST_ContainsProperly"};
 
 		table_info.BindIndexes(context, RTreeIndex::TYPE_NAME);
-		table_info.GetIndexes().Scan([&](Index &index) {
+
+		for (auto &index : table_info.GetIndexes().Indexes()) {
 			if (!index.IsBound() || RTreeIndex::TYPE_NAME != index.GetIndexType()) {
 				return false;
 			}
@@ -210,7 +211,7 @@ public:
 			}
 			if (!rewrite_possible) {
 				// Could not rewrite!
-				return false;
+				continue;
 			}
 
 			FunctionExpressionMatcher matcher;
@@ -223,7 +224,7 @@ public:
 
 			vector<reference<Expression>> bindings;
 			if (!matcher.Match(*filter_expr, bindings)) {
-				return false;
+				continue;
 			}
 
 			// 		bindings[0] = the expression
@@ -234,12 +235,12 @@ public:
 			auto constant_value = bindings[2].get().Cast<BoundConstantExpression>().value;
 			Box2D<float> bbox;
 			if (!TryGetBoundingBox(constant_value, bbox)) {
-				return false;
+				continue;
 			}
 
 			bind_data = make_uniq<RTreeIndexScanBindData>(duck_table, index_entry, bbox);
-			return true;
-		});
+			break;
+		};
 
 		if (!bind_data) {
 			// No index found

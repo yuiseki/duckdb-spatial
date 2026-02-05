@@ -27,6 +27,7 @@
 #include "cpl_vsi.h"
 #include "cpl_vsi_error.h"
 #include "cpl_vsi_virtual.h"
+#include "duckdb/common/types/geometry_crs.hpp"
 #include "duckdb/main/settings.hpp"
 
 namespace duckdb {
@@ -611,7 +612,7 @@ auto Bind(ClientContext &ctx, TableFunctionBindInput &input, vector<LogicalType>
 		// Convert Arrow schema to DuckDB types
 		for (int64_t i = 0; i < schema.n_children; i++) {
 			auto &child_schema = *schema.children[i];
-			const auto gdal_type = ArrowType::GetTypeFromSchema(ctx.db->config, child_schema);
+			const auto gdal_type = ArrowType::GetTypeFromSchema(ctx, child_schema);
 			auto duck_type = gdal_type->GetDuckType();
 
 			// Track geometry columns to compute stats later
@@ -849,7 +850,7 @@ auto InitGlobal(ClientContext &context, TableFunctionInitInput &input) -> unique
 	// Store the column types
 	for (int64_t i = 0; i < schema.n_children; i++) {
 		auto &child_schema = *schema.children[i];
-		result->col_types.push_back(ArrowType::GetTypeFromSchema(context.db->config, child_schema));
+		result->col_types.push_back(ArrowType::GetTypeFromSchema(context, child_schema));
 	}
 
 	return std::move(result);
@@ -1197,6 +1198,16 @@ auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<str
 		}
 
 		throw BinderException("Unknown GDAL COPY option: '%s'", option.first);
+	}
+
+	// If no override SRS is set, we will use the SRS of the first geometry column
+	if (result->target_srs.empty()) {
+		for (auto &col : sql_types) {
+			if (col.id() == LogicalTypeId::GEOMETRY && GeoType::HasCRS(col)) {
+				result->target_srs = GeoType::GetCRS(col).GetDefinition();
+				break;
+			}
+		}
 	}
 
 	// Check that options are valid
