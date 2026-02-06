@@ -192,6 +192,7 @@ public:
 	void SetExample(const string &ex);
 	void SetFunction(const AggregateFunction &function);
 	void CanThrowErrors();
+
 private:
 	explicit AggregateFunctionBuilder(const char *name) : set(name) {
 	}

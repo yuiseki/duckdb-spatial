@@ -162,8 +162,7 @@ void RTreeIndex::CommitDrop(IndexLock &index_lock) {
 	tree->Reset();
 }
 
-
-template<class CALLBACK = std::function<void(const RTreeEntry &)>>
+template <class CALLBACK = std::function<void(const RTreeEntry &)>>
 static void ConvertToEntries(Vector &box_vec, Vector &rowid_vec, idx_t count, CALLBACK &&callback) {
 	const auto &box_validity = FlatVector::Validity(box_vec);
 	const auto &row_validity = FlatVector::Validity(rowid_vec);
@@ -181,7 +180,7 @@ static void ConvertToEntries(Vector &box_vec, Vector &rowid_vec, idx_t count, CA
 			continue;
 		}
 
-		Box2D <float> box;
+		Box2D<float> box;
 		box.min.x = box_xmin_data[i];
 		box.min.y = box_ymin_data[i];
 		box.max.x = box_xmax_data[i];
@@ -204,9 +203,7 @@ ErrorData RTreeIndex::Insert(IndexLock &lock, DataChunk &input, Vector &row_vec)
 
 	auto &box_vec = key_chunk.data[0];
 
-	ConvertToEntries(box_vec, row_vec, input.size(), [&](const RTreeEntry &entry) {
-		tree->Insert(entry);
-	});
+	ConvertToEntries(box_vec, row_vec, input.size(), [&](const RTreeEntry &entry) { tree->Insert(entry); });
 
 	return ErrorData {};
 }
@@ -230,9 +227,7 @@ void RTreeIndex::Delete(IndexLock &lock, DataChunk &input, Vector &row_vec) {
 	key_chunk.Flatten();
 
 	auto &box_vec = key_chunk.data[0];
-	ConvertToEntries(box_vec, row_vec, count, [&](const RTreeEntry &entry) {
-		tree->Delete(entry);
-	});
+	ConvertToEntries(box_vec, row_vec, count, [&](const RTreeEntry &entry) { tree->Delete(entry); });
 }
 
 IndexStorageInfo RTreeIndex::SerializeToDisk(QueryContext context, const case_insensitive_map_t<Value> &options) {

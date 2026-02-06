@@ -28,7 +28,6 @@
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/main/database.hpp"
 
-
 namespace duckdb {
 //-----------------------------------------------------------------------------
 // Plan rewriter
@@ -126,7 +125,8 @@ public:
 		vector<unique_ptr<Expression>> children;
 		children.push_back(expr.Copy());
 
-		const auto bbox_expr = make_uniq<BoundFunctionExpression>(GeoTypes::BOX_2DF(), func, std::move(children), nullptr);
+		const auto bbox_expr =
+		    make_uniq<BoundFunctionExpression>(GeoTypes::BOX_2DF(), func, std::move(children), nullptr);
 
 		Value result;
 		if (!ExpressionExecutor::TryEvaluateScalar(context, *bbox_expr, result)) {
@@ -216,9 +216,9 @@ public:
 		auto &table_info = *table.GetStorage().GetDataTableInfo();
 		unique_ptr<RTreeIndexScanBindData> bind_data = nullptr;
 
-		unordered_set<string> spatial_predicates = {"ST_Equals",    "ST_Intersects",      "ST_Touches",  "ST_Crosses",
-		                                            "ST_Within",    "ST_Contains",        "ST_Overlaps", "ST_Covers",
-		                                            "ST_CoveredBy", "ST_ContainsProperly", "&&", "ST_IntersectsExtent"};
+		unordered_set<string> spatial_predicates = {
+		    "ST_Equals",   "ST_Intersects", "ST_Touches",   "ST_Crosses",          "ST_Within", "ST_Contains",
+		    "ST_Overlaps", "ST_Covers",     "ST_CoveredBy", "ST_ContainsProperly", "&&",        "ST_IntersectsExtent"};
 
 		table_info.BindIndexes(context, RTreeIndex::TYPE_NAME);
 

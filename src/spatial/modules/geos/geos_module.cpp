@@ -2092,6 +2092,43 @@ struct ST_ShortestLine {
 	}
 };
 
+struct ST_ClosestPoint {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		BinaryExecutor::ExecuteWithNulls<string_t, string_t, string_t>(
+		    args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &lhs_blob, const string_t &rhs_blob, ValidityMask &mask, idx_t row_idx) {
+			    const auto lhs = lstate.Deserialize(lhs_blob);
+			    const auto rhs = lstate.Deserialize(rhs_blob);
+			    const auto line = lhs.get_shortest_line(rhs);
+			    if (line.is_empty()) {
+				    mask.SetInvalid(row_idx);
+				    return string_t();
+			    }
+			    const auto point = line.get_point_n(0);
+			    return lstate.Serialize(result, point);
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_ClosestPoint", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom1", LogicalType::GEOMETRY());
+				variant.AddParameter("geom2", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+				variant.CanThrowErrors();
+			});
+
+			func.SetDescription("Returns the closest point on the first geometry to the second geometry");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "measurement");
+		});
+	}
+};
+
 struct ST_Simplify {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
@@ -3059,6 +3096,7 @@ void RegisterGEOSModule(ExtensionLoader &loader) {
 	ST_Boundary::Register(loader);
 	ST_Buffer::Register(loader);
 	ST_BuildArea::Register(loader);
+	ST_ClosestPoint::Register(loader);
 	ST_Contains::Register(loader);
 	ST_ContainsProperly::Register(loader);
 	ST_WithinProperly::Register(loader);

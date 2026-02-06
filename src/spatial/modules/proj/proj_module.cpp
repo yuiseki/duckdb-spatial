@@ -1219,13 +1219,13 @@ namespace {
 
 class SpatialCoordinateSystemGenerator : public DefaultGenerator {
 private:
-
 	SchemaCatalogEntry &schema;
 	PJ_CONTEXT *ctx = nullptr;
 	mutex proj_mutex;
 
 public:
-	SpatialCoordinateSystemGenerator(Catalog &catalog, SchemaCatalogEntry &schema) : DefaultGenerator(catalog), schema(schema) {
+	SpatialCoordinateSystemGenerator(Catalog &catalog, SchemaCatalogEntry &schema)
+	    : DefaultGenerator(catalog), schema(schema) {
 		ctx = ProjModule::GetThreadProjContext();
 	}
 
@@ -1260,7 +1260,7 @@ public:
 		// Create PJ object
 		lock_guard<mutex> lock(proj_mutex);
 
-		PJ* crs = proj_create_from_database(ctx, auth_name.c_str(), auth_code.c_str(), PJ_CATEGORY_CRS, false, nullptr);
+		PJ *crs = proj_create_from_database(ctx, auth_name.c_str(), auth_code.c_str(), PJ_CATEGORY_CRS, false, nullptr);
 		if (!crs) {
 			return nullptr;
 		}
@@ -1297,7 +1297,7 @@ public:
 
 		vector<string> entries;
 
-		auto scan_authority = [&](const char* auth) {
+		auto scan_authority = [&](const char *auth) {
 			int ncrs = 0;
 			PROJ_CRS_INFO **crs_info = proj_get_crs_info_list_from_database(ctx, auth, nullptr, &ncrs);
 

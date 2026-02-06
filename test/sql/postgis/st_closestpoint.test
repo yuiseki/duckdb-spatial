@@ -1,0 +1,16 @@
+# Example taken from the PostGIS manual @ http://postgis.net, licensed under the Creative Commons Attribution-Share Alike 3.0 License.
+require spatial
+
+query II
+SELECT ST_AsText( ST_ClosestPoint(pt,line)) AS cp_pt_line,
+                ST_AsText( ST_ClosestPoint(line,pt)) AS cp_line_pt
+             FROM (SELECT 'POINT (160 40)'::geometry AS pt,
+                          'LINESTRING (10 30, 50 50, 30 110, 70 90, 180 140, 130 190)'::geometry AS line ) AS t;
+----
+POINT (160 40)	POINT (125.75342465753425 115.34246575342466)
+
+
+query I
+select st_closestpoint('POINT EMPTY', 'POINT EMPTY');
+----
+NULL

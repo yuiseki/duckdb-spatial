@@ -4064,8 +4064,8 @@ struct ST_GeomFromHEXWKB {
 				const auto byte_a = Blob::HEX_MAP[hex_ptr[hex_idx]];
 				const auto byte_b = Blob::HEX_MAP[hex_ptr[hex_idx + 1]];
 				if (byte_a == -1 || byte_b == -1) {
-					throw InvalidInputException("Invalid character in HEX WKB string: '%c%c'",
-					                            hex_ptr[hex_idx], hex_ptr[hex_idx + 1]);
+					throw InvalidInputException("Invalid character in HEX WKB string: '%c%c'", hex_ptr[hex_idx],
+					                            hex_ptr[hex_idx + 1]);
 				}
 
 				blob_ptr[blob_idx++] = (byte_a << 4) + byte_b;
@@ -6049,62 +6049,61 @@ struct ST_Hilbert {
 
 struct ST_InteriorRingN {
 
-    //------------------------------------------------------------------------------------------------------------------
-    // GEOMETRY
-    //------------------------------------------------------------------------------------------------------------------
-    static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
-        auto &lstate = LocalState::ResetAndGet(state);
+	//------------------------------------------------------------------------------------------------------------------
+	// GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
-        BinaryExecutor::ExecuteWithNulls<string_t, int64_t, string_t>(
-            args.data[0], args.data[1], result, args.size(),
-            [&](const string_t &blob, const int64_t &n, ValidityMask &mask, idx_t idx) {
-                sgl::geometry geom;
-                lstate.Deserialize(blob, geom);
+		BinaryExecutor::ExecuteWithNulls<string_t, int64_t, string_t>(
+		    args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &blob, const int64_t &n, ValidityMask &mask, idx_t idx) {
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
 
-                // ---- validate geometry ----
-                if (geom.get_type() != sgl::geometry_type::POLYGON) {
-                    mask.SetInvalid(idx);
+			    // ---- validate geometry ----
+			    if (geom.get_type() != sgl::geometry_type::POLYGON) {
+				    mask.SetInvalid(idx);
 				    return string_t {};
-                }
+			    }
 
-                if (geom.is_empty()) {
-                    // empty polygon → NULL because ring index must be always out of bounds then
-                    mask.SetInvalid(idx);
+			    if (geom.is_empty()) {
+				    // empty polygon → NULL because ring index must be always out of bounds then
+				    mask.SetInvalid(idx);
 				    return string_t {};
-                }
+			    }
 
-                if (n < 1) {
-                    // invalid index → NULL
-                    mask.SetInvalid(idx);
+			    if (n < 1) {
+				    // invalid index → NULL
+				    mask.SetInvalid(idx);
 				    return string_t {};
-                }
+			    }
 
-                const idx_t num_parts = geom.get_part_count(); // includes shell
-                // parts: 0 = exterior, 1..n = interior rings
-                const idx_t num_interior = num_parts > 0 ? num_parts - 1 : 0;
+			    const idx_t num_parts = geom.get_part_count(); // includes shell
+			    // parts: 0 = exterior, 1..n = interior rings
+			    const idx_t num_interior = num_parts > 0 ? num_parts - 1 : 0;
 
-                if (static_cast<idx_t>(n) > num_interior) {
-                    // ring doesn't exist → NULL
-                    mask.SetInvalid(idx);
+			    if (static_cast<idx_t>(n) > num_interior) {
+				    // ring doesn't exist → NULL
+				    mask.SetInvalid(idx);
 				    return string_t {};
-                }
+			    }
 
-                // interior ring N = part N (because part 0 = shell)
-                const auto *ring = geom.get_first_part();
-                for (idx_t i = 0; i < (idx_t)n; i++) {
-                    ring = ring->get_next();
-                }
+			    // interior ring N = part N (because part 0 = shell)
+			    const auto *ring = geom.get_first_part();
+			    for (idx_t i = 0; i < (idx_t)n; i++) {
+				    ring = ring->get_next();
+			    }
 
-                D_ASSERT(ring != nullptr);
-                return lstate.Serialize(result, *ring);
-            }
-        );
-    }
+			    D_ASSERT(ring != nullptr);
+			    return lstate.Serialize(result, *ring);
+		    });
+	}
 
-    //------------------------------------------------------------------------------------------------------------------
-    // POLYGON_2D
-    //------------------------------------------------------------------------------------------------------------------
-    static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
+	//------------------------------------------------------------------------------------------------------------------
+	// POLYGON_2D
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
 		D_ASSERT(args.data.size() == 2);
 		auto &poly_vec = args.data[0];
 		auto &n_vec = args.data[1];
@@ -6152,7 +6151,7 @@ struct ST_InteriorRingN {
 			}
 
 			// polygon has poly.length rings: first is exterior, rest are interior
-			const idx_t ring_count = poly.length;             // >=1 normally
+			const idx_t ring_count = poly.length; // >=1 normally
 			const idx_t interior_count = (ring_count > 0 ? ring_count - 1 : 0);
 
 			if (nr < 1 || nr > static_cast<int64_t>(interior_count)) {
@@ -6188,10 +6187,10 @@ struct ST_InteriorRingN {
 
 			// read requested n for this row
 			const auto n_idx = n_format.sel->get_index(i);
-			if(!n_format.validity.RowIsValid(n_idx)) {
-                FlatVector::SetNull(line_vec, i, true);
-                continue;
-            }
+			if (!n_format.validity.RowIsValid(n_idx)) {
+				FlatVector::SetNull(line_vec, i, true);
+				continue;
+			}
 
 			const auto nr = n_data[n_idx];
 
@@ -6222,50 +6221,49 @@ struct ST_InteriorRingN {
 		}
 	}
 
-    //------------------------------------------------------------------------------------------------------------------
-    // Documentation
-    //------------------------------------------------------------------------------------------------------------------
-    static constexpr auto DESCRIPTION =
-        "Returns the N-th interior ring (hole) of a POLYGON as a LINESTRING. Indexing is 1-based  (n = 1 returns the first interior ring). "
-        "Returns NULL if the polygon is empty or has fewer than N interior rings.";
+	//------------------------------------------------------------------------------------------------------------------
+	// Documentation
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = "Returns the N-th interior ring (hole) of a POLYGON as a LINESTRING. Indexing "
+	                                    "is 1-based  (n = 1 returns the first interior ring). "
+	                                    "Returns NULL if the polygon is empty or has fewer than N interior rings.";
 
-    static constexpr auto EXAMPLE = R"(
+	static constexpr auto EXAMPLE = R"(
 		SELECT ST_AsText(ST_InteriorRingN(ST_GeomFromText('POLYGON((0 0,10 0,10 10,0 10,0 0),(2 2,4 2,4 4,2 4,2 2))'), 1));
 	)";
 
-    //------------------------------------------------------------------------------------------------------------------
-    // Register
-    //------------------------------------------------------------------------------------------------------------------
-    static void Register(ExtensionLoader &loader) {
-        FunctionBuilder::RegisterScalar(loader, "ST_InteriorRingN", [](ScalarFunctionBuilder &func) {
-            func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-                variant.AddParameter("geom", LogicalType::GEOMETRY());
-                variant.AddParameter("n", LogicalType::BIGINT);
-                variant.SetReturnType(LogicalType::GEOMETRY());
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_InteriorRingN", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.AddParameter("n", LogicalType::BIGINT);
+				variant.SetReturnType(LogicalType::GEOMETRY());
 
-                variant.SetInit(LocalState::Init);
-                variant.SetFunction(ExecuteGeometry);
-            	variant.CanThrowErrors();
-            });
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteGeometry);
+				variant.CanThrowErrors();
+			});
 
-            func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-                variant.AddParameter("polygon", GeoTypes::POLYGON_2D());
-                variant.AddParameter("n", LogicalType::BIGINT);
-                variant.SetReturnType(GeoTypes::LINESTRING_2D());
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("polygon", GeoTypes::POLYGON_2D());
+				variant.AddParameter("n", LogicalType::BIGINT);
+				variant.SetReturnType(GeoTypes::LINESTRING_2D());
 
-                variant.SetFunction(ExecutePolygon);
-            	variant.CanThrowErrors();
-            });
+				variant.SetFunction(ExecutePolygon);
+				variant.CanThrowErrors();
+			});
 
-            func.SetDescription(DESCRIPTION);
-            func.SetExample(EXAMPLE);
+			func.SetDescription(DESCRIPTION);
+			func.SetExample(EXAMPLE);
 
-            func.SetTag("ext", "spatial");
-            func.SetTag("category", "property");
-        });
-    }
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
+	}
 };
-
 
 //======================================================================================================================
 // ST_InterpolatePoint
