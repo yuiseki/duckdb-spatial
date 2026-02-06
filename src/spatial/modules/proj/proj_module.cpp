@@ -8,6 +8,10 @@
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/common/types/geometry_crs.hpp"
+#include "duckdb/parser/parsed_data/create_coordinate_system_info.hpp"
+#include "duckdb/catalog/catalog_entry/coordinate_system_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 
 #include "proj.h"
 #include "geodesic.h"
@@ -1208,6 +1212,133 @@ struct DuckDB_Proj_Compiled_Version {
 
 } // namespace
 
+//======================================================================================================================
+// CRS Provider
+//======================================================================================================================
+namespace {
+
+class SpatialCoordinateSystemGenerator : public DefaultGenerator {
+private:
+
+	SchemaCatalogEntry &schema;
+	PJ_CONTEXT *ctx = nullptr;
+	mutex proj_mutex;
+
+public:
+	SpatialCoordinateSystemGenerator(Catalog &catalog, SchemaCatalogEntry &schema) : DefaultGenerator(catalog), schema(schema) {
+		ctx = ProjModule::GetThreadProjContext();
+	}
+
+	~SpatialCoordinateSystemGenerator() override {
+		if (ctx) {
+			proj_context_destroy(ctx);
+			ctx = nullptr;
+		}
+	}
+
+public:
+	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const string &entry_name) override {
+
+		if (schema.name != DEFAULT_SCHEMA) {
+			return nullptr;
+		}
+
+		// Try to split name by ":"
+		auto parts = StringUtil::Split(entry_name, ":");
+		if (parts.size() != 2) {
+			return nullptr;
+		}
+
+		auto auth_name = parts[0];
+		auto auth_code = parts[1];
+
+		// We only support OGC and EPSG for now
+		if (!StringUtil::CIEquals(auth_name, "EPSG") && !StringUtil::CIEquals(auth_name, "OGC")) {
+			return nullptr;
+		}
+
+		// Create PJ object
+		lock_guard<mutex> lock(proj_mutex);
+
+		PJ* crs = proj_create_from_database(ctx, auth_name.c_str(), auth_code.c_str(), PJ_CATEGORY_CRS, false, nullptr);
+		if (!crs) {
+			return nullptr;
+		}
+
+		// Export to WKT2_2019
+		string wkt_text;
+		static const char *const options[] = {"MULTILINE=NO", nullptr};
+		const auto wkt = proj_as_wkt(ctx, crs, PJ_WKT2_2019, options);
+		if (wkt) {
+			wkt_text = wkt;
+		}
+
+		// Export to PROJJSON
+		string projjson_text;
+		const auto pj_json = proj_as_projjson(ctx, crs, options);
+		if (pj_json) {
+			projjson_text = pj_json;
+		}
+
+		proj_destroy(crs);
+
+		auto info = CreateCoordinateSystemInfo(entry_name, auth_name, auth_code, projjson_text, wkt_text);
+		info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+
+		auto result = make_uniq<CoordinateSystemCatalogEntry>(catalog, schema, info);
+		return std::move(result);
+	}
+
+	vector<string> GetDefaultEntries() override {
+
+		if (schema.name != DEFAULT_SCHEMA) {
+			return {};
+		}
+
+		vector<string> entries;
+
+		auto scan_authority = [&](const char* auth) {
+			int ncrs = 0;
+			PROJ_CRS_INFO **crs_info = proj_get_crs_info_list_from_database(ctx, auth, nullptr, &ncrs);
+
+			if (crs_info) {
+				for (int i = 0; i < ncrs; i++) {
+					auto &auth_name = crs_info[i]->auth_name;
+					auto &auth_code = crs_info[i]->code;
+
+					if (!auth_name || !auth_code) {
+						continue;
+					}
+
+					entries.push_back(StringUtil::Format("%s:%s", auth_name, auth_code));
+				}
+			}
+
+			proj_crs_info_list_destroy(crs_info);
+		};
+
+		// Scan EPSG and OGC authority lists
+		lock_guard<mutex> lock(proj_mutex);
+		scan_authority("epsg");
+		scan_authority("OGC");
+
+		return entries;
+	}
+
+	static void Register(ExtensionLoader &loader) {
+
+		auto &db = loader.GetDatabaseInstance();
+		auto system_transaction = CatalogTransaction::GetSystemTransaction(db);
+		auto &catalog = Catalog::GetSystemCatalog(db);
+		auto &schema = catalog.GetSchema(system_transaction, DEFAULT_SCHEMA);
+		auto &duck_schema = schema.Cast<DuckSchemaEntry>();
+
+		auto &set = duck_schema.GetCatalogSet(CatalogType::COORDINATE_SYSTEM_ENTRY);
+		set.SetDefaultGenerator(make_uniq<SpatialCoordinateSystemGenerator>(catalog, schema));
+	}
+};
+
+} // namespace
 //######################################################################################################################
 // Module Registration
 //######################################################################################################################
@@ -1229,6 +1360,8 @@ void RegisterProjModule(ExtensionLoader &loader) {
 	// Meta functions for proj lib
 	DuckDB_Proj_Version::Register(loader);
 	DuckDB_Proj_Compiled_Version::Register(loader);
+
+	SpatialCoordinateSystemGenerator::Register(loader);
 }
 
 } // namespace duckdb

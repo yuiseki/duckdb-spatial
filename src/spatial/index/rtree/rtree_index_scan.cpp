@@ -100,13 +100,25 @@ static void RTreeIndexScanExecute(ClientContext &context, TableFunctionInput &da
 
 	// Scan the index for row id's
 	auto row_count = bind_data.index.Cast<RTreeIndex>().Scan(*state.index_state, state.row_ids);
+
 	if (row_count == 0) {
-		// Short-circuit if the index had no more rows
-		output.SetCardinality(0);
-		return;
+		// Index is exhausted, fetch from local storage instead.
+		// This won't be indexed, but at least we get the correct results.
+		auto &local_storage = LocalStorage::Get(transaction);
+
+		// If there are no projection ids, we can directly scan into the output
+		if (state.projection_ids.empty()) {
+			local_storage.Scan(state.local_storage_state.local_state, state.column_ids, output);
+			return;
+		}
+
+		// Otherwise we need to scan into our scan chunk, and then project out the result
+		state.all_columns.Reset();
+		local_storage.Scan(state.local_storage_state.local_state, state.column_ids, state.all_columns);
+		output.ReferenceColumns(state.all_columns, state.projection_ids);
 	}
 
-	// Fetch the data from the local storage given the row ids
+	// Fetch the data from the main storage given the row ids
 	if (state.projection_ids.empty()) {
 		bind_data.table.GetStorage().Fetch(transaction, output, state.column_ids, state.row_ids, row_count,
 		                                   state.fetch_state);
@@ -214,17 +226,16 @@ static unique_ptr<FunctionData> RTreeScanDeserialize(Deserializer &deserializer,
 	unique_ptr<RTreeIndexScanBindData> result = nullptr;
 
 	table_info.BindIndexes(context, RTreeIndex::TYPE_NAME);
-	table_info.GetIndexes().Scan([&](Index &index) {
+	for (auto &index : table_info.GetIndexes().Indexes()) {
 		if (!index.IsBound() || RTreeIndex::TYPE_NAME != index.GetIndexType()) {
-			return false;
+			continue;
 		}
 		auto &index_entry = index.Cast<RTreeIndex>();
 		if (index_entry.GetIndexName() == index_name) {
 			result = make_uniq<RTreeIndexScanBindData>(duck_table, index_entry, bbox);
-			return true;
+			break;
 		}
-		return false;
-	});
+	};
 
 	if (!result) {
 		throw SerializationException("Could not find index %s on table %s.%s", index_name, schema, table);

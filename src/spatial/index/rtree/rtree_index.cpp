@@ -1,10 +1,14 @@
 #include "spatial/index/rtree/rtree_index.hpp"
 
+#include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/common/serializer/binary_deserializer.hpp"
 #include "duckdb/common/serializer/binary_serializer.hpp"
 #include "duckdb/execution/index/fixed_size_allocator.hpp"
 #include "duckdb/storage/table/scan_state.hpp"
 #include "duckdb/main/database.hpp"
+#include "spatial/spatial_types.hpp"
 #include "spatial/geometry/geometry_serialization.hpp"
 
 #include "spatial/index/rtree/rtree_module.hpp"
@@ -70,8 +74,8 @@ static RTreeConfig ParseOptions(const case_insensitive_map_t<Value> &options) {
 RTreeIndex::RTreeIndex(const string &name, IndexConstraintType index_constraint_type,
                        const vector<column_t> &column_ids, TableIOManager &table_io_manager,
                        const vector<unique_ptr<Expression>> &unbound_expressions, AttachedDatabase &db,
-                       const case_insensitive_map_t<Value> &options, const IndexStorageInfo &info,
-                       idx_t estimated_cardinality)
+                       const case_insensitive_map_t<Value> &options, ClientContext &context,
+                       const IndexStorageInfo &info, idx_t estimated_cardinality)
     : BoundIndex(name, TYPE_NAME, index_constraint_type, column_ids, table_io_manager, unbound_expressions, db) {
 
 	if (index_constraint_type != IndexConstraintType::NONE) {
@@ -101,6 +105,21 @@ RTreeIndex::RTreeIndex(const string &name, IndexConstraintType index_constraint_
 		// Set the root node and recalculate the bounds
 		tree->SetRoot(info.root);
 	}
+
+	// Construct the key expression executor
+	auto &source_type = unbound_expressions[0]->return_type;
+	auto &catalog = Catalog::GetSystemCatalog(context);
+	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_Extent_Approx");
+	auto func = entry.functions.GetFunctionByArguments(context, {source_type});
+	auto child_expr = make_uniq<BoundReferenceExpression>(source_type, 0);
+
+	vector<unique_ptr<Expression>> children;
+	children.push_back(std::move(child_expr));
+
+	key_expr = make_uniq<BoundFunctionExpression>(GeoTypes::BOX_2DF(), func, std::move(children), nullptr);
+	key_executor = make_uniq<ExpressionExecutor>(context);
+	key_executor->AddExpression(*key_expr);
+	key_chunk.Initialize(context, {GeoTypes::BOX_2DF()});
 }
 
 unique_ptr<IndexScanState> RTreeIndex::InitializeScan(const RTreeBounds &query) const {
@@ -143,49 +162,51 @@ void RTreeIndex::CommitDrop(IndexLock &index_lock) {
 	tree->Reset();
 }
 
-ErrorData RTreeIndex::Insert(IndexLock &lock, DataChunk &input, Vector &rowid_vec) {
-	// TODO: Dont flatten chunk
-	input.Flatten();
 
-	auto &geom_vec = input.data[0];
-	const auto &geom_data = FlatVector::GetData<string_t>(geom_vec);
-	const auto &rowid_data = FlatVector::GetData<row_t>(rowid_vec);
+template<class CALLBACK = std::function<void(const RTreeEntry &)>>
+static void ConvertToEntries(Vector &box_vec, Vector &rowid_vec, idx_t count, CALLBACK &&callback) {
+	const auto &box_validity = FlatVector::Validity(box_vec);
+	const auto &row_validity = FlatVector::Validity(rowid_vec);
 
-	if (geom_data == nullptr || rowid_data == nullptr) {
-		return ErrorData {};
-	}
+	const auto &box_entries = StructVector::GetEntries(box_vec);
+	const auto box_xmin_data = FlatVector::GetData<float>(*box_entries[0]);
+	const auto box_ymin_data = FlatVector::GetData<float>(*box_entries[1]);
+	const auto box_xmax_data = FlatVector::GetData<float>(*box_entries[2]);
+	const auto box_ymax_data = FlatVector::GetData<float>(*box_entries[3]);
 
-	RTreeEntry entry_buffer[STANDARD_VECTOR_SIZE];
-	bool valid_buffer[STANDARD_VECTOR_SIZE];
+	const auto row_data = FlatVector::GetData<row_t>(rowid_vec);
 
-	for (idx_t i = 0; i < input.size(); i++) {
-		if (FlatVector::IsNull(geom_vec, i) || FlatVector::IsNull(rowid_vec, i)) {
-			valid_buffer[i] = false;
+	for (idx_t i = 0; i < count; i++) {
+		if (!box_validity.RowIsValid(i) || !row_validity.RowIsValid(i)) {
 			continue;
 		}
 
-		const auto rowid = rowid_data[i];
+		Box2D <float> box;
+		box.min.x = box_xmin_data[i];
+		box.min.y = box_ymin_data[i];
+		box.max.x = box_xmax_data[i];
+		box.max.y = box_ymax_data[i];
 
-		Box2D<float> bbox;
-		if (!Serde::TryGetBounds(geom_data[i], bbox)) {
-			valid_buffer[i] = false;
-			continue;
-		}
+		const auto row = row_data[i];
 
-		entry_buffer[i] = {RTree::MakeRowId(rowid), bbox};
-		valid_buffer[i] = true;
+		RTreeEntry new_entry = {RTree::MakeRowId(row), box};
+
+		// Invoke the callback with the new entry
+		callback(new_entry);
 	}
+}
 
-	// TODO: Investigate this more, is there a better way to insert multiple entries
-	// so that they produce a better tree?
-	// E.g. sort by x coordinate, or hilbert sort? or STR packing?
-	// Or insert by smallest first? or largest first?
-	// Or even create a separate subtree entirely, and then insert that into the root?
-	for (idx_t i = 0; i < input.size(); i++) {
-		if (valid_buffer[i]) {
-			tree->Insert(entry_buffer[i]);
-		}
-	}
+ErrorData RTreeIndex::Insert(IndexLock &lock, DataChunk &input, Vector &row_vec) {
+
+	key_chunk.Reset();
+	key_executor->ExecuteExpression(input, key_chunk.data[0]);
+	key_chunk.Flatten();
+
+	auto &box_vec = key_chunk.data[0];
+
+	ConvertToEntries(box_vec, row_vec, input.size(), [&](const RTreeEntry &entry) {
+		tree->Insert(entry);
+	});
 
 	return ErrorData {};
 }
@@ -197,38 +218,21 @@ ErrorData RTreeIndex::Append(IndexLock &lock, DataChunk &appended_data, Vector &
 	return Insert(lock, expr_chunk, row_identifiers);
 }
 
-void RTreeIndex::Delete(IndexLock &lock, DataChunk &input, Vector &rowid_vec) {
+void RTreeIndex::Delete(IndexLock &lock, DataChunk &input, Vector &row_vec) {
 	const auto count = input.size();
 
 	DataChunk expr_chunk;
 	expr_chunk.Initialize(Allocator::DefaultAllocator(), logical_types);
 	ExecuteExpressions(input, expr_chunk);
 
-	UnifiedVectorFormat geom_format;
-	UnifiedVectorFormat rowid_format;
+	key_chunk.Reset();
+	key_executor->ExecuteExpression(expr_chunk, key_chunk.data[0]);
+	key_chunk.Flatten();
 
-	expr_chunk.data[0].ToUnifiedFormat(count, geom_format);
-	rowid_vec.ToUnifiedFormat(count, rowid_format);
-
-	for (idx_t i = 0; i < count; i++) {
-		const auto geom_idx = geom_format.sel->get_index(i);
-		const auto rowid_idx = rowid_format.sel->get_index(i);
-
-		if (!geom_format.validity.RowIsValid(geom_idx) || !rowid_format.validity.RowIsValid(rowid_idx)) {
-			continue;
-		}
-
-		auto &geom = UnifiedVectorFormat::GetData<string_t>(geom_format)[geom_idx];
-		auto &rowid = UnifiedVectorFormat::GetData<row_t>(rowid_format)[rowid_idx];
-
-		Box2D<float> approx_bounds;
-		if (!Serde::TryGetBounds(geom, approx_bounds)) {
-			continue;
-		}
-
-		RTreeEntry new_entry = {RTree::MakeRowId(rowid), approx_bounds};
-		tree->Delete(new_entry);
-	}
+	auto &box_vec = key_chunk.data[0];
+	ConvertToEntries(box_vec, row_vec, count, [&](const RTreeEntry &entry) {
+		tree->Delete(entry);
+	});
 }
 
 IndexStorageInfo RTreeIndex::SerializeToDisk(QueryContext context, const case_insensitive_map_t<Value> &options) {

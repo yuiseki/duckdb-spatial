@@ -77,17 +77,16 @@ static void RTreeIndexInfoExecute(ClientContext &context, TableFunctionInput &da
 
 		auto &table_info = *storage.GetDataTableInfo();
 		table_info.BindIndexes(context, RTreeIndex::TYPE_NAME);
-		table_info.GetIndexes().Scan([&](Index &index) {
+		for (auto &index : table_info.GetIndexes().Indexes()) {
 			if (!index.IsBound() || RTreeIndex::TYPE_NAME != index.GetIndexType()) {
-				return false;
+				continue;
 			}
 			auto &rtree = index.Cast<RTreeIndex>();
 			if (rtree.name == index_entry.name) {
 				rtree_index = &rtree;
-				return true;
+				break;
 			}
-			return false;
-		});
+		};
 
 		if (!rtree_index) {
 			throw BinderException("Index %s not found", index_entry.name);
@@ -121,17 +120,16 @@ static optional_ptr<RTreeIndex> TryGetIndex(ClientContext &context, const string
 
 	auto &table_info = *storage.GetDataTableInfo();
 	table_info.BindIndexes(context, RTreeIndex::TYPE_NAME);
-	table_info.GetIndexes().Scan([&](Index &index) {
+	for (auto &index : table_info.GetIndexes().Indexes()) {
 		if (!index.IsBound() || RTreeIndex::TYPE_NAME != index.GetIndexType()) {
-			return false;
+			continue;
 		}
 		auto &rtree = index.Cast<RTreeIndex>();
 		if (index_entry.name == index_name) {
 			rtree_index = &rtree;
-			return true;
+			break;
 		}
-		return false;
-	});
+	};
 
 	return rtree_index;
 }
