@@ -18,6 +18,7 @@
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 
 #include "spatial/util/distance_extract.hpp"
+#include "spatial/spatial_settings.hpp"
 
 // Extra
 #include "yyjson.h"
@@ -5759,10 +5760,62 @@ struct ST_ZMFlag {
 struct ST_Distance_Sphere {
 
 	//------------------------------------------------------------------------------------------------------------------
+	// Bind
+	//------------------------------------------------------------------------------------------------------------------
+	struct BindData final : public FunctionData {
+
+		bool always_xy = false;
+
+		unique_ptr<FunctionData> Copy() const override {
+			auto copy = make_uniq<BindData>();
+			copy->always_xy = always_xy;
+			return copy;
+		}
+		bool Equals(const FunctionData &other) const override {
+			auto &other_bind = other.Cast<BindData>();
+			return always_xy == other_bind.always_xy;
+		}
+	};
+
+	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &func,
+	                                     vector<unique_ptr<Expression>> &arguments) {
+		auto bind_data = make_uniq<BindData>();
+
+		bool is_set = false;
+		bind_data->always_xy = SpatialSettings::AlwaysXY(context, is_set);
+
+		if (!is_set) {
+			constexpr auto raw_message =
+			    "The '%s' function is sensitive to the coordinate axis order of the input geometry.\n"
+			    "The current default for this function is to assume (LATITUDE, LONGITUDE) axis order.\n"
+			    "This is expected to change to (LONGITUDE, LATITUDE) in the future.\n "
+			    "Please explicitly set the 'geometry_always_xy' setting to avoid unexpected changes in behavior.\n"
+			    " * 'SET geometry_always_xy = true' to make this function assume all geometries are (LONGITUDE, "
+			    "LATITUDE)\n"
+			    " * 'SET geometry_always_xy = false' to keep the current behavior and make this warning go away.";
+
+			auto &logger = Logger::Get(context);
+			logger.WriteLog("Spatial", LogLevel::LOG_WARNING, StringUtil::Format(raw_message, func.name.c_str()));
+		}
+
+		return std::move(bind_data);
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
 	// GEOMETRY
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
+		auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<BindData>();
+
+		// Depending on the axis order setting, switch the order of coordinates for the haversine distance calculation
+		auto compute = bdata.always_xy ?
+			[](const sgl::vertex_xy &v1, const sgl::vertex_xy &v2) {
+				return sgl::math::haversine_distance(v1.y, v1.x, v2.y, v2.x);
+			} :
+			[](const sgl::vertex_xy &v1, const sgl::vertex_xy &v2) {
+				return sgl::math::haversine_distance(v1.x, v1.y, v2.x, v2.y);
+			};
 
 		BinaryExecutor::Execute<string_t, string_t, double>(
 		    args.data[0], args.data[1], result, args.size(), [&](const string_t &l_blob, const string_t &r_blob) {
@@ -5783,7 +5836,7 @@ struct ST_Distance_Sphere {
 			    const auto lv = lhs.get_vertex_xy(0);
 			    const auto rv = rhs.get_vertex_xy(0);
 
-			    return sgl::math::haversine_distance(lv.x, lv.y, rv.x, rv.y);
+			    return compute(lv, rv);
 		    });
 	}
 
@@ -5792,6 +5845,9 @@ struct ST_Distance_Sphere {
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecutePoint(DataChunk &args, ExpressionState &state, Vector &result) {
 		D_ASSERT(args.data.size() == 2);
+
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<BindData>();
+
 		auto &left = args.data[0];
 		auto &right = args.data[1];
 		auto count = args.size();
@@ -5799,10 +5855,17 @@ struct ST_Distance_Sphere {
 		using POINT_TYPE = StructTypeBinary<double, double>;
 		using DISTANCE_TYPE = PrimitiveType<double>;
 
-		GenericExecutor::ExecuteBinary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE>(
-		    left, right, result, count, [&](POINT_TYPE left, POINT_TYPE right) {
-			    return sgl::math::haversine_distance(left.a_val, left.b_val, right.a_val, right.b_val);
-		    });
+		if (bdata.always_xy) {
+			GenericExecutor::ExecuteBinary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE>(
+			    left, right, result, count, [&](const POINT_TYPE &left, const POINT_TYPE &right) {
+				    return sgl::math::haversine_distance(left.b_val, left.a_val, right.b_val, right.a_val);
+			    });
+		} else {
+			GenericExecutor::ExecuteBinary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE>(
+			    left, right, result, count, [&](const POINT_TYPE &left, const POINT_TYPE &right) {
+				    return sgl::math::haversine_distance(left.a_val, left.b_val, right.a_val, right.b_val);
+			    });
+		}
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -5830,7 +5893,9 @@ struct ST_Distance_Sphere {
 				variant.SetReturnType(LogicalType::DOUBLE);
 
 				variant.SetInit(LocalState::Init);
+				variant.SetBind(Bind);
 				variant.SetFunction(ExecuteGeometry);
+
 				variant.CanThrowErrors();
 			});
 
@@ -5839,6 +5904,7 @@ struct ST_Distance_Sphere {
 				variant.AddParameter("point2", GeoTypes::POINT_2D());
 				variant.SetReturnType(LogicalType::DOUBLE);
 
+				variant.SetBind(Bind);
 				variant.SetFunction(ExecutePoint);
 			});
 

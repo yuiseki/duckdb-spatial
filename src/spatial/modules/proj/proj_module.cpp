@@ -1,5 +1,6 @@
 #include "spatial/modules/proj/proj_module.hpp"
 #include "spatial/spatial_types.hpp"
+#include "spatial/spatial_settings.hpp"
 #include "spatial/util/function_builder.hpp"
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/geometry/geometry_serialization.hpp"
@@ -16,6 +17,7 @@
 #include "proj.h"
 #include "geodesic.h"
 #include "sqlite3.h"
+#include "fmt/format.h"
 
 // We embed the whole proj.db in the proj_db.c file, which we then link into the extension binary
 // We can then use the sqlite3 "memvfs" (which we also statically link to) to point to the proj.db database in memory
@@ -241,6 +243,8 @@ struct ST_Transform {
 
 	static unique_ptr<FunctionData> Bind(ClientContext &ctx, ScalarFunction &, vector<unique_ptr<Expression>> &args) {
 		auto result = make_uniq<BindData>();
+
+		// If always_xy is set, then always normalize
 		if (args.size() == 4) {
 			// Ensure the "always_xy" parameter is a constant
 			const auto &arg = args[3];
@@ -251,7 +255,27 @@ struct ST_Transform {
 				throw InvalidInputException("The 'always_xy' parameter must be a constant");
 			}
 			result->normalize = BooleanValue::Get(ExpressionExecutor::EvaluateScalar(ctx, *arg));
+		} else {
+			// Otherwise check the setting for whether to ignore axis order in PROJ transformations, and set the normalize flag accordingly
+
+			auto is_set = false;
+			result->normalize = SpatialSettings::AlwaysXY(ctx, is_set);
+
+			if (!is_set) {
+				constexpr auto message =
+				    "'ST_Transform' assumes input axis order to be the same as defined by the source CRS (e.g., "
+				    "EPSG:4326 expects [lat, lon]).\n"
+				    "In the future this will change to always assume [lon, lat] regardless of CRS definition.\n"
+				    "To avoid unexpected changes:\n"
+				    " * SET 'geometry_always_xy = true' setting to always expect [lon, lat]\n"
+				    " * SET 'geometry_always_xy = false' setting keep current behavior\n"
+				    " * Pass 'true' or 'false' as last optional 'always_xy' parameter to override per-call";
+
+				auto &logger = Logger::Get(ctx);
+				logger.WriteLog("Spatial", LogLevel::LOG_WARNING, message);
+			}
 		}
+
 		return std::move(result);
 	}
 
@@ -506,6 +530,49 @@ constexpr auto EARTH_A = 6378137;
 constexpr auto EARTH_F = 1 / 298.257223563;
 
 //======================================================================================================================
+// Bind Data
+//======================================================================================================================
+struct GeodesicBindData final : FunctionData {
+
+	bool always_xy = false;
+
+	unique_ptr<FunctionData> Copy() const override {
+		auto result = make_uniq<GeodesicBindData>();
+		result->always_xy = always_xy;
+		return std::move(result);
+	}
+
+	bool Equals(const FunctionData &other) const override {
+		auto &data = other.Cast<GeodesicBindData>();
+		return always_xy == data.always_xy;
+	}
+
+	static unique_ptr<FunctionData> Bind(ClientContext &ctx, ScalarFunction &func,
+	                                     vector<unique_ptr<Expression>> &args) {
+		auto result = make_uniq<GeodesicBindData>();
+
+		bool is_set = false;
+		result->always_xy = SpatialSettings::AlwaysXY(ctx, is_set);
+
+		if (!is_set) {
+			constexpr auto raw_message =
+			    "The '%s' function is sensitive to the coordinate axis order of the input geometry.\n"
+			    "The current default for this function is to assume (LATITUDE, LONGITUDE) axis order.\n"
+			    "This is expected to change to (LONGITUDE, LATITUDE) in the future.\n "
+			    "Please explicitly set the 'geometry_always_xy' setting to avoid unexpected changes in behavior.\n"
+			    " * 'SET geometry_always_xy = true' to make this function assume all geometries are (LONGITUDE, "
+			    "LATITUDE)\n"
+			    " * 'SET geometry_always_xy = false' to keep the current behavior and make this warning go away.";
+
+			auto &logger = Logger::Get(ctx);
+			logger.WriteLog("Spatial", LogLevel::LOG_WARNING, StringUtil::Format(raw_message, func.name.c_str()));
+		}
+
+		return std::move(result);
+	}
+};
+
+//======================================================================================================================
 // Local State
 //======================================================================================================================
 
@@ -559,6 +626,8 @@ struct ST_Area_Spheroid {
 	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
 		D_ASSERT(args.data.size() == 1);
 
+		auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+
 		auto &input = args.data[0];
 		auto count = args.size();
 
@@ -568,6 +637,10 @@ struct ST_Area_Spheroid {
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
 		auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
 		auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+
+		if (bdata.always_xy) {
+			std::swap(x_data, y_data);
+		}
 
 		geod_geodesic geod = {};
 		geod_init(&geod, EARTH_A, EARTH_F);
@@ -615,8 +688,59 @@ struct ST_Area_Spheroid {
 	//------------------------------------------------------------------------------------------------------------------
 	// Execute (GEOMETRY)
 	//------------------------------------------------------------------------------------------------------------------
+	template <bool ALWAYS_XY>
+	struct Accumulate {
+		static void Operation(void *arg, const sgl::geometry &part) {
+			if (part.get_type() != sgl::geometry_type::POLYGON) {
+				return;
+			}
+
+			auto &sstate = *static_cast<GeodesicLocalState *>(arg);
+
+			// Calculate the area of the polygon
+			const auto tail = part.get_last_part();
+			auto ring = tail;
+			if (!ring) {
+				return;
+			}
+
+			const auto head = ring->get_next();
+
+			do {
+				ring = ring->get_next();
+
+				const auto vertex_count = ring->get_vertex_count();
+				if (vertex_count < 4) {
+					continue;
+				}
+
+				geod_polygon_clear(&sstate.poly);
+
+				// Dont add the last vertex
+				for (uint32_t i = 0; i < vertex_count - 1; i++) {
+					const auto vertex = ring->get_vertex_xy(i);
+					if (ALWAYS_XY) {
+						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.y, vertex.x);
+					} else {
+						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
+					}
+				}
+
+				double area = 0;
+				geod_polygon_compute(&sstate.geod, &sstate.poly, 0, 1, &area, nullptr);
+
+				if (ring == head) {
+					sstate.accum += std::abs(area);
+				} else {
+					sstate.accum -= std::abs(area);
+				}
+			} while (ring != tail);
+		}
+	};
+
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
@@ -627,48 +751,11 @@ struct ST_Area_Spheroid {
 			lstate.accum = 0;
 
 			// Visit all polygons
-			sgl::ops::visit_polygon_geometries(geom, &lstate, [](void *arg, const sgl::geometry &part) {
-				if (part.get_type() != sgl::geometry_type::POLYGON) {
-					return;
-				}
-
-				auto &sstate = *static_cast<GeodesicLocalState *>(arg);
-
-				// Calculate the area of the polygon
-				const auto tail = part.get_last_part();
-				auto ring = tail;
-				if (!ring) {
-					return;
-				}
-
-				const auto head = ring->get_next();
-
-				do {
-					ring = ring->get_next();
-
-					const auto vertex_count = ring->get_vertex_count();
-					if (vertex_count < 4) {
-						continue;
-					}
-
-					geod_polygon_clear(&sstate.poly);
-
-					// Dont add the last vertex
-					for (uint32_t i = 0; i < vertex_count - 1; i++) {
-						const auto vertex = ring->get_vertex_xy(i);
-						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
-					}
-
-					double area = 0;
-					geod_polygon_compute(&sstate.geod, &sstate.poly, 0, 1, &area, nullptr);
-
-					if (ring == head) {
-						sstate.accum += std::abs(area);
-					} else {
-						sstate.accum -= std::abs(area);
-					}
-				} while (ring != tail);
-			});
+			if (bdata.always_xy) {
+				sgl::ops::visit_polygon_geometries(geom, &lstate, Accumulate<true>::Operation);
+			} else {
+				sgl::ops::visit_polygon_geometries(geom, &lstate, Accumulate<false>::Operation);
+			}
 
 			return lstate.accum;
 		});
@@ -698,6 +785,7 @@ struct ST_Area_Spheroid {
 				variant.SetReturnType(LogicalType::DOUBLE);
 
 				variant.SetInit(GeodesicLocalState::InitPolygon);
+				variant.SetBind(GeodesicBindData::Bind);
 				variant.SetFunction(Execute);
 				variant.CanThrowErrors();
 			});
@@ -705,6 +793,7 @@ struct ST_Area_Spheroid {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("poly", GeoTypes::POLYGON_2D());
 				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetBind(GeodesicBindData::Bind);
 				variant.SetFunction(ExecutePolygon);
 				variant.CanThrowErrors();
 			});
@@ -731,6 +820,8 @@ struct ST_Perimeter_Spheroid {
 	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
 		D_ASSERT(args.data.size() == 1);
 
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+
 		auto &input = args.data[0];
 		auto count = args.size();
 
@@ -740,6 +831,10 @@ struct ST_Perimeter_Spheroid {
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
 		auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
 		auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+
+		if (bdata.always_xy) {
+			std::swap(x_data, y_data);
+		}
 
 		geod_geodesic geod = {};
 		geod_init(&geod, EARTH_A, EARTH_F);
@@ -779,9 +874,54 @@ struct ST_Perimeter_Spheroid {
 	//------------------------------------------------------------------------------------------------------------------
 	// Execute (GEOMETRY)
 	//------------------------------------------------------------------------------------------------------------------
+	template <bool ALWAYS_XY>
+	struct Accumulate {
+		static void Operation(void *arg, const sgl::geometry &part) {
+			if (part.get_type() != sgl::geometry_type::POLYGON) {
+				return;
+			}
+
+			auto &sstate = *static_cast<GeodesicLocalState *>(arg);
+
+			// Calculate the perimeter of the polygon
+			const auto tail = part.get_last_part();
+			auto ring = tail;
+			if (!ring) {
+				return;
+			}
+			do {
+				ring = ring->get_next();
+
+				const auto vertex_count = ring->get_vertex_count();
+				if (vertex_count < 4) {
+					continue;
+				}
+
+				geod_polygon_clear(&sstate.poly);
+
+				// Dont add the last vertex
+				for (uint32_t i = 0; i < vertex_count - 1; i++) {
+					const auto vertex = ring->get_vertex_xy(i);
+					if (ALWAYS_XY) {
+						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.y, vertex.x);
+					} else {
+						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
+					}
+				}
+
+				double perimeter = 0;
+				geod_polygon_compute(&sstate.geod, &sstate.poly, 0, 1, nullptr, &perimeter);
+				// Add the perimeter of the ring
+				sstate.accum += perimeter;
+
+			} while (ring != tail);
+		}
+	};
+
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
+		auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
 			sgl::geometry geom;
@@ -791,42 +931,11 @@ struct ST_Perimeter_Spheroid {
 			lstate.accum = 0;
 
 			// Visit all polygons
-			sgl::ops::visit_polygon_geometries(geom, &lstate, [](void *arg, const sgl::geometry &part) {
-				if (part.get_type() != sgl::geometry_type::POLYGON) {
-					return;
-				}
-
-				auto &sstate = *static_cast<GeodesicLocalState *>(arg);
-
-				// Calculate the perimeter of the polygon
-				const auto tail = part.get_last_part();
-				auto ring = tail;
-				if (!ring) {
-					return;
-				}
-				do {
-					ring = ring->get_next();
-
-					const auto vertex_count = ring->get_vertex_count();
-					if (vertex_count < 4) {
-						continue;
-					}
-
-					geod_polygon_clear(&sstate.poly);
-
-					// Dont add the last vertex
-					for (uint32_t i = 0; i < vertex_count - 1; i++) {
-						const auto vertex = ring->get_vertex_xy(i);
-						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
-					}
-
-					double perimeter = 0;
-					geod_polygon_compute(&sstate.geod, &sstate.poly, 0, 1, nullptr, &perimeter);
-					// Add the perimeter of the ring
-					sstate.accum += perimeter;
-
-				} while (ring != tail);
-			});
+			if (bdata.always_xy) {
+				sgl::ops::visit_polygon_geometries(geom, &lstate, Accumulate<true>::Operation);
+			} else {
+				sgl::ops::visit_polygon_geometries(geom, &lstate, Accumulate<false>::Operation);
+			}
 
 			return lstate.accum;
 		});
@@ -856,6 +965,7 @@ struct ST_Perimeter_Spheroid {
 				variant.SetReturnType(LogicalType::DOUBLE);
 
 				variant.SetInit(GeodesicLocalState::InitPolygon);
+				variant.SetBind(GeodesicBindData::Bind);
 				variant.SetFunction(Execute);
 				variant.CanThrowErrors();
 			});
@@ -863,6 +973,7 @@ struct ST_Perimeter_Spheroid {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("poly", GeoTypes::POLYGON_2D());
 				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetBind(GeodesicBindData::Bind);
 				variant.SetFunction(ExecutePolygon);
 				variant.CanThrowErrors();
 			});
@@ -886,9 +997,10 @@ struct ST_Length_Spheroid {
 	//------------------------------------------------------------------------------------------------------------------
 	// Execute (LINESTRING)
 	//------------------------------------------------------------------------------------------------------------------
-
 	static void ExecuteLineString(DataChunk &args, ExpressionState &state, Vector &result) {
 		D_ASSERT(args.data.size() == 1);
+
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
 
 		auto &line_vec = args.data[0];
 		auto count = args.size();
@@ -897,6 +1009,10 @@ struct ST_Length_Spheroid {
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
 		auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
 		auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+
+		if (bdata.always_xy) {
+			std::swap(x_data, y_data);
+		}
 
 		geod_geodesic geod = {};
 		geod_init(&geod, EARTH_A, EARTH_F);
@@ -926,8 +1042,42 @@ struct ST_Length_Spheroid {
 	//------------------------------------------------------------------------------------------------------------------
 	// Execute (GEOMETRY)
 	//------------------------------------------------------------------------------------------------------------------
+	template <bool ALWAYS_XY>
+	struct Accumulate {
+		static void Operation(void *arg, const sgl::geometry &part) {
+			if (part.get_type() != sgl::geometry_type::LINESTRING) {
+				return;
+			}
+
+			auto &sstate = *static_cast<GeodesicLocalState *>(arg);
+
+			const auto vertex_count = part.get_vertex_count();
+			if (vertex_count < 2) {
+				return;
+			}
+
+			geod_polygon_clear(&sstate.poly);
+
+			for (uint32_t i = 0; i < vertex_count; i++) {
+				const auto vertex = part.get_vertex_xy(i);
+				if (ALWAYS_XY) {
+					geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.y, vertex.x);
+				} else {
+					geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
+				}
+			}
+
+			// Calculate the length of the linestring
+			double length = 0;
+			geod_polygon_compute(&sstate.geod, &sstate.poly, 0, 1, nullptr, &length);
+
+			sstate.accum += length;
+		}
+	};
+
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
@@ -938,31 +1088,11 @@ struct ST_Length_Spheroid {
 			lstate.accum = 0;
 
 			// Visit all linestrings
-			sgl::ops::visit_linestring_geometries(geom, &lstate, [](void *arg, const sgl::geometry &part) {
-				if (part.get_type() != sgl::geometry_type::LINESTRING) {
-					return;
-				}
-
-				auto &sstate = *static_cast<GeodesicLocalState *>(arg);
-
-				const auto vertex_count = part.get_vertex_count();
-				if (vertex_count < 2) {
-					return;
-				}
-
-				geod_polygon_clear(&sstate.poly);
-
-				for (uint32_t i = 0; i < vertex_count; i++) {
-					const auto vertex = part.get_vertex_xy(i);
-					geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
-				}
-
-				// Calculate the length of the linestring
-				double length = 0;
-				geod_polygon_compute(&sstate.geod, &sstate.poly, 0, 1, nullptr, &length);
-
-				sstate.accum += length;
-			});
+			if (bdata.always_xy) {
+				sgl::ops::visit_linestring_geometries(geom, &lstate, Accumulate<true>::Operation);
+			} else {
+				sgl::ops::visit_linestring_geometries(geom, &lstate, Accumulate<false>::Operation);
+			}
 
 			return lstate.accum;
 		});
@@ -992,6 +1122,7 @@ struct ST_Length_Spheroid {
 				variant.SetReturnType(LogicalType::DOUBLE);
 
 				variant.SetInit(GeodesicLocalState::InitLine);
+				variant.SetBind(GeodesicBindData::Bind);
 				variant.SetFunction(Execute);
 				variant.CanThrowErrors();
 			});
@@ -999,6 +1130,7 @@ struct ST_Length_Spheroid {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("line", GeoTypes::LINESTRING_2D());
 				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetBind(GeodesicBindData::Bind);
 				variant.SetFunction(ExecuteLineString);
 				variant.CanThrowErrors();
 			});
@@ -1026,12 +1158,23 @@ struct ST_Distance_Spheroid {
 		geod_geodesic geod = {};
 		geod_init(&geod, EARTH_A, EARTH_F);
 
-		GenericExecutor::ExecuteBinary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE>(
-		    args.data[0], args.data[1], result, args.size(), [&](const POINT_TYPE &p1, const POINT_TYPE &p2) {
-			    double distance;
-			    geod_inverse(&geod, p1.a_val, p1.b_val, p2.a_val, p2.b_val, &distance, nullptr, nullptr);
-			    return distance;
-		    });
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+
+		if (bdata.always_xy) {
+			GenericExecutor::ExecuteBinary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE>(
+			    args.data[0], args.data[1], result, args.size(), [&](const POINT_TYPE &p1, const POINT_TYPE &p2) {
+				    double distance;
+				    geod_inverse(&geod, p1.b_val, p1.a_val, p2.b_val, p2.a_val, &distance, nullptr, nullptr);
+				    return distance;
+			    });
+		} else {
+			GenericExecutor::ExecuteBinary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE>(
+			    args.data[0], args.data[1], result, args.size(), [&](const POINT_TYPE &p1, const POINT_TYPE &p2) {
+				    double distance;
+				    geod_inverse(&geod, p1.a_val, p1.b_val, p2.a_val, p2.b_val, &distance, nullptr, nullptr);
+				    return distance;
+			    });
+		}
 	}
 
 	static constexpr auto DESCRIPTION = R"(
@@ -1058,6 +1201,7 @@ struct ST_Distance_Spheroid {
 				variant.AddParameter("p1", GeoTypes::POINT_2D());
 				variant.AddParameter("p2", GeoTypes::POINT_2D());
 				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetBind(GeodesicBindData::Bind);
 
 				variant.SetFunction(Execute);
 				variant.CanThrowErrors();
@@ -1147,7 +1291,7 @@ struct DuckDB_Proj_Version {
 	│ duckdb_proj_version() │
 	│        varchar        │
 	├───────────────────────┤
-	│ 9.1.1                 │
+	│ 9.1.1                 │geometry_always_xy
 	└───────────────────────┘
 	)";
 
