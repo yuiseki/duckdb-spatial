@@ -393,6 +393,8 @@ private:
 
 class DuckDBFileSystemPrefix final : public ClientContextState {
 public:
+	static mutex vsi_mutex;
+
 	explicit DuckDBFileSystemPrefix(ClientContext &context) : context(context) {
 		// Create a new random prefix for this client
 		client_prefix = StringUtil::Format("/vsiduckdb-%s/", UUID::ToString(UUID::GenerateRandomUUID()));
@@ -401,11 +403,13 @@ public:
 		fs_handler = make_uniq<DuckDBFileSystemHandler>(client_prefix, context);
 
 		// Register the file handler
+		lock_guard<mutex> lock(vsi_mutex);
 		VSIFileManager::InstallHandler(client_prefix, fs_handler.get());
 	}
 
 	~DuckDBFileSystemPrefix() override {
 		// Uninstall the file handler for this prefix
+		lock_guard<mutex> lock(vsi_mutex);
 		VSIFileManager::RemoveHandler(client_prefix);
 	}
 
