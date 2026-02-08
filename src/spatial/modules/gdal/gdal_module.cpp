@@ -29,6 +29,7 @@
 #include "cpl_vsi_virtual.h"
 #include "duckdb/common/types/geometry_crs.hpp"
 #include "duckdb/main/settings.hpp"
+#include "spatial/spatial_settings.hpp"
 
 namespace duckdb {
 namespace {
@@ -1301,7 +1302,34 @@ auto InitGlobal(ClientContext &context, FunctionData &bdata_p, const string &rea
 	if (!bdata.target_srs.empty()) {
 		// Make a new spatial reference object, and set it from the user input
 		result->srs = OSRNewSpatialReference(nullptr);
-		OSRSetFromUserInput(result->srs, bdata.target_srs.c_str());
+
+		// Try get the complete SRS from duckdb
+		auto converted =
+		    CoordinateReferenceSystem::TryConvert(context, bdata.target_srs, CoordinateReferenceSystemType::PROJJSON);
+		if (!converted) {
+			converted = CoordinateReferenceSystem::TryConvert(context, bdata.target_srs,
+			                                                  CoordinateReferenceSystemType::WKT2_2019);
+			if (!converted) {
+				converted = CoordinateReferenceSystem::TryConvert(context, bdata.target_srs,
+				                                                  CoordinateReferenceSystemType::AUTH_CODE);
+			}
+		}
+
+		if (converted) {
+			OSRSetFromUserInput(result->srs, converted->GetDefinition().c_str());
+		} else {
+			// Try to set it directly from the user input, in case it's in a format that duckdb doesn't recognize but GDAL does
+			OSRSetFromUserInput(result->srs, bdata.target_srs.c_str());
+		}
+	}
+
+	if (result->srs) {
+		// Set it on the dataset so that it gets inherited by the layer
+		// This can fail for some drivers, in which case we just ignore it
+		try {
+			GDALSetSpatialRef(result->dataset, result->srs);
+		} catch (...) {
+		}
 	}
 
 	// Create Layer

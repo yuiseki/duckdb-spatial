@@ -264,11 +264,12 @@ struct ST_Transform {
 			if (!is_set) {
 				constexpr auto message =
 				    "'ST_Transform' assumes input axis order to be the same as defined by the source CRS (e.g., "
-				    "EPSG:4326 expects [lat, lon]).\n"
-				    "In the future this will change to always assume [lon, lat] regardless of CRS definition.\n"
-				    "To avoid unexpected changes:\n"
-				    " * SET 'geometry_always_xy = true' setting to always expect [lon, lat]\n"
-				    " * SET 'geometry_always_xy = false' setting keep current behavior\n"
+				    "EPSG:4326 expects [LATITUDE, LONGITUDE]).\n"
+				    "In the future this will change to always assume [LONGITUDE, LATITUDE] regardless of CRS "
+				    "definition.\n"
+				    "To avoid unexpected results when this changes:\n"
+				    " * 'SET geometry_always_xy = true' to always expect [LONGITUDE, LATITUDE]\n"
+				    " * 'SET geometry_always_xy = false' to keep current behavior\n"
 				    " * Pass 'true' or 'false' as last optional 'always_xy' parameter to override per-call";
 
 				auto &logger = Logger::Get(ctx);
@@ -557,11 +558,11 @@ struct GeodesicBindData final : FunctionData {
 		if (!is_set) {
 			constexpr auto raw_message =
 			    "The '%s' function is sensitive to the coordinate axis order of the input geometry.\n"
-			    "The current default for this function is to assume (LATITUDE, LONGITUDE) axis order.\n"
-			    "This is expected to change to (LONGITUDE, LATITUDE) in the future.\n "
+			    "The current default for this function is to assume [LATITUDE, LONGITUDE] axis order.\n"
+			    "This is expected to change to [LONGITUDE, LATITUDE] in the future.\n "
 			    "Please explicitly set the 'geometry_always_xy' setting to avoid unexpected changes in behavior.\n"
-			    " * 'SET geometry_always_xy = true' to make this function assume all geometries are (LONGITUDE, "
-			    "LATITUDE)\n"
+			    " * 'SET geometry_always_xy = true' to make this function assume all geometries are [LONGITUDE, "
+			    "LATITUDE]\n"
 			    " * 'SET geometry_always_xy = false' to keep the current behavior and make this warning go away.";
 
 			auto &logger = Logger::Get(ctx);

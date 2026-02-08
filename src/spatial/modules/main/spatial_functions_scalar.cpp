@@ -5787,8 +5787,8 @@ struct ST_Distance_Sphere {
 		if (!is_set) {
 			constexpr auto raw_message =
 			    "The '%s' function is sensitive to the coordinate axis order of the input geometry.\n"
-			    "The current default for this function is to assume (LATITUDE, LONGITUDE) axis order.\n"
-			    "This is expected to change to (LONGITUDE, LATITUDE) in the future.\n "
+			    "The current default for this function is to assume [LATITUDE, LONGITUDE] axis order.\n"
+			    "This is expected to change to [LONGITUDE, LATITUDE] in the future.\n "
 			    "Please explicitly set the 'geometry_always_xy' setting to avoid unexpected changes in behavior.\n"
 			    " * 'SET geometry_always_xy = true' to make this function assume all geometries are (LONGITUDE, "
 			    "LATITUDE)\n"
