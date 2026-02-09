@@ -30,6 +30,7 @@
 #include "duckdb/common/types/geometry_crs.hpp"
 #include "duckdb/main/settings.hpp"
 #include "spatial/spatial_settings.hpp"
+#include "spatial/modules/proj/proj_module.hpp"
 
 namespace duckdb {
 namespace {
@@ -635,6 +636,35 @@ auto Bind(ClientContext &ctx, TableFunctionBindInput &input, vector<LogicalType>
 				col_names.push_back(child_schema.name);
 			}
 
+			if (duck_type.id() != LogicalTypeId::GEOMETRY) {
+				col_types.push_back(std::move(duck_type));
+				continue;
+			}
+
+			if (!GeoType::HasCRS(duck_type)) {
+				col_types.push_back(std::move(duck_type));
+				continue;
+			}
+
+			// Try to identify the CRS
+			const auto &gdal_crs = GeoType::GetCRS(duck_type);
+
+			// FIXME: GDAL should be able to do this on its own, but somehow
+			// OGRSpatialReference::FindBestMatch() dont work
+
+			string auth_name;
+			string auth_code;
+			if (IdentifyProjCRS(gdal_crs.GetDefinition().c_str(), auth_name, auth_code)) {
+				// If we can identify the CRS using PROJ, we can be pretty sure that DuckDB will recognize it.
+				auto authcode = auth_name + ":" + auth_code;
+				auto duck_crs = CoordinateReferenceSystem::TryIdentify(ctx, authcode);
+				if (duck_crs) {
+					col_types.push_back(LogicalType::GEOMETRY(*duck_crs));
+					continue;
+				}
+			}
+
+			// Otherwise just pass on what we got
 			col_types.push_back(std::move(duck_type));
 		}
 

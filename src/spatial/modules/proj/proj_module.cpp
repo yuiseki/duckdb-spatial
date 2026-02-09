@@ -1394,8 +1394,8 @@ public:
 			return nullptr;
 		}
 
-		auto auth_name = parts[0];
-		auto auth_code = parts[1];
+		const auto &auth_name = parts[0];
+		const auto &auth_code = parts[1];
 
 		// We only support OGC and EPSG for now
 		if (!StringUtil::CIEquals(auth_name, "EPSG") && !StringUtil::CIEquals(auth_name, "OGC")) {
@@ -1487,6 +1487,69 @@ public:
 //######################################################################################################################
 // Module Registration
 //######################################################################################################################
+bool IdentifyProjCRS(const char *crs, string &auth_name, string &auth_code) {
+	PJ_CONTEXT *ctx = ProjModule::GetThreadProjContext();
+
+	// Try to parse the CRS string as WKT or PROJJSON
+	PJ *pj = proj_create(ctx, crs);
+	if (!pj) {
+		proj_context_destroy(ctx);
+		return false;
+	}
+
+	int *confidence = nullptr;
+	const auto candidates = proj_identify(ctx, pj, nullptr, nullptr, &confidence);
+	if (!candidates) {
+		proj_destroy(pj);
+		proj_context_destroy(ctx);
+		return false;
+	}
+
+	auto n_candidates = proj_list_get_count(candidates);
+	if (n_candidates == 0) {
+		proj_list_destroy(candidates);
+		proj_destroy(pj);
+		proj_context_destroy(ctx);
+		return false;
+	}
+
+	// We only care about the first candidate, which is the one with the highest confidence
+	auto candidate = proj_list_get(ctx, candidates, 0);
+	if (!candidate) {
+		proj_list_destroy(candidates);
+		proj_destroy(pj);
+		proj_context_destroy(ctx);
+		return false;
+	}
+
+	if (confidence[0] < 70) {
+		// The confidence is too low, so we consider it a failed identification
+		proj_list_destroy(candidates);
+		proj_destroy(pj);
+		proj_context_destroy(ctx);
+		return false;
+	}
+
+	const auto proj_auth_name = proj_get_id_auth_name(candidate, 0);
+	const auto proj_auth_code = proj_get_id_code(candidate, 0);
+
+	if (!proj_auth_name || !proj_auth_code) {
+		proj_list_destroy(candidates);
+		proj_destroy(pj);
+		proj_context_destroy(ctx);
+		return false;
+	}
+
+	auth_name = proj_auth_name;
+	auth_code = proj_auth_code;
+
+	proj_list_destroy(candidates);
+	proj_destroy(pj);
+	proj_context_destroy(ctx);
+
+	return true;
+}
+
 void RegisterProjModule(ExtensionLoader &loader) {
 
 	// Register the VFS for the proj.db database
