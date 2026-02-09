@@ -13,6 +13,7 @@
 #include "duckdb/parser/parsed_data/create_coordinate_system_info.hpp"
 #include "duckdb/catalog/catalog_entry/coordinate_system_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
+#include "duckdb/common/exception/binder_exception.hpp"
 
 #include "proj.h"
 #include "geodesic.h"
@@ -138,85 +139,6 @@ struct ProjCRSDelete {
 
 using ProjCRS = unique_ptr<PJ, ProjCRSDelete>;
 
-struct ProjFunctionLocalState final : FunctionLocalState {
-
-	PJ_CONTEXT *proj_ctx;
-	ArenaAllocator arena;
-	GeometryAllocator allocator;
-
-	// Cache for PJ* objects
-	unordered_map<std::pair<string, string>, ProjCRS> crs_cache;
-
-	// Not copyable
-	ProjFunctionLocalState(const ProjFunctionLocalState &) = delete;
-	ProjFunctionLocalState &operator=(const ProjFunctionLocalState &) = delete;
-
-	// Not movable
-	ProjFunctionLocalState(ProjFunctionLocalState &&) = delete;
-	ProjFunctionLocalState &operator=(ProjFunctionLocalState &&) = delete;
-
-	explicit ProjFunctionLocalState(ClientContext &context)
-	    : proj_ctx(ProjModule::GetThreadProjContext()), arena(BufferAllocator::Get(context)), allocator(arena) {
-	}
-
-	~ProjFunctionLocalState() override {
-		// We need to clear the cache so that the unique_ptrs are destroyed before the context
-		crs_cache.clear();
-		proj_context_destroy(proj_ctx);
-	}
-
-	void Deserialize(const string_t &blob, sgl::geometry &geom);
-	string_t Serialize(Vector &vector, const sgl::geometry &geom);
-
-	static unique_ptr<FunctionLocalState> Init(ExpressionState &state, const BoundFunctionExpression &expr,
-	                                           FunctionData *bind_data) {
-		auto result = make_uniq<ProjFunctionLocalState>(state.GetContext());
-		return std::move(result);
-	}
-
-	static ProjFunctionLocalState &ResetAndGet(ExpressionState &state) {
-		auto &local_state = ExecuteFunctionState::GetFunctionState(state)->Cast<ProjFunctionLocalState>();
-		local_state.arena.Reset();
-		return local_state;
-	}
-
-	PJ *GetOrCreateProjection(const string &source, const string &target, bool normalize) {
-		const auto crs_entry = crs_cache.find({source, target});
-		if (crs_entry != crs_cache.end()) {
-			return crs_entry->second.get();
-		}
-
-		auto crs = proj_create_crs_to_crs(proj_ctx, source.c_str(), target.c_str(), nullptr);
-		if (!crs) {
-			throw InvalidInputException("Could not create projection: " + source + " -> " + target);
-		}
-
-		if (normalize) {
-			const auto normalized_crs = proj_normalize_for_visualization(proj_ctx, crs);
-			proj_destroy(crs);
-			if (!normalized_crs) {
-				throw InvalidInputException("Could not normalize projection: " + source + " -> " + target);
-			}
-			crs = normalized_crs;
-		}
-
-		crs_cache[{source, target}] = ProjCRS(crs);
-		return crs;
-	}
-};
-
-void ProjFunctionLocalState::Deserialize(const string_t &blob, sgl::geometry &geom) {
-	Serde::Deserialize(geom, arena, blob.GetDataUnsafe(), blob.GetSize());
-}
-
-string_t ProjFunctionLocalState::Serialize(Vector &vector, const sgl::geometry &geom) {
-	const auto size = Serde::GetRequiredSize(geom);
-	auto blob = StringVector::EmptyString(vector, size);
-	Serde::Serialize(geom, blob.GetDataWriteable(), size);
-	blob.Finalize();
-	return blob;
-}
-
 //======================================================================================================================
 // ST_Transform
 //======================================================================================================================
@@ -256,19 +178,126 @@ struct ST_Transform {
 			}
 			result->normalize = BooleanValue::Get(ExpressionExecutor::EvaluateScalar(ctx, *arg));
 		} else {
+
 			// Otherwise check the setting for whether to ignore axis order in PROJ transformations, and set the normalize flag accordingly
+			auto is_set = false;
+			result->normalize = SpatialSettings::AlwaysXY(ctx, is_set);
+
+			if (!is_set) {
+				constexpr auto message =
+				    "'ST_Transform' assumes the axis order of the input geometry to be the same as defined by the "
+				    "source CRS.\n"
+				    "E.g., EPSG:4326 expects [NORTHING, EASTING] (= LATITUDE, LONGITUDE).\n"
+				    "In the future this will change to always assume [EASTING, NORTHING] regardless of CRS "
+				    "definition.\n"
+				    "To avoid unexpected results when this changes:\n"
+				    " * 'SET geometry_always_xy = true' to always expect [EASTING, NORTHING]\n"
+				    " * 'SET geometry_always_xy = false' to keep current behavior\n"
+				    " * Pass 'true' or 'false' as last optional 'always_xy' parameter to override per-call";
+
+				auto &logger = Logger::Get(ctx);
+				logger.WriteLog("Spatial", LogLevel::LOG_WARNING, message);
+			}
+		}
+
+		return std::move(result);
+	}
+
+	struct TypedBindData final : FunctionData {
+
+		bool normalize = false;
+		string source_crs = "";
+		string target_crs = "";
+
+		unique_ptr<FunctionData> Copy() const override {
+			auto result = make_uniq<TypedBindData>();
+			result->normalize = normalize;
+			result->source_crs = source_crs;
+			result->target_crs = target_crs;
+			return std::move(result);
+		}
+
+		bool Equals(const FunctionData &other) const override {
+			auto &data = other.Cast<TypedBindData>();
+			return normalize == data.normalize && source_crs == data.source_crs && target_crs == data.target_crs;
+		}
+	};
+
+	static unique_ptr<FunctionData> BindTyped(ClientContext &ctx, ScalarFunction &func,
+	                                          vector<unique_ptr<Expression>> &args) {
+
+		auto result = make_uniq<TypedBindData>();
+
+		// Get CRS from source geometry
+		const auto &geo_arg = args[0];
+		if (!GeoType::HasCRS(geo_arg->return_type)) {
+			throw BinderException(geo_arg->query_location, "Source geometry must have a coordinate reference system");
+		}
+		result->source_crs = GeoType::GetCRS(geo_arg->return_type).GetDefinition();
+		if (result->source_crs.empty()) {
+			throw BinderException(geo_arg->query_location, "Source geometry must have a coordinate reference system");
+		}
+
+		// Constant-fold target_crs
+		const auto &crs_arg = args[1];
+		if (crs_arg->HasParameter()) {
+			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter must be a constant");
+		}
+		if (!crs_arg->IsFoldable()) {
+			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter must be a constant");
+		}
+		if (crs_arg->return_type.id() != LogicalTypeId::VARCHAR) {
+			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter must be a string");
+		}
+		result->target_crs = StringValue::Get(ExpressionExecutor::EvaluateScalar(ctx, *crs_arg));
+		if (result->target_crs.empty()) {
+			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter cannot be empty");
+		}
+		const auto result_crs = CoordinateReferenceSystem::TryIdentify(ctx, result->target_crs);
+		if (!result_crs) {
+			throw BinderException(crs_arg->query_location,
+			                      "The 'target_crs' parameter ('%s') is not a recognized coordinate reference system",
+			                      result->target_crs);
+		}
+
+		// Constant-fold always-xy, if present
+		auto explicit_normalize = false;
+		if (args.size() == 3) {
+			const auto &xy_arg = args[2];
+			if (xy_arg->HasParameter()) {
+				throw BinderException(xy_arg->query_location, "The 'always_xy' parameter must be a constant");
+			}
+			if (!xy_arg->IsFoldable()) {
+				throw BinderException(xy_arg->query_location, "The 'always_xy' parameter must be a constant");
+			}
+			if (xy_arg->return_type.id() != LogicalTypeId::BOOLEAN) {
+				throw BinderException(xy_arg->query_location, "The 'always_xy' parameter must be a boolean");
+			}
+			result->normalize = BooleanValue::Get(ExpressionExecutor::EvaluateScalar(ctx, *xy_arg));
+			explicit_normalize = true;
+		} else {
+			explicit_normalize = false;
+		}
+
+		// Set return types
+		func.arguments[0] = geo_arg->return_type;
+		func.return_type = LogicalType::GEOMETRY(*result_crs);
+
+		// Check if we need to warn for this
+		if (!explicit_normalize) {
 
 			auto is_set = false;
 			result->normalize = SpatialSettings::AlwaysXY(ctx, is_set);
 
 			if (!is_set) {
 				constexpr auto message =
-				    "'ST_Transform' assumes input axis order to be the same as defined by the source CRS (e.g., "
-				    "EPSG:4326 expects [LATITUDE, LONGITUDE]).\n"
-				    "In the future this will change to always assume [LONGITUDE, LATITUDE] regardless of CRS "
+				    "'ST_Transform' assumes the axis order of the input geometry to be the same as defined by the "
+				    "source CRS.\n"
+				    "E.g., EPSG:4326 expects [NORTHING, EASTING] (= LATITUDE, LONGITUDE).\n"
+				    "In the future this will change to always assume [EASTING, NORTHING] regardless of CRS "
 				    "definition.\n"
 				    "To avoid unexpected results when this changes:\n"
-				    " * 'SET geometry_always_xy = true' to always expect [LONGITUDE, LATITUDE]\n"
+				    " * 'SET geometry_always_xy = true' to always expect [EASTING, NORTHING]\n"
 				    " * 'SET geometry_always_xy = false' to keep current behavior\n"
 				    " * Pass 'true' or 'false' as last optional 'always_xy' parameter to override per-call";
 
@@ -281,13 +310,92 @@ struct ST_Transform {
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
+	// Local State
+	//------------------------------------------------------------------------------------------------------------------
+	struct LocalState final : FunctionLocalState {
+
+		PJ_CONTEXT *proj_ctx;
+		ArenaAllocator arena;
+		GeometryAllocator allocator;
+
+		// Cache for PJ* objects
+		unordered_map<std::pair<string, string>, ProjCRS> crs_cache;
+
+		// Not copyable
+		LocalState(const LocalState &) = delete;
+		LocalState &operator=(const LocalState &) = delete;
+
+		// Not movable
+		LocalState(LocalState &&) = delete;
+		LocalState &operator=(LocalState &&) = delete;
+
+		explicit LocalState(ClientContext &context)
+		    : proj_ctx(ProjModule::GetThreadProjContext()), arena(BufferAllocator::Get(context)), allocator(arena) {
+		}
+
+		~LocalState() override {
+			// We need to clear the cache so that the unique_ptrs are destroyed before the context
+			crs_cache.clear();
+			proj_context_destroy(proj_ctx);
+		}
+
+		static unique_ptr<FunctionLocalState> Init(ExpressionState &state, const BoundFunctionExpression &expr,
+		                                           FunctionData *bind_data) {
+			auto result = make_uniq<LocalState>(state.GetContext());
+			return std::move(result);
+		}
+
+		static LocalState &ResetAndGet(ExpressionState &state) {
+			auto &local_state = ExecuteFunctionState::GetFunctionState(state)->Cast<LocalState>();
+			local_state.arena.Reset();
+			return local_state;
+		}
+
+		PJ *GetOrCreateProjection(const string &source, const string &target, bool normalize) {
+			const auto crs_entry = crs_cache.find({source, target});
+			if (crs_entry != crs_cache.end()) {
+				return crs_entry->second.get();
+			}
+
+			auto crs = proj_create_crs_to_crs(proj_ctx, source.c_str(), target.c_str(), nullptr);
+			if (!crs) {
+				throw InvalidInputException("Could not create projection: " + source + " -> " + target);
+			}
+
+			if (normalize) {
+				const auto normalized_crs = proj_normalize_for_visualization(proj_ctx, crs);
+				proj_destroy(crs);
+				if (!normalized_crs) {
+					throw InvalidInputException("Could not normalize projection: " + source + " -> " + target);
+				}
+				crs = normalized_crs;
+			}
+
+			crs_cache[{source, target}] = ProjCRS(crs);
+			return crs;
+		}
+
+		string_t Serialize(Vector &vector, const sgl::geometry &geom) {
+			const auto size = Serde::GetRequiredSize(geom);
+			auto blob = StringVector::EmptyString(vector, size);
+			Serde::Serialize(geom, blob.GetDataWriteable(), size);
+			blob.Finalize();
+			return blob;
+		}
+
+		void Deserialize(const string_t &blob, sgl::geometry &geom) {
+			Serde::Deserialize(geom, arena, blob.GetDataUnsafe(), blob.GetSize());
+		}
+	};
+
+	//------------------------------------------------------------------------------------------------------------------
 	// Execute (POINT_2D)
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecutePoint(DataChunk &args, ExpressionState &state, Vector &result) {
 		using POINT_TYPE = StructTypeBinary<double, double>;
 		using PROJ_TYPE = PrimitiveType<string_t>;
 
-		auto &lstate = ProjFunctionLocalState::ResetAndGet(state);
+		auto &lstate = LocalState::ResetAndGet(state);
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		const auto &info = func_expr.bind_info->Cast<BindData>();
 
@@ -315,7 +423,7 @@ struct ST_Transform {
 		using BOX_TYPE = StructTypeQuaternary<double, double, double, double>;
 		using PROJ_TYPE = PrimitiveType<string_t>;
 
-		auto &lstate = ProjFunctionLocalState::ResetAndGet(state);
+		auto &lstate = LocalState::ResetAndGet(state);
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		const auto &info = func_expr.bind_info->Cast<BindData>();
 
@@ -340,7 +448,7 @@ struct ST_Transform {
 	// Execute (GEOMETRY)
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
-		auto &lstate = ProjFunctionLocalState::ResetAndGet(state);
+		auto &lstate = LocalState::ResetAndGet(state);
 		auto &alloc = lstate.allocator;
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		const auto &info = func_expr.bind_info->Cast<BindData>();
@@ -366,6 +474,32 @@ struct ST_Transform {
 
 			    return lstate.Serialize(result, geom);
 		    });
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (GEOMETRY, TYPED)
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometryTyped(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		auto &alloc = lstate.allocator;
+		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
+		const auto &info = func_expr.bind_info->Cast<TypedBindData>();
+
+		const auto crs = lstate.GetOrCreateProjection(info.source_crs, info.target_crs, info.normalize);
+
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
+			sgl::ops::transform_vertices(alloc, geom, crs, [](void *arg, sgl::vertex_xyzm &vertex) {
+				const auto crs_ptr = static_cast<PJ *>(arg);
+				const auto transformed = proj_trans(crs_ptr, PJ_FWD, proj_coord(vertex.x, vertex.y, vertex.z, 0)).xy;
+				vertex.x = transformed.x;
+				vertex.y = transformed.y;
+			});
+
+			return lstate.Serialize(result, geom);
+		});
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -445,7 +579,7 @@ struct ST_Transform {
 				variant.AddParameter("target_crs", LogicalType::VARCHAR);
 				variant.SetReturnType(GeoTypes::BOX_2D());
 
-				variant.SetInit(ProjFunctionLocalState::Init);
+				variant.SetInit(LocalState::Init);
 				variant.SetBind(Bind);
 				variant.SetFunction(ExecuteBox);
 				variant.CanThrowErrors();
@@ -458,7 +592,7 @@ struct ST_Transform {
 				variant.AddParameter("always_xy", LogicalType::BOOLEAN);
 				variant.SetReturnType(GeoTypes::BOX_2D());
 
-				variant.SetInit(ProjFunctionLocalState::Init);
+				variant.SetInit(LocalState::Init);
 				variant.SetBind(Bind);
 				variant.SetFunction(ExecuteBox);
 				variant.CanThrowErrors();
@@ -470,7 +604,7 @@ struct ST_Transform {
 				variant.AddParameter("target_crs", LogicalType::VARCHAR);
 				variant.SetReturnType(GeoTypes::POINT_2D());
 
-				variant.SetInit(ProjFunctionLocalState::Init);
+				variant.SetInit(LocalState::Init);
 				variant.SetBind(Bind);
 				variant.SetFunction(ExecutePoint);
 				variant.CanThrowErrors();
@@ -483,7 +617,7 @@ struct ST_Transform {
 				variant.AddParameter("always_xy", LogicalType::BOOLEAN);
 				variant.SetReturnType(GeoTypes::POINT_2D());
 
-				variant.SetInit(ProjFunctionLocalState::Init);
+				variant.SetInit(LocalState::Init);
 				variant.SetBind(Bind);
 				variant.SetFunction(ExecutePoint);
 				variant.CanThrowErrors();
@@ -495,7 +629,7 @@ struct ST_Transform {
 				variant.AddParameter("target_crs", LogicalType::VARCHAR);
 				variant.SetReturnType(LogicalType::GEOMETRY());
 
-				variant.SetInit(ProjFunctionLocalState::Init);
+				variant.SetInit(LocalState::Init);
 				variant.SetBind(Bind);
 				variant.SetFunction(ExecuteGeometry);
 				variant.CanThrowErrors();
@@ -508,9 +642,32 @@ struct ST_Transform {
 				variant.AddParameter("always_xy", LogicalType::BOOLEAN);
 				variant.SetReturnType(LogicalType::GEOMETRY());
 
-				variant.SetInit(ProjFunctionLocalState::Init);
+				variant.SetInit(LocalState::Init);
 				variant.SetBind(Bind);
 				variant.SetFunction(ExecuteGeometry);
+				variant.CanThrowErrors();
+			});
+
+			func.AddVariant([&](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalTypeId::GEOMETRY);
+				variant.AddParameter("target_crs", LogicalType::VARCHAR);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetBind(BindTyped);
+				variant.SetFunction(ExecuteGeometryTyped);
+				variant.CanThrowErrors();
+			});
+
+			func.AddVariant([&](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalTypeId::GEOMETRY);
+				variant.AddParameter("target_crs", LogicalType::VARCHAR);
+				variant.AddParameter("always_xy", LogicalType::BOOLEAN);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetBind(BindTyped);
+				variant.SetFunction(ExecuteGeometryTyped);
 				variant.CanThrowErrors();
 			});
 
