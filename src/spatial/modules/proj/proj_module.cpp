@@ -256,7 +256,7 @@ struct ST_Transform {
 		const auto result_crs = CoordinateReferenceSystem::TryIdentify(ctx, result->target_crs);
 		if (!result_crs) {
 			throw BinderException(crs_arg->query_location,
-			                      "The 'target_crs' parameter ('%s') is not a recognized coordinate reference system",
+			                      "The 'target_crs' parameter '%s' is not a recognized coordinate reference system",
 			                      result->target_crs);
 		}
 
