@@ -5820,18 +5820,21 @@ struct ST_Distance_Sphere {
 	//------------------------------------------------------------------------------------------------------------------
 	// GEOMETRY
 	//------------------------------------------------------------------------------------------------------------------
+	template<bool ALWAYS_XY>
+	static double ComputeDistance(const sgl::vertex_xy &v1, const sgl::vertex_xy &v2) {
+		if (ALWAYS_XY) {
+			return sgl::math::haversine_distance(v1.y, v1.x, v2.y, v2.x);
+		} else {
+			return sgl::math::haversine_distance(v1.x, v1.y, v2.x, v2.y);
+		}
+	}
+
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 		auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<BindData>();
 
 		// Depending on the axis order setting, switch the order of coordinates for the haversine distance calculation
-		auto compute = bdata.always_xy ?
-			[](const sgl::vertex_xy &v1, const sgl::vertex_xy &v2) {
-				return sgl::math::haversine_distance(v1.y, v1.x, v2.y, v2.x);
-			} :
-			[](const sgl::vertex_xy &v1, const sgl::vertex_xy &v2) {
-				return sgl::math::haversine_distance(v1.x, v1.y, v2.x, v2.y);
-			};
+		const auto compute = bdata.always_xy ? ComputeDistance<true> : ComputeDistance<false>;
 
 		BinaryExecutor::Execute<string_t, string_t, double>(
 		    args.data[0], args.data[1], result, args.size(), [&](const string_t &l_blob, const string_t &r_blob) {
