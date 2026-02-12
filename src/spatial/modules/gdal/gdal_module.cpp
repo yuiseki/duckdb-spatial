@@ -1353,15 +1353,6 @@ auto InitGlobal(ClientContext &context, FunctionData &bdata_p, const string &rea
 		}
 	}
 
-	if (result->srs) {
-		// Set it on the dataset so that it gets inherited by the layer
-		// This can fail for some drivers, in which case we just ignore it
-		try {
-			GDALSetSpatialRef(result->dataset, result->srs);
-		} catch (...) {
-		}
-	}
-
 	// Create Layer
 	result->layer = GDALDatasetCreateLayer(result->dataset, bdata.layer_name.c_str(), result->srs, bdata.geometry_type,
 	                                       bdata.layer_options);

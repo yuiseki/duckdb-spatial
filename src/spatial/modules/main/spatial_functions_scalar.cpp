@@ -5820,7 +5820,7 @@ struct ST_Distance_Sphere {
 	//------------------------------------------------------------------------------------------------------------------
 	// GEOMETRY
 	//------------------------------------------------------------------------------------------------------------------
-	template<bool ALWAYS_XY>
+	template <bool ALWAYS_XY>
 	static double ComputeDistance(const sgl::vertex_xy &v1, const sgl::vertex_xy &v2) {
 		if (ALWAYS_XY) {
 			return sgl::math::haversine_distance(v1.y, v1.x, v2.y, v2.x);
