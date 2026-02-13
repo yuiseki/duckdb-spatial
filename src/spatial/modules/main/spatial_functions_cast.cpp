@@ -275,7 +275,7 @@ struct GeometryCasts {
 		}
 	}
 
-	 static bool FromLegacyGeometryCast(Vector &source, Vector &result, idx_t count, CastParameters &params) {
+	static bool FromLegacyGeometryCast(Vector &source, Vector &result, idx_t count, CastParameters &params) {
 		UnaryExecutor::Execute<string_t, string_t>(source, result, count, [&](const string_t &old_blob) {
 			BinaryReader reader(old_blob.GetDataUnsafe(), old_blob.GetSize());
 
@@ -1084,7 +1084,6 @@ bool SpatialCasts::FromLegacyGeometryCast(Vector &source, Vector &result, idx_t 
 	return GeometryCasts::FromLegacyGeometryCast(source, result, count, params);
 }
 
-
 //======================================================================================================================
 // Vector Operations
 //======================================================================================================================
@@ -1129,7 +1128,6 @@ void CoreVectorOperations::Point3DToVarchar(Vector &source, Vector &result, idx_
 		return StringVector::AddString(result, StringUtil::Format("POINT Z (%s)", MathUtil::format_coord(x, y, z)));
 	});
 }
-
 
 //------------------------------------------------------------------------------
 // POINT_4D -> VARCHAR

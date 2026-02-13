@@ -28,7 +28,6 @@ public:
 struct CastParameters;
 struct SpatialCasts {
 	bool FromLegacyGeometryCast(Vector &source, Vector &result, idx_t count, CastParameters &params);
-
 };
 
 } // namespace duckdb

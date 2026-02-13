@@ -396,7 +396,6 @@ static unique_ptr<Expression> GetBBOXExpression(ClientContext &context, const Lo
 	return std::move(bbox_expr);
 }
 
-
 //======================================================================================================================
 // Physical Spatial Join Operator
 //======================================================================================================================
@@ -532,7 +531,8 @@ public:
 unique_ptr<GlobalSinkState> PhysicalSpatialJoin::GetGlobalSinkState(ClientContext &context) const {
 
 	auto gstate = make_uniq<SpatialJoinGlobalState>();
-	gstate->collection = make_uniq<TupleDataCollection>(BufferManager::GetBufferManager(context), layout, MemoryTag::EXTENSION);
+	gstate->collection =
+	    make_uniq<TupleDataCollection>(BufferManager::GetBufferManager(context), layout, MemoryTag::EXTENSION);
 
 	return std::move(gstate);
 }
@@ -543,7 +543,8 @@ public:
 	                      const shared_ptr<TupleDataLayout> &layout)
 	    : build_side_key_executor(context), build_side_filter_executor(context) {
 		// Dont keep the tuples in memory after appending.
-		collection = make_uniq<TupleDataCollection>(BufferManager::GetBufferManager(context), layout, MemoryTag::EXTENSION);
+		collection =
+		    make_uniq<TupleDataCollection>(BufferManager::GetBufferManager(context), layout, MemoryTag::EXTENSION);
 		collection->InitializeAppend(append_state, TupleDataPinProperties::UNPIN_AFTER_DONE);
 
 		// TODO: Add other join condition expressions here
@@ -562,8 +563,7 @@ public:
 
 		auto is_empty_expr = make_uniq<BoundFunctionExpression>(LogicalTypeId::BOOLEAN, func,
 		                                                        vector<unique_ptr<Expression>> {}, nullptr);
-		is_empty_expr->children.push_back(
-		    make_uniq_base<Expression, BoundReferenceExpression>(geom_type, 0));
+		is_empty_expr->children.push_back(make_uniq_base<Expression, BoundReferenceExpression>(geom_type, 0));
 
 		auto is_not_empty_expr =
 		    make_uniq<BoundOperatorExpression>(ExpressionType::OPERATOR_NOT, LogicalTypeId::BOOLEAN);
@@ -571,8 +571,7 @@ public:
 
 		auto is_not_null_expr =
 		    make_uniq<BoundOperatorExpression>(ExpressionType::OPERATOR_IS_NOT_NULL, LogicalTypeId::BOOLEAN);
-		is_not_null_expr->children.push_back(
-		    make_uniq_base<Expression, BoundReferenceExpression>(geom_type, 0));
+		is_not_null_expr->children.push_back(make_uniq_base<Expression, BoundReferenceExpression>(geom_type, 0));
 
 		auto filter_expr = make_uniq_base<Expression, BoundConjunctionExpression>(
 		    ExpressionType::CONJUNCTION_AND, std::move(is_not_empty_expr), std::move(is_not_null_expr));
@@ -726,7 +725,6 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 		const auto xmax_data = FlatVector::GetData<float>(*entries[2]);
 		const auto ymax_data = FlatVector::GetData<float>(*entries[3]);
 
-
 		// Push the bounding boxes into the R-Tree
 		auto &validity = FlatVector::Validity(bbox_chunk.data[0]);
 
@@ -813,9 +811,10 @@ public:
 	unsafe_unique_array<data_ptr_t> build_side_pointers = nullptr;
 
 	explicit SpatialJoinLocalOperatorState(ClientContext &context)
-	    : join_probe_executor(context), join_match_executor(context), bbox_probe_executor(context), probe_side_source_sel(STANDARD_VECTOR_SIZE),
-	      build_side_source_sel(STANDARD_VECTOR_SIZE), build_side_target_sel(STANDARD_VECTOR_SIZE),
-	      match_sel(STANDARD_VECTOR_SIZE), lhs_match_sel(STANDARD_VECTOR_SIZE) {
+	    : join_probe_executor(context), join_match_executor(context), bbox_probe_executor(context),
+	      probe_side_source_sel(STANDARD_VECTOR_SIZE), build_side_source_sel(STANDARD_VECTOR_SIZE),
+	      build_side_target_sel(STANDARD_VECTOR_SIZE), match_sel(STANDARD_VECTOR_SIZE),
+	      lhs_match_sel(STANDARD_VECTOR_SIZE) {
 
 		build_side_pointers = make_unsafe_uniq_array<data_ptr_t>(STANDARD_VECTOR_SIZE);
 	}

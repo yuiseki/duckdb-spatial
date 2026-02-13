@@ -29,6 +29,8 @@
 #include "cpl_vsi_virtual.h"
 #include "duckdb/common/types/geometry_crs.hpp"
 #include "duckdb/main/settings.hpp"
+#include "spatial/spatial_settings.hpp"
+#include "spatial/modules/proj/proj_module.hpp"
 
 namespace duckdb {
 namespace {
@@ -393,6 +395,8 @@ private:
 
 class DuckDBFileSystemPrefix final : public ClientContextState {
 public:
+	static mutex vsi_mutex;
+
 	explicit DuckDBFileSystemPrefix(ClientContext &context) : context(context) {
 		// Create a new random prefix for this client
 		client_prefix = StringUtil::Format("/vsiduckdb-%s/", UUID::ToString(UUID::GenerateRandomUUID()));
@@ -401,11 +405,13 @@ public:
 		fs_handler = make_uniq<DuckDBFileSystemHandler>(client_prefix, context);
 
 		// Register the file handler
+		lock_guard<mutex> lock(vsi_mutex);
 		VSIFileManager::InstallHandler(client_prefix, fs_handler.get());
 	}
 
 	~DuckDBFileSystemPrefix() override {
 		// Uninstall the file handler for this prefix
+		lock_guard<mutex> lock(vsi_mutex);
 		VSIFileManager::RemoveHandler(client_prefix);
 	}
 
@@ -429,6 +435,8 @@ private:
 	string client_prefix;
 	unique_ptr<DuckDBFileSystemHandler> fs_handler;
 };
+
+mutex DuckDBFileSystemPrefix::vsi_mutex;
 
 //======================================================================================================================
 // GDAL READ
@@ -628,6 +636,35 @@ auto Bind(ClientContext &ctx, TableFunctionBindInput &input, vector<LogicalType>
 				col_names.push_back(child_schema.name);
 			}
 
+			if (duck_type.id() != LogicalTypeId::GEOMETRY) {
+				col_types.push_back(std::move(duck_type));
+				continue;
+			}
+
+			if (!GeoType::HasCRS(duck_type)) {
+				col_types.push_back(std::move(duck_type));
+				continue;
+			}
+
+			// Try to identify the CRS
+			const auto &gdal_crs = GeoType::GetCRS(duck_type);
+
+			// FIXME: GDAL should be able to do this on its own, but somehow
+			// OGRSpatialReference::FindBestMatch() dont work
+
+			string auth_name;
+			string auth_code;
+			if (IdentifyProjCRS(gdal_crs.GetDefinition().c_str(), auth_name, auth_code)) {
+				// If we can identify the CRS using PROJ, we can be pretty sure that DuckDB will recognize it.
+				auto authcode = auth_name + ":" + auth_code;
+				auto duck_crs = CoordinateReferenceSystem::TryIdentify(ctx, authcode);
+				if (duck_crs) {
+					col_types.push_back(LogicalType::GEOMETRY(*duck_crs));
+					continue;
+				}
+			}
+
+			// Otherwise just pass on what we got
 			col_types.push_back(std::move(duck_type));
 		}
 
@@ -1295,7 +1332,25 @@ auto InitGlobal(ClientContext &context, FunctionData &bdata_p, const string &rea
 	if (!bdata.target_srs.empty()) {
 		// Make a new spatial reference object, and set it from the user input
 		result->srs = OSRNewSpatialReference(nullptr);
-		OSRSetFromUserInput(result->srs, bdata.target_srs.c_str());
+
+		// Try get the complete SRS from duckdb
+		auto converted =
+		    CoordinateReferenceSystem::TryConvert(context, bdata.target_srs, CoordinateReferenceSystemType::PROJJSON);
+		if (!converted) {
+			converted = CoordinateReferenceSystem::TryConvert(context, bdata.target_srs,
+			                                                  CoordinateReferenceSystemType::WKT2_2019);
+			if (!converted) {
+				converted = CoordinateReferenceSystem::TryConvert(context, bdata.target_srs,
+				                                                  CoordinateReferenceSystemType::AUTH_CODE);
+			}
+		}
+
+		if (converted) {
+			OSRSetFromUserInput(result->srs, converted->GetDefinition().c_str());
+		} else {
+			// Try to set it directly from the user input, in case it's in a format that duckdb doesn't recognize but GDAL does
+			OSRSetFromUserInput(result->srs, bdata.target_srs.c_str());
+		}
 	}
 
 	// Create Layer

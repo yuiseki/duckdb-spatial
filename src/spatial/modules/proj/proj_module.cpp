@@ -1,5 +1,6 @@
 #include "spatial/modules/proj/proj_module.hpp"
 #include "spatial/spatial_types.hpp"
+#include "spatial/spatial_settings.hpp"
 #include "spatial/util/function_builder.hpp"
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/geometry/geometry_serialization.hpp"
@@ -12,10 +13,12 @@
 #include "duckdb/parser/parsed_data/create_coordinate_system_info.hpp"
 #include "duckdb/catalog/catalog_entry/coordinate_system_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
+#include "duckdb/common/exception/binder_exception.hpp"
 
 #include "proj.h"
 #include "geodesic.h"
 #include "sqlite3.h"
+#include "fmt/format.h"
 
 // We embed the whole proj.db in the proj_db.c file, which we then link into the extension binary
 // We can then use the sqlite3 "memvfs" (which we also statically link to) to point to the proj.db database in memory
@@ -136,85 +139,6 @@ struct ProjCRSDelete {
 
 using ProjCRS = unique_ptr<PJ, ProjCRSDelete>;
 
-struct ProjFunctionLocalState final : FunctionLocalState {
-
-	PJ_CONTEXT *proj_ctx;
-	ArenaAllocator arena;
-	GeometryAllocator allocator;
-
-	// Cache for PJ* objects
-	unordered_map<std::pair<string, string>, ProjCRS> crs_cache;
-
-	// Not copyable
-	ProjFunctionLocalState(const ProjFunctionLocalState &) = delete;
-	ProjFunctionLocalState &operator=(const ProjFunctionLocalState &) = delete;
-
-	// Not movable
-	ProjFunctionLocalState(ProjFunctionLocalState &&) = delete;
-	ProjFunctionLocalState &operator=(ProjFunctionLocalState &&) = delete;
-
-	explicit ProjFunctionLocalState(ClientContext &context)
-	    : proj_ctx(ProjModule::GetThreadProjContext()), arena(BufferAllocator::Get(context)), allocator(arena) {
-	}
-
-	~ProjFunctionLocalState() override {
-		// We need to clear the cache so that the unique_ptrs are destroyed before the context
-		crs_cache.clear();
-		proj_context_destroy(proj_ctx);
-	}
-
-	void Deserialize(const string_t &blob, sgl::geometry &geom);
-	string_t Serialize(Vector &vector, const sgl::geometry &geom);
-
-	static unique_ptr<FunctionLocalState> Init(ExpressionState &state, const BoundFunctionExpression &expr,
-	                                           FunctionData *bind_data) {
-		auto result = make_uniq<ProjFunctionLocalState>(state.GetContext());
-		return std::move(result);
-	}
-
-	static ProjFunctionLocalState &ResetAndGet(ExpressionState &state) {
-		auto &local_state = ExecuteFunctionState::GetFunctionState(state)->Cast<ProjFunctionLocalState>();
-		local_state.arena.Reset();
-		return local_state;
-	}
-
-	PJ *GetOrCreateProjection(const string &source, const string &target, bool normalize) {
-		const auto crs_entry = crs_cache.find({source, target});
-		if (crs_entry != crs_cache.end()) {
-			return crs_entry->second.get();
-		}
-
-		auto crs = proj_create_crs_to_crs(proj_ctx, source.c_str(), target.c_str(), nullptr);
-		if (!crs) {
-			throw InvalidInputException("Could not create projection: " + source + " -> " + target);
-		}
-
-		if (normalize) {
-			const auto normalized_crs = proj_normalize_for_visualization(proj_ctx, crs);
-			proj_destroy(crs);
-			if (!normalized_crs) {
-				throw InvalidInputException("Could not normalize projection: " + source + " -> " + target);
-			}
-			crs = normalized_crs;
-		}
-
-		crs_cache[{source, target}] = ProjCRS(crs);
-		return crs;
-	}
-};
-
-void ProjFunctionLocalState::Deserialize(const string_t &blob, sgl::geometry &geom) {
-	Serde::Deserialize(geom, arena, blob.GetDataUnsafe(), blob.GetSize());
-}
-
-string_t ProjFunctionLocalState::Serialize(Vector &vector, const sgl::geometry &geom) {
-	const auto size = Serde::GetRequiredSize(geom);
-	auto blob = StringVector::EmptyString(vector, size);
-	Serde::Serialize(geom, blob.GetDataWriteable(), size);
-	blob.Finalize();
-	return blob;
-}
-
 //======================================================================================================================
 // ST_Transform
 //======================================================================================================================
@@ -241,6 +165,8 @@ struct ST_Transform {
 
 	static unique_ptr<FunctionData> Bind(ClientContext &ctx, ScalarFunction &, vector<unique_ptr<Expression>> &args) {
 		auto result = make_uniq<BindData>();
+
+		// If always_xy is set, then always normalize
 		if (args.size() == 4) {
 			// Ensure the "always_xy" parameter is a constant
 			const auto &arg = args[3];
@@ -251,9 +177,216 @@ struct ST_Transform {
 				throw InvalidInputException("The 'always_xy' parameter must be a constant");
 			}
 			result->normalize = BooleanValue::Get(ExpressionExecutor::EvaluateScalar(ctx, *arg));
+		} else {
+
+			// Otherwise check the setting for whether to ignore axis order in PROJ transformations, and set the normalize flag accordingly
+			auto is_set = false;
+			result->normalize = SpatialSettings::AlwaysXY(ctx, is_set);
+
+			if (!is_set) {
+				constexpr auto message =
+				    "'ST_Transform' assumes the axis order of the input geometry to be the same as defined by the "
+				    "source CRS.\n"
+				    "E.g., EPSG:4326 expects [NORTHING, EASTING] (= LATITUDE, LONGITUDE).\n"
+				    "In the future this will change to always assume [EASTING, NORTHING] regardless of CRS "
+				    "definition.\n"
+				    "To avoid unexpected results when this changes:\n"
+				    " * 'SET geometry_always_xy = true' to always expect [EASTING, NORTHING]\n"
+				    " * 'SET geometry_always_xy = false' to keep current behavior\n"
+				    " * Pass 'true' or 'false' as last optional 'always_xy' parameter to override per-call";
+
+				auto &logger = Logger::Get(ctx);
+				logger.WriteLog("Spatial", LogLevel::LOG_WARNING, message);
+			}
 		}
+
 		return std::move(result);
 	}
+
+	struct TypedBindData final : FunctionData {
+
+		bool normalize = false;
+		string source_crs = "";
+		string target_crs = "";
+
+		unique_ptr<FunctionData> Copy() const override {
+			auto result = make_uniq<TypedBindData>();
+			result->normalize = normalize;
+			result->source_crs = source_crs;
+			result->target_crs = target_crs;
+			return std::move(result);
+		}
+
+		bool Equals(const FunctionData &other) const override {
+			auto &data = other.Cast<TypedBindData>();
+			return normalize == data.normalize && source_crs == data.source_crs && target_crs == data.target_crs;
+		}
+	};
+
+	static unique_ptr<FunctionData> BindTyped(ClientContext &ctx, ScalarFunction &func,
+	                                          vector<unique_ptr<Expression>> &args) {
+
+		auto result = make_uniq<TypedBindData>();
+
+		// Get CRS from source geometry
+		const auto &geo_arg = args[0];
+		if (!GeoType::HasCRS(geo_arg->return_type)) {
+			throw BinderException(geo_arg->query_location, "Source geometry must have a coordinate reference system");
+		}
+		result->source_crs = GeoType::GetCRS(geo_arg->return_type).GetDefinition();
+		if (result->source_crs.empty()) {
+			throw BinderException(geo_arg->query_location, "Source geometry must have a coordinate reference system");
+		}
+
+		// Constant-fold target_crs
+		const auto &crs_arg = args[1];
+		if (crs_arg->HasParameter()) {
+			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter must be a constant");
+		}
+		if (!crs_arg->IsFoldable()) {
+			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter must be a constant");
+		}
+		if (crs_arg->return_type.id() != LogicalTypeId::VARCHAR) {
+			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter must be a string");
+		}
+		result->target_crs = StringValue::Get(ExpressionExecutor::EvaluateScalar(ctx, *crs_arg));
+		if (result->target_crs.empty()) {
+			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter cannot be empty");
+		}
+		const auto result_crs = CoordinateReferenceSystem::TryIdentify(ctx, result->target_crs);
+		if (!result_crs) {
+			throw BinderException(crs_arg->query_location,
+			                      "The 'target_crs' parameter '%s' is not a recognized coordinate reference system",
+			                      result->target_crs);
+		}
+
+		// Constant-fold always-xy, if present
+		auto explicit_normalize = false;
+		if (args.size() == 3) {
+			const auto &xy_arg = args[2];
+			if (xy_arg->HasParameter()) {
+				throw BinderException(xy_arg->query_location, "The 'always_xy' parameter must be a constant");
+			}
+			if (!xy_arg->IsFoldable()) {
+				throw BinderException(xy_arg->query_location, "The 'always_xy' parameter must be a constant");
+			}
+			if (xy_arg->return_type.id() != LogicalTypeId::BOOLEAN) {
+				throw BinderException(xy_arg->query_location, "The 'always_xy' parameter must be a boolean");
+			}
+			result->normalize = BooleanValue::Get(ExpressionExecutor::EvaluateScalar(ctx, *xy_arg));
+			explicit_normalize = true;
+		} else {
+			explicit_normalize = false;
+		}
+
+		// Set return types
+		func.arguments[0] = geo_arg->return_type;
+		func.return_type = LogicalType::GEOMETRY(*result_crs);
+
+		// Check if we need to warn for this
+		if (!explicit_normalize) {
+
+			auto is_set = false;
+			result->normalize = SpatialSettings::AlwaysXY(ctx, is_set);
+
+			if (!is_set) {
+				constexpr auto message =
+				    "'ST_Transform' assumes the axis order of the input geometry to be the same as defined by the "
+				    "source CRS.\n"
+				    "E.g., EPSG:4326 expects [NORTHING, EASTING] (= LATITUDE, LONGITUDE).\n"
+				    "In the future this will change to always assume [EASTING, NORTHING] regardless of CRS "
+				    "definition.\n"
+				    "To avoid unexpected results when this changes:\n"
+				    " * 'SET geometry_always_xy = true' to always expect [EASTING, NORTHING]\n"
+				    " * 'SET geometry_always_xy = false' to keep current behavior\n"
+				    " * Pass 'true' or 'false' as last optional 'always_xy' parameter to override per-call";
+
+				auto &logger = Logger::Get(ctx);
+				logger.WriteLog("Spatial", LogLevel::LOG_WARNING, message);
+			}
+		}
+
+		return std::move(result);
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Local State
+	//------------------------------------------------------------------------------------------------------------------
+	struct LocalState final : FunctionLocalState {
+
+		PJ_CONTEXT *proj_ctx;
+		ArenaAllocator arena;
+		GeometryAllocator allocator;
+
+		// Cache for PJ* objects
+		unordered_map<std::pair<string, string>, ProjCRS> crs_cache;
+
+		// Not copyable
+		LocalState(const LocalState &) = delete;
+		LocalState &operator=(const LocalState &) = delete;
+
+		// Not movable
+		LocalState(LocalState &&) = delete;
+		LocalState &operator=(LocalState &&) = delete;
+
+		explicit LocalState(ClientContext &context)
+		    : proj_ctx(ProjModule::GetThreadProjContext()), arena(BufferAllocator::Get(context)), allocator(arena) {
+		}
+
+		~LocalState() override {
+			// We need to clear the cache so that the unique_ptrs are destroyed before the context
+			crs_cache.clear();
+			proj_context_destroy(proj_ctx);
+		}
+
+		static unique_ptr<FunctionLocalState> Init(ExpressionState &state, const BoundFunctionExpression &expr,
+		                                           FunctionData *bind_data) {
+			auto result = make_uniq<LocalState>(state.GetContext());
+			return std::move(result);
+		}
+
+		static LocalState &ResetAndGet(ExpressionState &state) {
+			auto &local_state = ExecuteFunctionState::GetFunctionState(state)->Cast<LocalState>();
+			local_state.arena.Reset();
+			return local_state;
+		}
+
+		PJ *GetOrCreateProjection(const string &source, const string &target, bool normalize) {
+			const auto crs_entry = crs_cache.find({source, target});
+			if (crs_entry != crs_cache.end()) {
+				return crs_entry->second.get();
+			}
+
+			auto crs = proj_create_crs_to_crs(proj_ctx, source.c_str(), target.c_str(), nullptr);
+			if (!crs) {
+				throw InvalidInputException("Could not create projection: " + source + " -> " + target);
+			}
+
+			if (normalize) {
+				const auto normalized_crs = proj_normalize_for_visualization(proj_ctx, crs);
+				proj_destroy(crs);
+				if (!normalized_crs) {
+					throw InvalidInputException("Could not normalize projection: " + source + " -> " + target);
+				}
+				crs = normalized_crs;
+			}
+
+			crs_cache[{source, target}] = ProjCRS(crs);
+			return crs;
+		}
+
+		string_t Serialize(Vector &vector, const sgl::geometry &geom) {
+			const auto size = Serde::GetRequiredSize(geom);
+			auto blob = StringVector::EmptyString(vector, size);
+			Serde::Serialize(geom, blob.GetDataWriteable(), size);
+			blob.Finalize();
+			return blob;
+		}
+
+		void Deserialize(const string_t &blob, sgl::geometry &geom) {
+			Serde::Deserialize(geom, arena, blob.GetDataUnsafe(), blob.GetSize());
+		}
+	};
 
 	//------------------------------------------------------------------------------------------------------------------
 	// Execute (POINT_2D)
@@ -262,7 +395,7 @@ struct ST_Transform {
 		using POINT_TYPE = StructTypeBinary<double, double>;
 		using PROJ_TYPE = PrimitiveType<string_t>;
 
-		auto &lstate = ProjFunctionLocalState::ResetAndGet(state);
+		auto &lstate = LocalState::ResetAndGet(state);
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		const auto &info = func_expr.bind_info->Cast<BindData>();
 
@@ -290,7 +423,7 @@ struct ST_Transform {
 		using BOX_TYPE = StructTypeQuaternary<double, double, double, double>;
 		using PROJ_TYPE = PrimitiveType<string_t>;
 
-		auto &lstate = ProjFunctionLocalState::ResetAndGet(state);
+		auto &lstate = LocalState::ResetAndGet(state);
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		const auto &info = func_expr.bind_info->Cast<BindData>();
 
@@ -315,7 +448,7 @@ struct ST_Transform {
 	// Execute (GEOMETRY)
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
-		auto &lstate = ProjFunctionLocalState::ResetAndGet(state);
+		auto &lstate = LocalState::ResetAndGet(state);
 		auto &alloc = lstate.allocator;
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		const auto &info = func_expr.bind_info->Cast<BindData>();
@@ -341,6 +474,32 @@ struct ST_Transform {
 
 			    return lstate.Serialize(result, geom);
 		    });
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute (GEOMETRY, TYPED)
+	//------------------------------------------------------------------------------------------------------------------
+	static void ExecuteGeometryTyped(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		auto &alloc = lstate.allocator;
+		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
+		const auto &info = func_expr.bind_info->Cast<TypedBindData>();
+
+		const auto crs = lstate.GetOrCreateProjection(info.source_crs, info.target_crs, info.normalize);
+
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
+			sgl::ops::transform_vertices(alloc, geom, crs, [](void *arg, sgl::vertex_xyzm &vertex) {
+				const auto crs_ptr = static_cast<PJ *>(arg);
+				const auto transformed = proj_trans(crs_ptr, PJ_FWD, proj_coord(vertex.x, vertex.y, vertex.z, 0)).xy;
+				vertex.x = transformed.x;
+				vertex.y = transformed.y;
+			});
+
+			return lstate.Serialize(result, geom);
+		});
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -420,7 +579,7 @@ struct ST_Transform {
 				variant.AddParameter("target_crs", LogicalType::VARCHAR);
 				variant.SetReturnType(GeoTypes::BOX_2D());
 
-				variant.SetInit(ProjFunctionLocalState::Init);
+				variant.SetInit(LocalState::Init);
 				variant.SetBind(Bind);
 				variant.SetFunction(ExecuteBox);
 				variant.CanThrowErrors();
@@ -433,7 +592,7 @@ struct ST_Transform {
 				variant.AddParameter("always_xy", LogicalType::BOOLEAN);
 				variant.SetReturnType(GeoTypes::BOX_2D());
 
-				variant.SetInit(ProjFunctionLocalState::Init);
+				variant.SetInit(LocalState::Init);
 				variant.SetBind(Bind);
 				variant.SetFunction(ExecuteBox);
 				variant.CanThrowErrors();
@@ -445,7 +604,7 @@ struct ST_Transform {
 				variant.AddParameter("target_crs", LogicalType::VARCHAR);
 				variant.SetReturnType(GeoTypes::POINT_2D());
 
-				variant.SetInit(ProjFunctionLocalState::Init);
+				variant.SetInit(LocalState::Init);
 				variant.SetBind(Bind);
 				variant.SetFunction(ExecutePoint);
 				variant.CanThrowErrors();
@@ -458,7 +617,7 @@ struct ST_Transform {
 				variant.AddParameter("always_xy", LogicalType::BOOLEAN);
 				variant.SetReturnType(GeoTypes::POINT_2D());
 
-				variant.SetInit(ProjFunctionLocalState::Init);
+				variant.SetInit(LocalState::Init);
 				variant.SetBind(Bind);
 				variant.SetFunction(ExecutePoint);
 				variant.CanThrowErrors();
@@ -470,7 +629,7 @@ struct ST_Transform {
 				variant.AddParameter("target_crs", LogicalType::VARCHAR);
 				variant.SetReturnType(LogicalType::GEOMETRY());
 
-				variant.SetInit(ProjFunctionLocalState::Init);
+				variant.SetInit(LocalState::Init);
 				variant.SetBind(Bind);
 				variant.SetFunction(ExecuteGeometry);
 				variant.CanThrowErrors();
@@ -483,9 +642,32 @@ struct ST_Transform {
 				variant.AddParameter("always_xy", LogicalType::BOOLEAN);
 				variant.SetReturnType(LogicalType::GEOMETRY());
 
-				variant.SetInit(ProjFunctionLocalState::Init);
+				variant.SetInit(LocalState::Init);
 				variant.SetBind(Bind);
 				variant.SetFunction(ExecuteGeometry);
+				variant.CanThrowErrors();
+			});
+
+			func.AddVariant([&](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalTypeId::GEOMETRY);
+				variant.AddParameter("target_crs", LogicalType::VARCHAR);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetBind(BindTyped);
+				variant.SetFunction(ExecuteGeometryTyped);
+				variant.CanThrowErrors();
+			});
+
+			func.AddVariant([&](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalTypeId::GEOMETRY);
+				variant.AddParameter("target_crs", LogicalType::VARCHAR);
+				variant.AddParameter("always_xy", LogicalType::BOOLEAN);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetBind(BindTyped);
+				variant.SetFunction(ExecuteGeometryTyped);
 				variant.CanThrowErrors();
 			});
 
@@ -504,6 +686,49 @@ struct ST_Transform {
 
 constexpr auto EARTH_A = 6378137;
 constexpr auto EARTH_F = 1 / 298.257223563;
+
+//======================================================================================================================
+// Bind Data
+//======================================================================================================================
+struct GeodesicBindData final : FunctionData {
+
+	bool always_xy = false;
+
+	unique_ptr<FunctionData> Copy() const override {
+		auto result = make_uniq<GeodesicBindData>();
+		result->always_xy = always_xy;
+		return std::move(result);
+	}
+
+	bool Equals(const FunctionData &other) const override {
+		auto &data = other.Cast<GeodesicBindData>();
+		return always_xy == data.always_xy;
+	}
+
+	static unique_ptr<FunctionData> Bind(ClientContext &ctx, ScalarFunction &func,
+	                                     vector<unique_ptr<Expression>> &args) {
+		auto result = make_uniq<GeodesicBindData>();
+
+		bool is_set = false;
+		result->always_xy = SpatialSettings::AlwaysXY(ctx, is_set);
+
+		if (!is_set) {
+			constexpr auto raw_message =
+			    "The '%s' function is sensitive to the coordinate axis order of the input geometry.\n"
+			    "The current default for this function is to assume [LATITUDE, LONGITUDE] axis order.\n"
+			    "This is expected to change to [LONGITUDE, LATITUDE] in the future.\n "
+			    "Please explicitly set the 'geometry_always_xy' setting to avoid unexpected changes in behavior.\n"
+			    " * 'SET geometry_always_xy = true' to make this function assume all geometries are [LONGITUDE, "
+			    "LATITUDE]\n"
+			    " * 'SET geometry_always_xy = false' to keep the current behavior and make this warning go away.";
+
+			auto &logger = Logger::Get(ctx);
+			logger.WriteLog("Spatial", LogLevel::LOG_WARNING, StringUtil::Format(raw_message, func.name.c_str()));
+		}
+
+		return std::move(result);
+	}
+};
 
 //======================================================================================================================
 // Local State
@@ -559,6 +784,8 @@ struct ST_Area_Spheroid {
 	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
 		D_ASSERT(args.data.size() == 1);
 
+		auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+
 		auto &input = args.data[0];
 		auto count = args.size();
 
@@ -568,6 +795,10 @@ struct ST_Area_Spheroid {
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
 		auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
 		auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+
+		if (bdata.always_xy) {
+			std::swap(x_data, y_data);
+		}
 
 		geod_geodesic geod = {};
 		geod_init(&geod, EARTH_A, EARTH_F);
@@ -615,8 +846,59 @@ struct ST_Area_Spheroid {
 	//------------------------------------------------------------------------------------------------------------------
 	// Execute (GEOMETRY)
 	//------------------------------------------------------------------------------------------------------------------
+	template <bool ALWAYS_XY>
+	struct Accumulate {
+		static void Operation(void *arg, const sgl::geometry &part) {
+			if (part.get_type() != sgl::geometry_type::POLYGON) {
+				return;
+			}
+
+			auto &sstate = *static_cast<GeodesicLocalState *>(arg);
+
+			// Calculate the area of the polygon
+			const auto tail = part.get_last_part();
+			auto ring = tail;
+			if (!ring) {
+				return;
+			}
+
+			const auto head = ring->get_next();
+
+			do {
+				ring = ring->get_next();
+
+				const auto vertex_count = ring->get_vertex_count();
+				if (vertex_count < 4) {
+					continue;
+				}
+
+				geod_polygon_clear(&sstate.poly);
+
+				// Dont add the last vertex
+				for (uint32_t i = 0; i < vertex_count - 1; i++) {
+					const auto vertex = ring->get_vertex_xy(i);
+					if (ALWAYS_XY) {
+						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.y, vertex.x);
+					} else {
+						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
+					}
+				}
+
+				double area = 0;
+				geod_polygon_compute(&sstate.geod, &sstate.poly, 0, 1, &area, nullptr);
+
+				if (ring == head) {
+					sstate.accum += std::abs(area);
+				} else {
+					sstate.accum -= std::abs(area);
+				}
+			} while (ring != tail);
+		}
+	};
+
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
@@ -627,48 +909,11 @@ struct ST_Area_Spheroid {
 			lstate.accum = 0;
 
 			// Visit all polygons
-			sgl::ops::visit_polygon_geometries(geom, &lstate, [](void *arg, const sgl::geometry &part) {
-				if (part.get_type() != sgl::geometry_type::POLYGON) {
-					return;
-				}
-
-				auto &sstate = *static_cast<GeodesicLocalState *>(arg);
-
-				// Calculate the area of the polygon
-				const auto tail = part.get_last_part();
-				auto ring = tail;
-				if (!ring) {
-					return;
-				}
-
-				const auto head = ring->get_next();
-
-				do {
-					ring = ring->get_next();
-
-					const auto vertex_count = ring->get_vertex_count();
-					if (vertex_count < 4) {
-						continue;
-					}
-
-					geod_polygon_clear(&sstate.poly);
-
-					// Dont add the last vertex
-					for (uint32_t i = 0; i < vertex_count - 1; i++) {
-						const auto vertex = ring->get_vertex_xy(i);
-						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
-					}
-
-					double area = 0;
-					geod_polygon_compute(&sstate.geod, &sstate.poly, 0, 1, &area, nullptr);
-
-					if (ring == head) {
-						sstate.accum += std::abs(area);
-					} else {
-						sstate.accum -= std::abs(area);
-					}
-				} while (ring != tail);
-			});
+			if (bdata.always_xy) {
+				sgl::ops::visit_polygon_geometries(geom, &lstate, Accumulate<true>::Operation);
+			} else {
+				sgl::ops::visit_polygon_geometries(geom, &lstate, Accumulate<false>::Operation);
+			}
 
 			return lstate.accum;
 		});
@@ -698,6 +943,7 @@ struct ST_Area_Spheroid {
 				variant.SetReturnType(LogicalType::DOUBLE);
 
 				variant.SetInit(GeodesicLocalState::InitPolygon);
+				variant.SetBind(GeodesicBindData::Bind);
 				variant.SetFunction(Execute);
 				variant.CanThrowErrors();
 			});
@@ -705,6 +951,7 @@ struct ST_Area_Spheroid {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("poly", GeoTypes::POLYGON_2D());
 				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetBind(GeodesicBindData::Bind);
 				variant.SetFunction(ExecutePolygon);
 				variant.CanThrowErrors();
 			});
@@ -731,6 +978,8 @@ struct ST_Perimeter_Spheroid {
 	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
 		D_ASSERT(args.data.size() == 1);
 
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+
 		auto &input = args.data[0];
 		auto count = args.size();
 
@@ -740,6 +989,10 @@ struct ST_Perimeter_Spheroid {
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
 		auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
 		auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+
+		if (bdata.always_xy) {
+			std::swap(x_data, y_data);
+		}
 
 		geod_geodesic geod = {};
 		geod_init(&geod, EARTH_A, EARTH_F);
@@ -779,9 +1032,54 @@ struct ST_Perimeter_Spheroid {
 	//------------------------------------------------------------------------------------------------------------------
 	// Execute (GEOMETRY)
 	//------------------------------------------------------------------------------------------------------------------
+	template <bool ALWAYS_XY>
+	struct Accumulate {
+		static void Operation(void *arg, const sgl::geometry &part) {
+			if (part.get_type() != sgl::geometry_type::POLYGON) {
+				return;
+			}
+
+			auto &sstate = *static_cast<GeodesicLocalState *>(arg);
+
+			// Calculate the perimeter of the polygon
+			const auto tail = part.get_last_part();
+			auto ring = tail;
+			if (!ring) {
+				return;
+			}
+			do {
+				ring = ring->get_next();
+
+				const auto vertex_count = ring->get_vertex_count();
+				if (vertex_count < 4) {
+					continue;
+				}
+
+				geod_polygon_clear(&sstate.poly);
+
+				// Dont add the last vertex
+				for (uint32_t i = 0; i < vertex_count - 1; i++) {
+					const auto vertex = ring->get_vertex_xy(i);
+					if (ALWAYS_XY) {
+						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.y, vertex.x);
+					} else {
+						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
+					}
+				}
+
+				double perimeter = 0;
+				geod_polygon_compute(&sstate.geod, &sstate.poly, 0, 1, nullptr, &perimeter);
+				// Add the perimeter of the ring
+				sstate.accum += perimeter;
+
+			} while (ring != tail);
+		}
+	};
+
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
+		auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
 			sgl::geometry geom;
@@ -791,42 +1089,11 @@ struct ST_Perimeter_Spheroid {
 			lstate.accum = 0;
 
 			// Visit all polygons
-			sgl::ops::visit_polygon_geometries(geom, &lstate, [](void *arg, const sgl::geometry &part) {
-				if (part.get_type() != sgl::geometry_type::POLYGON) {
-					return;
-				}
-
-				auto &sstate = *static_cast<GeodesicLocalState *>(arg);
-
-				// Calculate the perimeter of the polygon
-				const auto tail = part.get_last_part();
-				auto ring = tail;
-				if (!ring) {
-					return;
-				}
-				do {
-					ring = ring->get_next();
-
-					const auto vertex_count = ring->get_vertex_count();
-					if (vertex_count < 4) {
-						continue;
-					}
-
-					geod_polygon_clear(&sstate.poly);
-
-					// Dont add the last vertex
-					for (uint32_t i = 0; i < vertex_count - 1; i++) {
-						const auto vertex = ring->get_vertex_xy(i);
-						geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
-					}
-
-					double perimeter = 0;
-					geod_polygon_compute(&sstate.geod, &sstate.poly, 0, 1, nullptr, &perimeter);
-					// Add the perimeter of the ring
-					sstate.accum += perimeter;
-
-				} while (ring != tail);
-			});
+			if (bdata.always_xy) {
+				sgl::ops::visit_polygon_geometries(geom, &lstate, Accumulate<true>::Operation);
+			} else {
+				sgl::ops::visit_polygon_geometries(geom, &lstate, Accumulate<false>::Operation);
+			}
 
 			return lstate.accum;
 		});
@@ -856,6 +1123,7 @@ struct ST_Perimeter_Spheroid {
 				variant.SetReturnType(LogicalType::DOUBLE);
 
 				variant.SetInit(GeodesicLocalState::InitPolygon);
+				variant.SetBind(GeodesicBindData::Bind);
 				variant.SetFunction(Execute);
 				variant.CanThrowErrors();
 			});
@@ -863,6 +1131,7 @@ struct ST_Perimeter_Spheroid {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("poly", GeoTypes::POLYGON_2D());
 				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetBind(GeodesicBindData::Bind);
 				variant.SetFunction(ExecutePolygon);
 				variant.CanThrowErrors();
 			});
@@ -886,9 +1155,10 @@ struct ST_Length_Spheroid {
 	//------------------------------------------------------------------------------------------------------------------
 	// Execute (LINESTRING)
 	//------------------------------------------------------------------------------------------------------------------
-
 	static void ExecuteLineString(DataChunk &args, ExpressionState &state, Vector &result) {
 		D_ASSERT(args.data.size() == 1);
+
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
 
 		auto &line_vec = args.data[0];
 		auto count = args.size();
@@ -897,6 +1167,10 @@ struct ST_Length_Spheroid {
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
 		auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
 		auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+
+		if (bdata.always_xy) {
+			std::swap(x_data, y_data);
+		}
 
 		geod_geodesic geod = {};
 		geod_init(&geod, EARTH_A, EARTH_F);
@@ -926,8 +1200,42 @@ struct ST_Length_Spheroid {
 	//------------------------------------------------------------------------------------------------------------------
 	// Execute (GEOMETRY)
 	//------------------------------------------------------------------------------------------------------------------
+	template <bool ALWAYS_XY>
+	struct Accumulate {
+		static void Operation(void *arg, const sgl::geometry &part) {
+			if (part.get_type() != sgl::geometry_type::LINESTRING) {
+				return;
+			}
+
+			auto &sstate = *static_cast<GeodesicLocalState *>(arg);
+
+			const auto vertex_count = part.get_vertex_count();
+			if (vertex_count < 2) {
+				return;
+			}
+
+			geod_polygon_clear(&sstate.poly);
+
+			for (uint32_t i = 0; i < vertex_count; i++) {
+				const auto vertex = part.get_vertex_xy(i);
+				if (ALWAYS_XY) {
+					geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.y, vertex.x);
+				} else {
+					geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
+				}
+			}
+
+			// Calculate the length of the linestring
+			double length = 0;
+			geod_polygon_compute(&sstate.geod, &sstate.poly, 0, 1, nullptr, &length);
+
+			sstate.accum += length;
+		}
+	};
+
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
@@ -938,31 +1246,11 @@ struct ST_Length_Spheroid {
 			lstate.accum = 0;
 
 			// Visit all linestrings
-			sgl::ops::visit_linestring_geometries(geom, &lstate, [](void *arg, const sgl::geometry &part) {
-				if (part.get_type() != sgl::geometry_type::LINESTRING) {
-					return;
-				}
-
-				auto &sstate = *static_cast<GeodesicLocalState *>(arg);
-
-				const auto vertex_count = part.get_vertex_count();
-				if (vertex_count < 2) {
-					return;
-				}
-
-				geod_polygon_clear(&sstate.poly);
-
-				for (uint32_t i = 0; i < vertex_count; i++) {
-					const auto vertex = part.get_vertex_xy(i);
-					geod_polygon_addpoint(&sstate.geod, &sstate.poly, vertex.x, vertex.y);
-				}
-
-				// Calculate the length of the linestring
-				double length = 0;
-				geod_polygon_compute(&sstate.geod, &sstate.poly, 0, 1, nullptr, &length);
-
-				sstate.accum += length;
-			});
+			if (bdata.always_xy) {
+				sgl::ops::visit_linestring_geometries(geom, &lstate, Accumulate<true>::Operation);
+			} else {
+				sgl::ops::visit_linestring_geometries(geom, &lstate, Accumulate<false>::Operation);
+			}
 
 			return lstate.accum;
 		});
@@ -992,6 +1280,7 @@ struct ST_Length_Spheroid {
 				variant.SetReturnType(LogicalType::DOUBLE);
 
 				variant.SetInit(GeodesicLocalState::InitLine);
+				variant.SetBind(GeodesicBindData::Bind);
 				variant.SetFunction(Execute);
 				variant.CanThrowErrors();
 			});
@@ -999,6 +1288,7 @@ struct ST_Length_Spheroid {
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("line", GeoTypes::LINESTRING_2D());
 				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetBind(GeodesicBindData::Bind);
 				variant.SetFunction(ExecuteLineString);
 				variant.CanThrowErrors();
 			});
@@ -1026,12 +1316,23 @@ struct ST_Distance_Spheroid {
 		geod_geodesic geod = {};
 		geod_init(&geod, EARTH_A, EARTH_F);
 
-		GenericExecutor::ExecuteBinary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE>(
-		    args.data[0], args.data[1], result, args.size(), [&](const POINT_TYPE &p1, const POINT_TYPE &p2) {
-			    double distance;
-			    geod_inverse(&geod, p1.a_val, p1.b_val, p2.a_val, p2.b_val, &distance, nullptr, nullptr);
-			    return distance;
-		    });
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+
+		if (bdata.always_xy) {
+			GenericExecutor::ExecuteBinary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE>(
+			    args.data[0], args.data[1], result, args.size(), [&](const POINT_TYPE &p1, const POINT_TYPE &p2) {
+				    double distance;
+				    geod_inverse(&geod, p1.b_val, p1.a_val, p2.b_val, p2.a_val, &distance, nullptr, nullptr);
+				    return distance;
+			    });
+		} else {
+			GenericExecutor::ExecuteBinary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE>(
+			    args.data[0], args.data[1], result, args.size(), [&](const POINT_TYPE &p1, const POINT_TYPE &p2) {
+				    double distance;
+				    geod_inverse(&geod, p1.a_val, p1.b_val, p2.a_val, p2.b_val, &distance, nullptr, nullptr);
+				    return distance;
+			    });
+		}
 	}
 
 	static constexpr auto DESCRIPTION = R"(
@@ -1058,6 +1359,7 @@ struct ST_Distance_Spheroid {
 				variant.AddParameter("p1", GeoTypes::POINT_2D());
 				variant.AddParameter("p2", GeoTypes::POINT_2D());
 				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetBind(GeodesicBindData::Bind);
 
 				variant.SetFunction(Execute);
 				variant.CanThrowErrors();
@@ -1147,7 +1449,7 @@ struct DuckDB_Proj_Version {
 	│ duckdb_proj_version() │
 	│        varchar        │
 	├───────────────────────┤
-	│ 9.1.1                 │
+	│ 9.1.1                 │geometry_always_xy
 	└───────────────────────┘
 	)";
 
@@ -1219,13 +1521,13 @@ namespace {
 
 class SpatialCoordinateSystemGenerator : public DefaultGenerator {
 private:
-
 	SchemaCatalogEntry &schema;
 	PJ_CONTEXT *ctx = nullptr;
 	mutex proj_mutex;
 
 public:
-	SpatialCoordinateSystemGenerator(Catalog &catalog, SchemaCatalogEntry &schema) : DefaultGenerator(catalog), schema(schema) {
+	SpatialCoordinateSystemGenerator(Catalog &catalog, SchemaCatalogEntry &schema)
+	    : DefaultGenerator(catalog), schema(schema) {
 		ctx = ProjModule::GetThreadProjContext();
 	}
 
@@ -1249,8 +1551,8 @@ public:
 			return nullptr;
 		}
 
-		auto auth_name = parts[0];
-		auto auth_code = parts[1];
+		const auto &auth_name = parts[0];
+		const auto &auth_code = parts[1];
 
 		// We only support OGC and EPSG for now
 		if (!StringUtil::CIEquals(auth_name, "EPSG") && !StringUtil::CIEquals(auth_name, "OGC")) {
@@ -1260,7 +1562,7 @@ public:
 		// Create PJ object
 		lock_guard<mutex> lock(proj_mutex);
 
-		PJ* crs = proj_create_from_database(ctx, auth_name.c_str(), auth_code.c_str(), PJ_CATEGORY_CRS, false, nullptr);
+		PJ *crs = proj_create_from_database(ctx, auth_name.c_str(), auth_code.c_str(), PJ_CATEGORY_CRS, false, nullptr);
 		if (!crs) {
 			return nullptr;
 		}
@@ -1297,7 +1599,7 @@ public:
 
 		vector<string> entries;
 
-		auto scan_authority = [&](const char* auth) {
+		auto scan_authority = [&](const char *auth) {
 			int ncrs = 0;
 			PROJ_CRS_INFO **crs_info = proj_get_crs_info_list_from_database(ctx, auth, nullptr, &ncrs);
 
@@ -1342,6 +1644,69 @@ public:
 //######################################################################################################################
 // Module Registration
 //######################################################################################################################
+bool IdentifyProjCRS(const char *crs, string &auth_name, string &auth_code) {
+	PJ_CONTEXT *ctx = ProjModule::GetThreadProjContext();
+
+	// Try to parse the CRS string as WKT or PROJJSON
+	PJ *pj = proj_create(ctx, crs);
+	if (!pj) {
+		proj_context_destroy(ctx);
+		return false;
+	}
+
+	int *confidence = nullptr;
+	const auto candidates = proj_identify(ctx, pj, nullptr, nullptr, &confidence);
+	if (!candidates) {
+		proj_destroy(pj);
+		proj_context_destroy(ctx);
+		return false;
+	}
+
+	auto n_candidates = proj_list_get_count(candidates);
+	if (n_candidates == 0) {
+		proj_list_destroy(candidates);
+		proj_destroy(pj);
+		proj_context_destroy(ctx);
+		return false;
+	}
+
+	// We only care about the first candidate, which is the one with the highest confidence
+	auto candidate = proj_list_get(ctx, candidates, 0);
+	if (!candidate) {
+		proj_list_destroy(candidates);
+		proj_destroy(pj);
+		proj_context_destroy(ctx);
+		return false;
+	}
+
+	if (confidence[0] < 70) {
+		// The confidence is too low, so we consider it a failed identification
+		proj_list_destroy(candidates);
+		proj_destroy(pj);
+		proj_context_destroy(ctx);
+		return false;
+	}
+
+	const auto proj_auth_name = proj_get_id_auth_name(candidate, 0);
+	const auto proj_auth_code = proj_get_id_code(candidate, 0);
+
+	if (!proj_auth_name || !proj_auth_code) {
+		proj_list_destroy(candidates);
+		proj_destroy(pj);
+		proj_context_destroy(ctx);
+		return false;
+	}
+
+	auth_name = proj_auth_name;
+	auth_code = proj_auth_code;
+
+	proj_list_destroy(candidates);
+	proj_destroy(pj);
+	proj_context_destroy(ctx);
+
+	return true;
+}
+
 void RegisterProjModule(ExtensionLoader &loader) {
 
 	// Register the VFS for the proj.db database

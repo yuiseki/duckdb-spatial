@@ -18,6 +18,7 @@
 #include "spatial/operators/spatial_operator_extension.hpp"
 #include "spatial/operators/spatial_join_optimizer.hpp"
 #include "spatial/spatial_types.hpp"
+#include "spatial/spatial_settings.hpp"
 
 namespace duckdb {
 
@@ -25,6 +26,9 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	// Register the types
 	GeoTypes::Register(loader);
+
+	// Register Settings
+	SpatialSettings::Register(loader);
 
 	RegisterSpatialCastFunctions(loader);
 	RegisterSpatialScalarFunctions(loader);

@@ -12,30 +12,30 @@
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
 #include "duckdb/planner/operator/logical_filter.hpp"
 
-
 namespace duckdb {
 
 // All of these imply bounding box intersection
 static const case_insensitive_set_t spatial_predicate_map = {
-    "&&", "ST_IntersectsExtent", "ST_Equals",   "ST_Intersects", "ST_Touches",   "ST_Crosses",          "ST_Within",         "ST_Contains",
-    "ST_Overlaps", "ST_Covers",     "ST_CoveredBy", "ST_ContainsProperly", "ST_WithinProperly", "ST_DWithin",
+    "&&",           "ST_IntersectsExtent", "ST_Equals",         "ST_Intersects", "ST_Touches",
+    "ST_Crosses",   "ST_Within",           "ST_Contains",       "ST_Overlaps",   "ST_Covers",
+    "ST_CoveredBy", "ST_ContainsProperly", "ST_WithinProperly", "ST_DWithin",
 };
 
 static const case_insensitive_map_t<string> spatial_predicate_inverse_map = {
     {"ST_Equals", "ST_Equals"},
-	{"&&", "&&"},									// Symmetric
-	{"ST_IntersectsExtent", "ST_IntersectsExtent"},	// Symmetric
-	{"ST_Intersects", "ST_Intersects"},				// Symmetric
-    {"ST_Touches", "ST_Touches"},					// Symmetric
-    {"ST_Crosses", "ST_Crosses"},                 	// Symmetric
-    {"ST_Within", "ST_Contains"},                 	// Inverse
-    {"ST_Contains", "ST_Within"},                 	// Inverse
-    {"ST_Overlaps", "ST_Overlaps"},               	// Symmetric
-    {"ST_Covers", "ST_CoveredBy"},                	// Inverse
-    {"ST_CoveredBy", "ST_Covers"},                	// Inverse
-    {"ST_WithinProperly", "ST_ContainsProperly"}, 	// Inverse
-    {"ST_ContainsProperly", "ST_WithinProperly"}, 	// Inverse
-    {"ST_DWithin", "ST_DWithin"},                 	// Symmetric (when distance is constant)
+    {"&&", "&&"},                                   // Symmetric
+    {"ST_IntersectsExtent", "ST_IntersectsExtent"}, // Symmetric
+    {"ST_Intersects", "ST_Intersects"},             // Symmetric
+    {"ST_Touches", "ST_Touches"},                   // Symmetric
+    {"ST_Crosses", "ST_Crosses"},                   // Symmetric
+    {"ST_Within", "ST_Contains"},                   // Inverse
+    {"ST_Contains", "ST_Within"},                   // Inverse
+    {"ST_Overlaps", "ST_Overlaps"},                 // Symmetric
+    {"ST_Covers", "ST_CoveredBy"},                  // Inverse
+    {"ST_CoveredBy", "ST_Covers"},                  // Inverse
+    {"ST_WithinProperly", "ST_ContainsProperly"},   // Inverse
+    {"ST_ContainsProperly", "ST_WithinProperly"},   // Inverse
+    {"ST_DWithin", "ST_DWithin"},                   // Symmetric (when distance is constant)
 };
 
 static bool HasInversePredicate(const string &func_name) {
@@ -324,7 +324,6 @@ void SpatialJoinOptimizer::Register(ExtensionLoader &loader) {
 
 	OptimizerExtension optimizer;
 	optimizer.optimize_function = TryInsertSpatialJoin;
-
 
 	auto &db = loader.GetDatabaseInstance();
 	OptimizerExtension::Register(db.config, optimizer);
