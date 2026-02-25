@@ -459,7 +459,7 @@ public:
 	CPLStringList dataset_sibling;
 	CPLStringList dataset_drivers;
 
-	int64_t estimated_cardinality = 0;
+	int64_t estimated_cardinality = -1;
 	unordered_set<idx_t> geometry_columns = {};
 
 	bool can_filter = false;
@@ -1011,13 +1011,16 @@ auto Progress(ClientContext &context, const FunctionData *b_data, const GlobalTa
 	auto &gstate = g_state->Cast<GlobalState>();
 
 	if (bdata.estimated_cardinality < 0) {
+		return -1.0;
+	}
+	if (bdata.estimated_cardinality == 0) {
 		return 0.0;
 	}
 
 	const auto count = static_cast<double>(gstate.features_read.load());
 	const auto total = static_cast<double>(bdata.estimated_cardinality);
 
-	return MinValue(100.0 * (total / count), 100.0);
+	return MinValue(100.0 * (count / total), 100.0);
 }
 
 //------------------------------------------------------------------------------------------------------------------
