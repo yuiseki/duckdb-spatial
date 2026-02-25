@@ -30,9 +30,6 @@ struct GeoTypes {
 	static LogicalType BOX_2D();
 	static LogicalType BOX_2DF();
 
-	// Old geometry type (pre v1.5)
-	static LogicalType LEGACY_GEOMETRY();
-
 	static void Register(ExtensionLoader &loader);
 
 	static LogicalType CreateEnumType(const string &name, const vector<string> &members);

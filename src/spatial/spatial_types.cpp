@@ -73,12 +73,6 @@ LogicalType GeoTypes::POLYGON_3D() {
 	return type;
 }
 
-LogicalType GeoTypes::LEGACY_GEOMETRY() {
-	auto blob_type = LogicalType(LogicalTypeId::BLOB);
-	blob_type.SetAlias("GEOMETRY");
-	return blob_type;
-}
-
 LogicalType GeoTypes::CreateEnumType(const string &name, const vector<string> &members) {
 	auto varchar_vector = Vector(LogicalType::VARCHAR, members.size());
 	auto varchar_data = FlatVector::GetData<string_t>(varchar_vector);
@@ -186,9 +180,6 @@ void GeoTypes::Register(ExtensionLoader &loader) {
 
 	// Box2DF
 	loader.RegisterType("BOX_2DF", GeoTypes::BOX_2DF());
-
-	// GEOMETRY
-	loader.RegisterType("GEOMETRY", GeoTypes::LEGACY_GEOMETRY());
 }
 
 } // namespace duckdb

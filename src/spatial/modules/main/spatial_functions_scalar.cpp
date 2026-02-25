@@ -4953,10 +4953,7 @@ struct ST_GeomFromWKB {
 	//------------------------------------------------------------------------------------------------------------------
 	// Documentation
 	//------------------------------------------------------------------------------------------------------------------
-	static constexpr auto DESCRIPTION = R"(
-		Deserializes a GEOMETRY from a WKB encoded blob
-	)";
-	static constexpr auto EXAMPLE = "";
+	// TODO
 
 	//------------------------------------------------------------------------------------------------------------------
 	// Register
@@ -5008,20 +5005,22 @@ struct ST_GeomFromWKB {
 			builder.SetTag("category", "conversion");
 		});
 
+		/*
 		FunctionBuilder::RegisterScalar(loader, "ST_GeomFromWKB", [](ScalarFunctionBuilder &builder) {
-			builder.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-				variant.AddParameter("blob", LogicalType::BLOB);
-				variant.SetReturnType(LogicalType::GEOMETRY());
+		    builder.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+		        variant.AddParameter("blob", LogicalType::BLOB);
+		        variant.SetReturnType(LogicalType::GEOMETRY());
 
-				variant.SetInit(LocalState::Init);
-				variant.SetFunction(ExecuteGeometry);
-			});
+		        variant.SetInit(LocalState::Init);
+		        variant.SetFunction(ExecuteGeometry);
+		    });
 
-			builder.SetDescription(DESCRIPTION);
-			builder.SetExample(EXAMPLE);
-			builder.SetTag("ext", "spatial");
-			builder.SetTag("category", "conversion");
+		    builder.SetDescription(DESCRIPTION);
+		    builder.SetExample(EXAMPLE);
+		    builder.SetTag("ext", "spatial");
+		    builder.SetTag("category", "conversion");
 		});
+		*/
 	}
 };
 
