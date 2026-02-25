@@ -25,9 +25,4 @@ public:
 	static void Box2DToVarchar(Vector &source, Vector &result, idx_t count);
 };
 
-struct CastParameters;
-struct SpatialCasts {
-	bool FromLegacyGeometryCast(Vector &source, Vector &result, idx_t count, CastParameters &params);
-};
-
 } // namespace duckdb
