@@ -1389,13 +1389,25 @@ struct ST_DWithin_Spheroid {
 		geod_geodesic geod = {};
 		geod_init(&geod, EARTH_A, EARTH_F);
 
-		GenericExecutor::ExecuteTernary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE, BOOL_TYPE>(
-		    args.data[0], args.data[1], args.data[2], result, args.size(),
-		    [&](const POINT_TYPE &p1, const POINT_TYPE &p2, const DISTANCE_TYPE &limit) {
-			    double distance;
-			    geod_inverse(&geod, p1.a_val, p1.b_val, p2.a_val, p2.b_val, &distance, nullptr, nullptr);
-			    return distance <= limit.val;
-		    });
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+
+		if (bdata.always_xy) {
+			GenericExecutor::ExecuteTernary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE, BOOL_TYPE>(
+			    args.data[0], args.data[1], args.data[2], result, args.size(),
+			    [&](const POINT_TYPE &p1, const POINT_TYPE &p2, const DISTANCE_TYPE &limit) {
+				    double distance;
+				    geod_inverse(&geod, p1.b_val, p1.a_val, p2.b_val, p2.a_val, &distance, nullptr, nullptr);
+				    return distance <= limit.val;
+			    });
+		} else {
+			GenericExecutor::ExecuteTernary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE, BOOL_TYPE>(
+			    args.data[0], args.data[1], args.data[2], result, args.size(),
+			    [&](const POINT_TYPE &p1, const POINT_TYPE &p2, const DISTANCE_TYPE &limit) {
+				    double distance;
+				    geod_inverse(&geod, p1.a_val, p1.b_val, p2.a_val, p2.b_val, &distance, nullptr, nullptr);
+				    return distance <= limit.val;
+			    });
+		}
 	}
 
 	static constexpr auto DESCRIPTION = R"(
@@ -1414,6 +1426,7 @@ struct ST_DWithin_Spheroid {
 				variant.AddParameter("p2", GeoTypes::POINT_2D());
 				variant.AddParameter("distance", LogicalType::DOUBLE);
 				variant.SetReturnType(LogicalType::BOOLEAN);
+				variant.SetBind(GeodesicBindData::Bind);
 
 				variant.SetFunction(Execute);
 				variant.CanThrowErrors();
