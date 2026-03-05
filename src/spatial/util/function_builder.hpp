@@ -53,6 +53,8 @@ public:
 	void SetFunction(scalar_function_t fn);
 	void SetInit(init_local_state_t init);
 	void SetBind(bind_scalar_function_t bind);
+	void SetSerialize(function_serialize_t serialize);
+	void SetDeserialize(function_deserialize_t deserialize);
 	void SetDescription(const string &desc);
 	void SetExample(const string &ex);
 	void CanThrowErrors();
@@ -85,6 +87,12 @@ inline void ScalarFunctionVariantBuilder::SetInit(init_local_state_t init) {
 
 inline void ScalarFunctionVariantBuilder::SetBind(bind_scalar_function_t bind) {
 	function.bind = bind;
+}
+inline void ScalarFunctionVariantBuilder::SetSerialize(function_serialize_t serialize) {
+	function.serialize = serialize;
+}
+inline void ScalarFunctionVariantBuilder::SetDeserialize(function_deserialize_t deserialize) {
+	function.deserialize = deserialize;
 }
 
 inline void ScalarFunctionVariantBuilder::SetDescription(const string &desc) {
