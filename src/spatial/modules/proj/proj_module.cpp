@@ -221,6 +221,22 @@ struct ST_Transform {
 			auto &data = other.Cast<TypedBindData>();
 			return normalize == data.normalize && source_crs == data.source_crs && target_crs == data.target_crs;
 		}
+
+		static void Serialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
+				  const ScalarFunction &function) {
+			auto &bind_data = bind_data_p->Cast<TypedBindData>();
+			serializer.WritePropertyWithDefault(100, "normalize", bind_data.normalize);
+			serializer.WritePropertyWithDefault(101, "source", bind_data.source_crs);
+			serializer.WritePropertyWithDefault(102, "target", bind_data.target_crs);
+		}
+
+		static unique_ptr<FunctionData> Deserialize(Deserializer &deserializer, ScalarFunction &function) {
+			auto result = make_uniq<TypedBindData>();
+			deserializer.ReadPropertyWithDefault(100, "normalize", result->normalize);
+			deserializer.ReadPropertyWithDefault(101, "source", result->source_crs);
+			deserializer.ReadPropertyWithDefault(102, "target", result->target_crs);
+			return std::move(result);
+		}
 	};
 
 	static unique_ptr<FunctionData> BindTyped(ClientContext &ctx, ScalarFunction &func,
@@ -308,6 +324,7 @@ struct ST_Transform {
 
 		return std::move(result);
 	}
+
 
 	//------------------------------------------------------------------------------------------------------------------
 	// Local State
@@ -655,6 +672,8 @@ struct ST_Transform {
 
 				variant.SetInit(LocalState::Init);
 				variant.SetBind(BindTyped);
+				variant.SetSerialize(TypedBindData::Serialize);
+				variant.SetDeserialize(TypedBindData::Deserialize);
 				variant.SetFunction(ExecuteGeometryTyped);
 				variant.CanThrowErrors();
 			});
@@ -667,6 +686,8 @@ struct ST_Transform {
 
 				variant.SetInit(LocalState::Init);
 				variant.SetBind(BindTyped);
+				variant.SetSerialize(TypedBindData::Serialize);
+				variant.SetDeserialize(TypedBindData::Deserialize);
 				variant.SetFunction(ExecuteGeometryTyped);
 				variant.CanThrowErrors();
 			});
@@ -1389,13 +1410,25 @@ struct ST_DWithin_Spheroid {
 		geod_geodesic geod = {};
 		geod_init(&geod, EARTH_A, EARTH_F);
 
-		GenericExecutor::ExecuteTernary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE, BOOL_TYPE>(
-		    args.data[0], args.data[1], args.data[2], result, args.size(),
-		    [&](const POINT_TYPE &p1, const POINT_TYPE &p2, const DISTANCE_TYPE &limit) {
-			    double distance;
-			    geod_inverse(&geod, p1.a_val, p1.b_val, p2.a_val, p2.b_val, &distance, nullptr, nullptr);
-			    return distance <= limit.val;
-		    });
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+
+		if (bdata.always_xy) {
+			GenericExecutor::ExecuteTernary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE, BOOL_TYPE>(
+			    args.data[0], args.data[1], args.data[2], result, args.size(),
+			    [&](const POINT_TYPE &p1, const POINT_TYPE &p2, const DISTANCE_TYPE &limit) {
+				    double distance;
+				    geod_inverse(&geod, p1.b_val, p1.a_val, p2.b_val, p2.a_val, &distance, nullptr, nullptr);
+				    return distance <= limit.val;
+			    });
+		} else {
+			GenericExecutor::ExecuteTernary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE, BOOL_TYPE>(
+			    args.data[0], args.data[1], args.data[2], result, args.size(),
+			    [&](const POINT_TYPE &p1, const POINT_TYPE &p2, const DISTANCE_TYPE &limit) {
+				    double distance;
+				    geod_inverse(&geod, p1.a_val, p1.b_val, p2.a_val, p2.b_val, &distance, nullptr, nullptr);
+				    return distance <= limit.val;
+			    });
+		}
 	}
 
 	static constexpr auto DESCRIPTION = R"(
@@ -1414,6 +1447,7 @@ struct ST_DWithin_Spheroid {
 				variant.AddParameter("p2", GeoTypes::POINT_2D());
 				variant.AddParameter("distance", LogicalType::DOUBLE);
 				variant.SetReturnType(LogicalType::BOOLEAN);
+				variant.SetBind(GeodesicBindData::Bind);
 
 				variant.SetFunction(Execute);
 				variant.CanThrowErrors();
