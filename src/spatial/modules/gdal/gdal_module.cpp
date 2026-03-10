@@ -32,6 +32,11 @@
 #include "spatial/spatial_settings.hpp"
 #include "spatial/modules/proj/proj_module.hpp"
 
+// Include lsan interface if available to allow suppressing intentionally leaked static mutex
+#if defined(__has_include) && __has_include(<sanitizer/lsan_interface.h>)
+#include <sanitizer/lsan_interface.h>
+#endif
+
 namespace duckdb {
 namespace {
 
@@ -396,13 +401,21 @@ private:
 class DuckDBFileSystemPrefix final : public ClientContextState {
 public:
 
-	// Use a function-local static to avoid static destruction order issues.
-	// A plain static mutex member can be destroyed before the last DuckDBFileSystemPrefix
-	// destructor runs during program teardown, causing "mutex lock failed: Invalid argument".
-	// A function-local static is destroyed in reverse order of construction.
+	// Use an intentionally leaked heap-allocated mutex to avoid static destruction order issues.
+	// A static mutex (either class-level or function-local) can be destroyed before the last
+	// DuckDBFileSystemPrefix destructor runs during program teardown, causing
+	// "mutex lock failed: Invalid argument". By heap-allocating and never freeing, we guarantee
+	// the mutex outlives all users. But we also need to make sure that this mutex is not reported as a leak
+	// by sanitizers, hence the conditional lsan ignore, and lazy initialization through the lambda.
 	static mutex &GetVSIMutex() {
-		static mutex mtx;
-		return mtx;
+		static mutex *mtx = [] {
+			auto *m = new mutex();
+#if defined(__has_include) && __has_include(<sanitizer/lsan_interface.h>)
+			__lsan_ignore_object(m);
+#endif
+			return m;
+		}();
+		return *mtx;
 	}
 
 	explicit DuckDBFileSystemPrefix(ClientContext &context) : context(context) {
