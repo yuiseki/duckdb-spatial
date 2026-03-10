@@ -32,11 +32,6 @@
 #include "spatial/spatial_settings.hpp"
 #include "spatial/modules/proj/proj_module.hpp"
 
-// Include lsan interface if available to allow suppressing intentionally leaked static mutex
-#if defined(__has_include) && __has_include(<sanitizer/lsan_interface.h>)
-#include <sanitizer/lsan_interface.h>
-#endif
-
 namespace duckdb {
 namespace {
 
@@ -405,16 +400,9 @@ public:
 	// A static mutex (either class-level or function-local) can be destroyed before the last
 	// DuckDBFileSystemPrefix destructor runs during program teardown, causing
 	// "mutex lock failed: Invalid argument". By heap-allocating and never freeing, we guarantee
-	// the mutex outlives all users. But we also need to make sure that this mutex is not reported as a leak
-	// by sanitizers, hence the conditional lsan ignore, and lazy initialization through the lambda.
+	// the mutex outlives all users.
 	static mutex &GetVSIMutex() {
-		static mutex *mtx = [] {
-			auto *m = new mutex();
-#if defined(__has_include) && __has_include(<sanitizer/lsan_interface.h>)
-			__lsan_ignore_object(m);
-#endif
-			return m;
-		}();
+		static mutex *mtx = new mutex();
 		return *mtx;
 	}
 
