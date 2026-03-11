@@ -395,7 +395,16 @@ private:
 
 class DuckDBFileSystemPrefix final : public ClientContextState {
 public:
-	static mutex vsi_mutex;
+
+	// Use an intentionally leaked heap-allocated mutex to avoid static destruction order issues.
+	// A static mutex (either class-level or function-local) can be destroyed before the last
+	// DuckDBFileSystemPrefix destructor runs during program teardown, causing
+	// "mutex lock failed: Invalid argument". By heap-allocating and never freeing, we guarantee
+	// the mutex outlives all users.
+	static mutex &GetVSIMutex() {
+		static mutex *mtx = new mutex();
+		return *mtx;
+	}
 
 	explicit DuckDBFileSystemPrefix(ClientContext &context) : context(context) {
 		// Create a new random prefix for this client
@@ -405,13 +414,17 @@ public:
 		fs_handler = make_uniq<DuckDBFileSystemHandler>(client_prefix, context);
 
 		// Register the file handler
-		lock_guard<mutex> lock(vsi_mutex);
+		lock_guard<mutex> lock(GetVSIMutex());
 		VSIFileManager::InstallHandler(client_prefix, fs_handler.get());
 	}
 
+	// Delete copy
+	DuckDBFileSystemPrefix(const DuckDBFileSystemPrefix &) = delete;
+	DuckDBFileSystemPrefix &operator=(const DuckDBFileSystemPrefix &) = delete;
+
 	~DuckDBFileSystemPrefix() override {
 		// Uninstall the file handler for this prefix
-		lock_guard<mutex> lock(vsi_mutex);
+		lock_guard<mutex> lock(GetVSIMutex());
 		VSIFileManager::RemoveHandler(client_prefix);
 	}
 
@@ -436,7 +449,6 @@ private:
 	unique_ptr<DuckDBFileSystemHandler> fs_handler;
 };
 
-mutex DuckDBFileSystemPrefix::vsi_mutex;
 
 //======================================================================================================================
 // GDAL READ
