@@ -224,7 +224,7 @@ public:
 
 		for (auto &index : table_info.GetIndexes().Indexes()) {
 			if (!index.IsBound() || RTreeIndex::TYPE_NAME != index.GetIndexType()) {
-				return false;
+				continue;
 			}
 
 			auto &index_entry = index.Cast<RTreeIndex>();
