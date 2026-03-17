@@ -218,7 +218,7 @@ public:
 
 		unordered_set<string> spatial_predicates = {
 		    "ST_Equals",   "ST_Intersects", "ST_Touches",   "ST_Crosses",          "ST_Within", "ST_Contains",
-		    "ST_Overlaps", "ST_Covers",     "ST_CoveredBy", "ST_ContainsProperly", "&&",        "ST_IntersectsExtent"};
+		    "ST_Overlaps", "ST_Covers",     "ST_CoveredBy", "ST_ContainsProperly", "&&",        "ST_Intersects_Extent"};
 
 		table_info.BindIndexes(context, RTreeIndex::TYPE_NAME);
 
