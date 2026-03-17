@@ -29,6 +29,8 @@
 #include "cpl_vsi_virtual.h"
 #include "duckdb/common/types/geometry_crs.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
 #include "spatial/spatial_settings.hpp"
 #include "spatial/modules/proj/proj_module.hpp"
 
@@ -395,7 +397,6 @@ private:
 
 class DuckDBFileSystemPrefix final : public ClientContextState {
 public:
-
 	// Use an intentionally leaked heap-allocated mutex to avoid static destruction order issues.
 	// A static mutex (either class-level or function-local) can be destroyed before the last
 	// DuckDBFileSystemPrefix destructor runs during program teardown, causing
@@ -448,7 +449,6 @@ private:
 	string client_prefix;
 	unique_ptr<DuckDBFileSystemHandler> fs_handler;
 };
-
 
 //======================================================================================================================
 // GDAL READ
@@ -746,7 +746,9 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		}
 
 		// The set of geometry predicates that can be optimized using the bounding box
-		static constexpr const char *geometry_predicates[2] = {"&&", "st_intersects_extent"};
+		static constexpr const char *geometry_predicates[12] = {
+		    "ST_Equals",   "ST_Intersects", "ST_Touches",   "ST_Crosses",          "ST_Within", "ST_Contains",
+		    "ST_Overlaps", "ST_Covers",     "ST_CoveredBy", "ST_ContainsProperly", "&&",        "ST_Intersects_Extent"};
 
 		auto found = false;
 		for (const auto &name : geometry_predicates) {
@@ -763,10 +765,8 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		const auto lhs_kind = func.children[0]->GetExpressionType();
 		const auto rhs_kind = func.children[1]->GetExpressionType();
 
-		const auto lhs_is_const =
-		    lhs_kind == ExpressionType::VALUE_CONSTANT && rhs_kind == ExpressionType::BOUND_COLUMN_REF;
-		const auto rhs_is_const =
-		    rhs_kind == ExpressionType::VALUE_CONSTANT && lhs_kind == ExpressionType::BOUND_COLUMN_REF;
+		const auto lhs_is_const = lhs_kind == ExpressionType::VALUE_CONSTANT;
+		const auto rhs_is_const = rhs_kind == ExpressionType::VALUE_CONSTANT;
 
 		if (lhs_is_const == rhs_is_const) {
 			// Both sides are constant or both sides are column refs
@@ -774,7 +774,37 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		}
 
 		auto &constant_expr = func.children[lhs_is_const ? 0 : 1]->Cast<BoundConstantExpression>();
-		auto &geometry_expr = func.children[lhs_is_const ? 1 : 0]->Cast<BoundColumnRefExpression>();
+		auto &geometry_expr = func.children[lhs_is_const ? 1 : 0];
+
+		auto found_geom_expr = false;
+		auto multi_geom_expr = false;
+		ExpressionIterator::VisitExpression<BoundColumnRefExpression>(
+		    *geometry_expr, [&](const BoundColumnRefExpression &ref) {
+			    if (found_geom_expr) {
+				    multi_geom_expr = true;
+				    return;
+			    }
+			    if (ref.binding.table_index != get.table_index) {
+				    // Not from the same table
+				    return;
+			    }
+
+			    const auto &col_ids = get.GetColumnIds();
+			    const auto &col = col_ids[ref.binding.column_index];
+
+			    if (!col.HasPrimaryIndex()) {
+				    return;
+			    }
+			    if (col.GetPrimaryIndex() != *bdata.geometry_columns.begin()) {
+				    return;
+			    }
+			    found_geom_expr = true;
+		    });
+
+		if (!found_geom_expr || multi_geom_expr) {
+			// No geometry column ref found or multiple geometry refs found
+			continue;
+		}
 
 		if (constant_expr.value.type().id() != LogicalTypeId::GEOMETRY) {
 			// Constant is not geometry
@@ -784,7 +814,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 			// Constant is NULL
 			continue;
 		}
-		if (geometry_expr.alias != "geom") {
+		if (geometry_expr->return_type.id() != LogicalTypeId::GEOMETRY) {
 			// Not the geometry column
 			continue;
 		}
@@ -803,7 +833,13 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		// Set the index so we can remove it later
 		// We can __ONLY__ do this if the filter predicate is "&&" or "st_intersects_extent"
 		// as other predicates may require exact geometry evaluation, the filter cannot be fully removed
-		geom_filter_idx = expr_idx;
+		for (auto &name : {"&&", "ST_Intersects_Extent"}) {
+			if (StringUtil::CIEquals(func.function.name.c_str(), name)) {
+				geom_filter_idx = expr_idx;
+				break;
+			}
+		}
+
 		break;
 	}
 
@@ -1055,6 +1091,22 @@ auto ReplacementScan(ClientContext &, ReplacementScanInput &input, optional_ptr<
 	return nullptr;
 }
 
+//------------------------------------------------------------------------------------------------------------------
+// TO STRING
+//------------------------------------------------------------------------------------------------------------------
+auto ToString(TableFunctionToStringInput &input) -> InsertionOrderPreservingMap<string> {
+	auto &bdata = input.bind_data->Cast<BindData>();
+	InsertionOrderPreservingMap<string> result;
+	result.insert("Layer", to_string(bdata.layer_idx));
+
+	if (bdata.has_filter) {
+		result.insert("Filter (MinX, MinY, MaxX, MaxY)",
+		              StringUtil::Format("(%f, %f, %f, %f)", bdata.layer_filter.MinX, bdata.layer_filter.MinY,
+		                                 bdata.layer_filter.MaxX, bdata.layer_filter.MaxY));
+	}
+	return result;
+}
+
 //----------------------------------------------------------------------------------------------------------------------
 // REGISTER
 //----------------------------------------------------------------------------------------------------------------------
@@ -1112,6 +1164,7 @@ void Register(ExtensionLoader &loader) {
 	read_func.statistics = Statistics;
 	read_func.table_scan_progress = Progress;
 	read_func.pushdown_complex_filter = Pushdown;
+	read_func.to_string = ToString;
 
 	read_func.named_parameters["open_options"] = LogicalType::LIST(LogicalType::VARCHAR);
 	read_func.named_parameters["allowed_drivers"] = LogicalType::LIST(LogicalType::VARCHAR);
