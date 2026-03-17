@@ -6481,10 +6481,10 @@ struct ST_Intersects {
 };
 
 //======================================================================================================================
-// ST_IntersectsExtent
+// ST_Intersects_Extent
 //======================================================================================================================
 
-struct ST_IntersectsExtent {
+struct ST_Intersects_Extent {
 
 	//------------------------------------------------------------------------------------------------------------------
 	// GEOMETRY
@@ -9527,7 +9527,7 @@ void RegisterSpatialScalarFunctions(ExtensionLoader &loader) {
 	ST_InteriorRingN::Register(loader);
 	ST_InterpolatePoint::Register(loader);
 	ST_Intersects::Register(loader);
-	ST_IntersectsExtent::Register(loader);
+	ST_Intersects_Extent::Register(loader);
 	ST_IsClosed::Register(loader);
 	ST_IsEmpty::Register(loader);
 	ST_Length::Register(loader);

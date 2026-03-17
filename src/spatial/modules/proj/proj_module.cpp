@@ -223,7 +223,7 @@ struct ST_Transform {
 		}
 
 		static void Serialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
-				  const ScalarFunction &function) {
+		                      const ScalarFunction &function) {
 			auto &bind_data = bind_data_p->Cast<TypedBindData>();
 			serializer.WritePropertyWithDefault(100, "normalize", bind_data.normalize);
 			serializer.WritePropertyWithDefault(101, "source", bind_data.source_crs);
@@ -324,7 +324,6 @@ struct ST_Transform {
 
 		return std::move(result);
 	}
-
 
 	//------------------------------------------------------------------------------------------------------------------
 	// Local State

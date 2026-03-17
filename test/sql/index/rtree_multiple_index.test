@@ -1,0 +1,23 @@
+require spatial
+
+# Create a table with 10_000 random points, where the table also has an ART primary key index
+statement ok
+CREATE TABLE IF NOT EXISTS t1 (
+            id          LONG PRIMARY KEY,
+            geom        GEOMETRY
+);
+
+statement ok
+INSERT INTO t1(id, geom)
+SELECT row_number() OVER (), point
+FROM st_generatepoints({min_x: 0, min_y: 0, max_x: 100, max_y: 100}::BOX_2D, 10_000, 1337);
+
+# Create an index on the table.
+statement ok
+CREATE INDEX my_idx ON t1 USING RTREE (geom);
+
+# RTREE is used
+query II
+EXPLAIN SELECT count(*) FROM t1 WHERE ST_Within(geom, ST_MakeEnvelope(45, 45, 65, 65));
+----
+physical_plan	<REGEX>:.*RTREE_INDEX_SCAN.*
