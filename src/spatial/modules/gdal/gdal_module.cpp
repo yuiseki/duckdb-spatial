@@ -1203,6 +1203,7 @@ public:
 	CPLStringList layer_options;
 
 	string target_srs;
+	bool always_xy = false;
 	OGRwkbGeometryType geometry_type;
 
 	// Arrow info
@@ -1303,6 +1304,26 @@ auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<str
 		}
 
 		throw BinderException("Unknown GDAL COPY option: '%s'", option.first);
+	}
+
+	// Read the global geometry_always_xy setting to control axis order
+	{
+		bool is_set = false;
+		result->always_xy = SpatialSettings::AlwaysXY(context, is_set);
+
+		if (!is_set) {
+			constexpr auto message =
+			    "GDAL COPY TO with an SRS is sensitive to the coordinate axis order.\n"
+			    "DuckDB GEOMETRY uses [EASTING, NORTHING] (= LONGITUDE, LATITUDE) internally.\n"
+			    "Without 'geometry_always_xy', GDAL may interpret coordinates in authority-defined order\n"
+			    "(e.g., [LATITUDE, LONGITUDE] for EPSG:4326), causing incorrect output in KML and similar formats.\n"
+			    "To avoid unexpected results:\n"
+			    " * 'SET geometry_always_xy = true' to always use [EASTING, NORTHING] (recommended)\n"
+			    " * 'SET geometry_always_xy = false' to use authority-defined axis order";
+
+			auto &logger = Logger::Get(context);
+			logger.WriteLog("Spatial", LogLevel::LOG_WARNING, message);
+		}
 	}
 
 	// If no override SRS is set, we will use the SRS of the first geometry column
@@ -1418,6 +1439,15 @@ auto InitGlobal(ClientContext &context, FunctionData &bdata_p, const string &rea
 		} else {
 			// Try to set it directly from the user input, in case it's in a format that duckdb doesn't recognize but GDAL does
 			OSRSetFromUserInput(result->srs, bdata.target_srs.c_str());
+		}
+
+		if (bdata.always_xy) {
+			// Controlled by the global 'geometry_always_xy' setting.
+			// DuckDB GEOMETRY uses traditional GIS axis order (lon, lat).
+			// Without this, GDAL 3.x defaults to authority-compliant order for
+			// EPSG:4326 (lat, lon), causing KML and other drivers to reject valid
+			// longitudes > 90 as out-of-range latitudes.
+			OSRSetAxisMappingStrategy(result->srs, OAMS_TRADITIONAL_GIS_ORDER);
 		}
 	}
 
