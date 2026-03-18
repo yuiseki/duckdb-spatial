@@ -1203,6 +1203,7 @@ public:
 	CPLStringList layer_options;
 
 	string target_srs;
+	bool always_xy = true;
 	OGRwkbGeometryType geometry_type;
 
 	// Arrow info
@@ -1299,6 +1300,14 @@ auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<str
 			for (auto &val : option.second) {
 				result->driver_options.AddString(val.GetValue<string>().c_str());
 			}
+			continue;
+		}
+
+		if (StringUtil::CIEquals("ALWAYS_XY", option.first)) {
+			if (option.second.size() != 1) {
+				throw BinderException("GDAL COPY option 'ALWAYS_XY' only accepts a single value");
+			}
+			result->always_xy = option.second.back().GetValue<bool>();
 			continue;
 		}
 
@@ -1418,6 +1427,14 @@ auto InitGlobal(ClientContext &context, FunctionData &bdata_p, const string &rea
 		} else {
 			// Try to set it directly from the user input, in case it's in a format that duckdb doesn't recognize but GDAL does
 			OSRSetFromUserInput(result->srs, bdata.target_srs.c_str());
+		}
+
+		if (bdata.always_xy) {
+			// DuckDB GEOMETRY uses traditional GIS axis order (lon, lat).
+			// Without this, GDAL 3.x defaults to authority-compliant order for
+			// EPSG:4326 (lat, lon), causing KML and other drivers to reject valid
+			// longitudes > 90 as out-of-range latitudes.
+			OSRSetAxisMappingStrategy(result->srs, OAMS_TRADITIONAL_GIS_ORDER);
 		}
 	}
 
