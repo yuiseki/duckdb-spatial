@@ -1,0 +1,21 @@
+require spatial
+
+statement ok
+CREATE TABLE data (id int, geom geometry);
+
+statement ok
+INSERT INTO data VALUES (1, ST_MakePoint(100.446569, 0));
+
+# Should error, KML validates coordinate ranges
+statement error
+COPY data TO '__TEST_DIR__/output.kml' WITH (FORMAT GDAL, DRIVER 'KML', SRS 'EPSG:4326');
+----
+IO Error: Latitude 100.446569 is invalid. Valid range is [-90,90]. This warning will not be issued any more
+
+# Tell DuckDB to ignore CRS authority and always consider coordinates in XY order
+statement ok
+SET geometry_always_xy = true;
+
+# Now works
+statement ok
+COPY data TO '__TEST_DIR__/output.kml' WITH (FORMAT GDAL, DRIVER 'KML', SRS 'EPSG:4326');

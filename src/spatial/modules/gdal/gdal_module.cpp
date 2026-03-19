@@ -1303,14 +1303,6 @@ auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<str
 			continue;
 		}
 
-		if (StringUtil::CIEquals("ALWAYS_XY", option.first)) {
-			if (option.second.size() != 1) {
-				throw BinderException("GDAL COPY option 'ALWAYS_XY' only accepts a single value");
-			}
-			result->always_xy = option.second.back().GetValue<bool>();
-			continue;
-		}
-
 		throw BinderException("Unknown GDAL COPY option: '%s'", option.first);
 	}
 
@@ -1322,6 +1314,27 @@ auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<str
 				break;
 			}
 		}
+	}
+
+	// Configure the axis order handling.
+	// Log a warning if the user has not explicitly set it, to avoid surprises when the default changes in the future
+	bool is_set = false;
+	result->always_xy = SpatialSettings::AlwaysXY(context, is_set);
+
+	if (!is_set) {
+		constexpr auto raw_message =
+		    "The 'GDAL' copy function assumes the axis order of the input geometry to be the same as defined by the "
+		    "source CRS.\n"
+		    "E.g., EPSG:4326 expects [NORTHING, EASTING] (= LATITUDE, LONGITUDE).\n"
+		    "In the future this will change to always assume [EASTING, NORTHING] regardless of CRS "
+		    "definition.\n"
+		    "To avoid unexpected results when this changes:\n"
+		    " * 'SET geometry_always_xy = true' to always expect [EASTING, NORTHING]\n"
+		    " * 'SET geometry_always_xy = false' to keep current behavior\n"
+		    " * Pass 'true' or 'false' as last optional 'always_xy' parameter to override per-call";
+
+		auto &logger = Logger::Get(context);
+		logger.WriteLog("Spatial", LogLevel::LOG_WARNING, raw_message);
 	}
 
 	// Check that options are valid
