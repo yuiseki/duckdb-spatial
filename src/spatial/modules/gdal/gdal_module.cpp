@@ -1203,7 +1203,9 @@ public:
 	CPLStringList layer_options;
 
 	string target_srs;
-	bool always_xy = true;
+
+	bool always_xy = false;
+
 	OGRwkbGeometryType geometry_type;
 
 	// Arrow info
@@ -1306,6 +1308,26 @@ auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<str
 		throw BinderException("Unknown GDAL COPY option: '%s'", option.first);
 	}
 
+	// Read the global geometry_always_xy setting to control axis order
+	{
+		bool is_set = false;
+		result->always_xy = SpatialSettings::AlwaysXY(context, is_set);
+
+		if (!is_set) {
+			constexpr auto message =
+			    "GDAL COPY TO with an SRS is sensitive to the coordinate axis order.\n"
+			    "DuckDB GEOMETRY uses [EASTING, NORTHING] (= LONGITUDE, LATITUDE) internally.\n"
+			    "Without 'geometry_always_xy', GDAL may interpret coordinates in authority-defined order\n"
+			    "(e.g., [LATITUDE, LONGITUDE] for EPSG:4326), causing incorrect output in KML and similar formats.\n"
+			    "To avoid unexpected results:\n"
+			    " * 'SET geometry_always_xy = true' to always use [EASTING, NORTHING] (recommended)\n"
+			    " * 'SET geometry_always_xy = false' to use authority-defined axis order";
+
+			auto &logger = Logger::Get(context);
+			logger.WriteLog("Spatial", LogLevel::LOG_WARNING, message);
+		}
+	}
+
 	// If no override SRS is set, we will use the SRS of the first geometry column
 	if (result->target_srs.empty()) {
 		for (auto &col : sql_types) {
@@ -1314,27 +1336,6 @@ auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<str
 				break;
 			}
 		}
-	}
-
-	// Configure the axis order handling.
-	// Log a warning if the user has not explicitly set it, to avoid surprises when the default changes in the future
-	bool is_set = false;
-	result->always_xy = SpatialSettings::AlwaysXY(context, is_set);
-
-	if (!is_set) {
-		constexpr auto raw_message =
-		    "The 'GDAL' copy function assumes the axis order of the input geometry to be the same as defined by the "
-		    "source CRS.\n"
-		    "E.g., EPSG:4326 expects [NORTHING, EASTING] (= LATITUDE, LONGITUDE).\n"
-		    "In the future this will change to always assume [EASTING, NORTHING] regardless of CRS "
-		    "definition.\n"
-		    "To avoid unexpected results when this changes:\n"
-		    " * 'SET geometry_always_xy = true' to always expect [EASTING, NORTHING]\n"
-		    " * 'SET geometry_always_xy = false' to keep current behavior\n"
-		    " * Pass 'true' or 'false' as last optional 'always_xy' parameter to override per-call";
-
-		auto &logger = Logger::Get(context);
-		logger.WriteLog("Spatial", LogLevel::LOG_WARNING, raw_message);
 	}
 
 	// Check that options are valid
@@ -1443,6 +1444,7 @@ auto InitGlobal(ClientContext &context, FunctionData &bdata_p, const string &rea
 		}
 
 		if (bdata.always_xy) {
+			// Controlled by the global 'geometry_always_xy' setting.
 			// DuckDB GEOMETRY uses traditional GIS axis order (lon, lat).
 			// Without this, GDAL 3.x defaults to authority-compliant order for
 			// EPSG:4326 (lat, lon), causing KML and other drivers to reject valid
