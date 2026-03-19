@@ -151,6 +151,12 @@ static bool TrySwapComparisonJoin(OptimizerExtensionInput &input, unique_ptr<Log
 		return false;
 	}
 
+	if (cmp_join.HasProjectionMap() || filter.HasProjectionMap()) {
+		// We can't handle this right now.
+		// We need to recompute the projection maps, but it's a pain.
+		return false;
+	}
+
 	// Get the table indexes that are reachable from the left and right children
 	const auto &left_child = cmp_join.children[0];
 	const auto &right_child = cmp_join.children[1];
