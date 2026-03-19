@@ -335,7 +335,9 @@ GEOSGeom_t *GeosSerde::Deserialize(GEOSContextHandle_t ctx, ArenaAllocator &aren
                                    size_t buffer_size) {
 	// GEOS always does full copies of the data,
 	// so reset the arena after each deserialization
-	arena.Reset();
+	// TODO: Do this, for now we cant because some aggregates will reuse the arena for their own state
+	// and then we cant reset it
+	// arena.Reset();
 
 	// Deserialize the geometry
 	BinaryReader reader(buffer, buffer_size);
