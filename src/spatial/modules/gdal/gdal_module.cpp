@@ -1806,13 +1806,23 @@ auto Bind(ClientContext &context, TableFunctionBindInput &input, vector<LogicalT
 
 	// For /vsi* paths and GDAL driver-prefixed URLs (e.g., "WFS:https://..."),
 	// bypass MultiFileReader since these are not local file globs.
-	auto raw_path = input.inputs[0].GetValue<string>();
-	if (StringUtil::StartsWith(raw_path, "/vsi") ||
-	    DuckDBFileSystemPrefix::IsGDALDriverPrefixedURL(raw_path)) {
-		result->files.emplace_back(std::move(raw_path));
+	// We must check the input type first because MultiFileReader::CreateFunctionSet
+	// adds a VARCHAR[] overload, and GetValue<string>() on a LIST would return
+	// the string representation of the list, not an actual path.
+	auto &input_val = input.inputs[0];
+	if (input_val.type().id() == LogicalTypeId::VARCHAR) {
+		auto raw_path = input_val.GetValue<string>();
+		if (StringUtil::StartsWith(raw_path, "/vsi") ||
+		    DuckDBFileSystemPrefix::IsGDALDriverPrefixedURL(raw_path)) {
+			result->files.emplace_back(std::move(raw_path));
+		} else {
+			const auto mf_reader = MultiFileReader::Create(input.table_function);
+			const auto mf_inputs = mf_reader->CreateFileList(context, input_val, FileGlobOptions::ALLOW_EMPTY);
+			result->files = mf_inputs->GetAllFiles();
+		}
 	} else {
 		const auto mf_reader = MultiFileReader::Create(input.table_function);
-		const auto mf_inputs = mf_reader->CreateFileList(context, input.inputs[0], FileGlobOptions::ALLOW_EMPTY);
+		const auto mf_inputs = mf_reader->CreateFileList(context, input_val, FileGlobOptions::ALLOW_EMPTY);
 		result->files = mf_inputs->GetAllFiles();
 	}
 
