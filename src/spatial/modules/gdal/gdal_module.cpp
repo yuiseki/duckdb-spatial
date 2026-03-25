@@ -84,6 +84,7 @@ public:
 			while (bytes_left > 0) {
 				const auto bytes_read = file_handle->Read(bytes_data, bytes_left);
 				if (bytes_read == 0) {
+					is_eof = true;
 					break;
 				}
 				bytes_left -= bytes_read;
