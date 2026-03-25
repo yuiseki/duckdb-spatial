@@ -355,6 +355,12 @@ public:
 		const auto base_file_path = fs.JoinPath(StringUtil::GetFilePath(real_file_path), real_file_stem);
 		const auto glob_file_path = base_file_path + ".*";
 
+		if (fs.IsRemoteFile(base_file_path)) {
+			// Sibling file listing is expensive for remote files, so avoid it here.
+			// GDAL will fall back to a ReadDir if needed.
+			return nullptr;
+		}
+
 		CPLStringList files;
 		for (auto &file : fs.Glob(glob_file_path)) {
 			files.AddString(AddPrefix(file.path).c_str());
