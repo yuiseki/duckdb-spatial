@@ -1,3 +1,5 @@
+#include "duckdb/common/vector/map_vector.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
 #include "spatial/operators/spatial_join_physical.hpp"
 #include "spatial/operators/spatial_join_logical.hpp"
 #include "spatial/geometry/sgl.hpp"
@@ -426,14 +428,7 @@ PhysicalSpatialJoin::PhysicalSpatialJoin(PhysicalPlan &physical_plan, LogicalOpe
 
 	// Probe-side
 	const auto &probe_side_input_types = children[0].get().types;
-	probe_side_output_columns = lop.left_projection_map;
-	if (probe_side_output_columns.empty()) {
-		probe_side_output_columns.reserve(probe_side_input_types.size());
-		for (idx_t i = 0; i < probe_side_input_types.size(); i++) {
-			probe_side_output_columns.emplace_back(i);
-		}
-	}
-
+	probe_side_output_columns = FillProjectionMap(children[0].get(), lop.left_projection_map);
 	for (const auto &probe_col_idx : probe_side_output_columns) {
 		const auto type = probe_side_input_types[probe_col_idx];
 		probe_side_output_types.push_back(type);
@@ -452,14 +447,7 @@ PhysicalSpatialJoin::PhysicalSpatialJoin(PhysicalPlan &physical_plan, LogicalOpe
 	build_side_key_types.push_back(build_side_key->return_type);
 
 	const auto &build_side_input_types = children[1].get().types;
-	auto right_projection_map_copy = lop.right_projection_map;
-	if (right_projection_map_copy.empty()) {
-		right_projection_map_copy.reserve(build_side_input_types.size());
-		for (idx_t i = 0; i < build_side_input_types.size(); i++) {
-			right_projection_map_copy.emplace_back(i);
-		}
-	}
-
+	auto right_projection_map_copy = FillProjectionMap(children[1].get(), lop.right_projection_map);
 	for (auto &rhs_col : right_projection_map_copy) {
 		auto &rhs_type = build_side_input_types[rhs_col];
 
@@ -719,11 +707,11 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 
 		// Execute the bbox expression
 		bbox_executor.Execute(geom_chunk, bbox_chunk);
-		const auto &entries = StructVector::GetEntries(bbox_chunk.data[0]);
-		const auto xmin_data = FlatVector::GetData<float>(*entries[0]);
-		const auto ymin_data = FlatVector::GetData<float>(*entries[1]);
-		const auto xmax_data = FlatVector::GetData<float>(*entries[2]);
-		const auto ymax_data = FlatVector::GetData<float>(*entries[3]);
+		auto &entries = StructVector::GetEntries(bbox_chunk.data[0]);
+		const auto xmin_data = FlatVector::GetData<float>(entries[0]);
+		const auto ymin_data = FlatVector::GetData<float>(entries[1]);
+		const auto xmax_data = FlatVector::GetData<float>(entries[2]);
+		const auto ymax_data = FlatVector::GetData<float>(entries[3]);
 
 		// Push the bounding boxes into the R-Tree
 		auto &validity = FlatVector::Validity(bbox_chunk.data[0]);
@@ -928,11 +916,11 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			lstate.bbox_probe_executor.Execute(lstate.probe_side_key_chunk, lstate.probe_side_box_chunk);
 			lstate.probe_side_box_chunk.data[0].ToUnifiedFormat(input.size(), lstate.probe_side_box_vformat);
 
-			const auto &entries = StructVector::GetEntries(lstate.probe_side_box_chunk.data[0]);
-			entries[0]->ToUnifiedFormat(input.size(), lstate.probe_side_box_xmin_vformat);
-			entries[1]->ToUnifiedFormat(input.size(), lstate.probe_side_box_ymin_vformat);
-			entries[2]->ToUnifiedFormat(input.size(), lstate.probe_side_box_xmax_vformat);
-			entries[3]->ToUnifiedFormat(input.size(), lstate.probe_side_box_ymax_vformat);
+			auto &entries = StructVector::GetEntries(lstate.probe_side_box_chunk.data[0]);
+			entries[0].ToUnifiedFormat(input.size(), lstate.probe_side_box_xmin_vformat);
+			entries[1].ToUnifiedFormat(input.size(), lstate.probe_side_box_ymin_vformat);
+			entries[2].ToUnifiedFormat(input.size(), lstate.probe_side_box_xmax_vformat);
+			entries[3].ToUnifiedFormat(input.size(), lstate.probe_side_box_ymax_vformat);
 
 			// Reference the columns that we actually care about
 			lstate.probe_side_row_chunk.ReferenceColumns(input, probe_side_output_columns);

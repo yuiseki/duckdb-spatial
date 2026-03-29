@@ -32,7 +32,7 @@ void LogicalCreateRTreeIndex::ResolveTypes() {
 }
 
 void LogicalCreateRTreeIndex::ResolveColumnBindings(ColumnBindingResolver &res, vector<ColumnBinding> &bindings) {
-	bindings = LogicalOperator::GenerateColumnBindings(0, table.GetColumns().LogicalColumnCount());
+	bindings = LogicalOperator::GenerateColumnBindings(TableIndex(0), table.GetColumns().LogicalColumnCount());
 
 	// Visit the operator's expressions
 	LogicalOperatorVisitor::EnumerateExpressions(*this,

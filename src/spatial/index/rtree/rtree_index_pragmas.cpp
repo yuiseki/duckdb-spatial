@@ -1,3 +1,5 @@
+#include "duckdb/common/vector/map_vector.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
 #include "spatial/spatial_types.hpp"
 #include "spatial/index/rtree/rtree_index.hpp"
 #include "spatial/index/rtree/rtree_module.hpp"
@@ -203,11 +205,11 @@ static void RTreeIndexDumpExecute(ClientContext &context, TableFunctionInput &da
 	idx_t output_idx = 0;
 
 	const auto level_data = FlatVector::GetData<int32_t>(output.data[0]);
-	const auto &bounds_vectors = StructVector::GetEntries(output.data[1]);
-	const auto xmin_data = FlatVector::GetData<float>(*bounds_vectors[0]);
-	const auto ymin_data = FlatVector::GetData<float>(*bounds_vectors[1]);
-	const auto xmax_data = FlatVector::GetData<float>(*bounds_vectors[2]);
-	const auto ymax_data = FlatVector::GetData<float>(*bounds_vectors[3]);
+	auto &bounds_vectors = StructVector::GetEntries(output.data[1]);
+	const auto xmin_data = FlatVector::GetData<float>(bounds_vectors[0]);
+	const auto ymin_data = FlatVector::GetData<float>(bounds_vectors[1]);
+	const auto xmax_data = FlatVector::GetData<float>(bounds_vectors[2]);
+	const auto ymax_data = FlatVector::GetData<float>(bounds_vectors[3]);
 	const auto rowid_data = FlatVector::GetData<row_t>(output.data[2]);
 
 	const auto &tree = *state.index.tree;

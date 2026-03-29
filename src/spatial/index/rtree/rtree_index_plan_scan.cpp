@@ -27,6 +27,7 @@
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
 
 namespace duckdb {
 //-----------------------------------------------------------------------------
@@ -49,7 +50,7 @@ public:
 			// search for the referenced column in the set of column_ids
 			for (idx_t i = 0; i < get_column_ids.size(); i++) {
 				if (get_column_ids[i].GetPrimaryIndex() == referenced_column) {
-					bound_colref.binding.column_index = i;
+					bound_colref.binding.column_index = ProjectionIndex(i);
 					return;
 				}
 			}
@@ -61,7 +62,7 @@ public:
 	}
 
 	static void RewriteIndexExpressionForFilter(Index &index, LogicalGet &get, unique_ptr<Expression> &expr,
-	                                            idx_t filter_idx, bool &rewrite_possible) {
+	                                            const ColumnIndex &filter_idx, bool &rewrite_possible) {
 		if (expr->type == ExpressionType::BOUND_COLUMN_REF) {
 			auto &bound_colref = expr->Cast<BoundColumnRefExpression>();
 
@@ -76,7 +77,7 @@ public:
 			const auto &column_list = duck_table.GetColumns();
 
 			auto &col = column_list.GetColumn(LogicalIndex(indexed_columns[0]));
-			if (filter_idx != col.Physical().index) {
+			if (filter_idx.GetPrimaryIndex() != col.Physical().index) {
 				// RTree does not match the filter column
 				rewrite_possible = false;
 				return;
@@ -170,18 +171,21 @@ public:
 				return false;
 			}
 			auto &get_ptr = filter.children.front();
-			return TryOptimizeGet(binder, context, get_ptr, root, filter, optional_idx(), filter_expr);
+			return TryOptimizeGet(binder, context, get_ptr, root, filter, nullptr, filter_expr);
 		}
 		if (op.type == LogicalOperatorType::LOGICAL_GET) {
 			// this is a LogicalGet - check if there is an ExpressionFilter
 			auto &get = op.Cast<LogicalGet>();
-			for (auto &entry : get.table_filters.filters) {
-				if (entry.second->filter_type != TableFilterType::EXPRESSION_FILTER) {
+			for (auto &entry : get.table_filters) {
+				auto proj_id = entry.GetIndex();
+				auto &filter = entry.Filter();
+				if (filter.filter_type != TableFilterType::EXPRESSION_FILTER) {
 					// not an expression filter
 					continue;
 				}
-				auto &expr_filter = entry.second->Cast<ExpressionFilter>();
-				if (TryOptimizeGet(binder, context, plan, root, nullptr, entry.first, expr_filter.expr)) {
+				auto &column_id = get.GetColumnIndex(proj_id);
+				auto &expr_filter = filter.Cast<ExpressionFilter>();
+				if (TryOptimizeGet(binder, context, plan, root, nullptr, column_id, expr_filter.expr)) {
 					return true;
 				}
 			}
@@ -192,7 +196,7 @@ public:
 
 	static bool TryOptimizeGet(Binder &binder, ClientContext &context, unique_ptr<LogicalOperator> &get_ptr,
 	                           unique_ptr<LogicalOperator> &root, optional_ptr<LogicalFilter> filter,
-	                           optional_idx filter_column_idx, unique_ptr<Expression> &filter_expr) {
+	                           optional_ptr<const ColumnIndex> filter_column_idx, unique_ptr<Expression> &filter_expr) {
 		auto &get = get_ptr->Cast<LogicalGet>();
 		if (get.function.name != "seq_scan") {
 			return false;
@@ -232,8 +236,8 @@ public:
 			// Create the bind data for this index given the bounding box
 			bool rewrite_possible = true;
 			auto index_expr = index_entry.unbound_expressions[0]->Copy();
-			if (filter_column_idx.IsValid()) {
-				RewriteIndexExpressionForFilter(index_entry, get, index_expr, filter_column_idx.GetIndex(),
+			if (filter_column_idx) {
+				RewriteIndexExpressionForFilter(index_entry, get, index_expr, *filter_column_idx,
 				                                rewrite_possible);
 			} else {
 				RewriteIndexExpression(index_entry, get, *index_expr, rewrite_possible);
@@ -281,7 +285,7 @@ public:
 		get.has_estimated_cardinality = cardinality->has_estimated_cardinality;
 		get.estimated_cardinality = cardinality->estimated_cardinality;
 		get.bind_data = std::move(bind_data);
-		if (get.table_filters.filters.empty()) {
+		if (!get.table_filters.HasFilters()) {
 			return true;
 		}
 
@@ -298,23 +302,12 @@ public:
 		// Otherwise, things get more complicated. We need to pullup the filters from the table scan as our index scan
 		// does not support regular filter pushdown.
 		auto new_filter = make_uniq<LogicalFilter>();
-		auto &column_ids = get.GetColumnIds();
-		for (const auto &entry : get.table_filters.filters) {
-			idx_t column_id = entry.first;
-			auto &type = get.returned_types[column_id];
-			bool found = false;
-			for (idx_t i = 0; i < column_ids.size(); i++) {
-				if (column_ids[i].GetPrimaryIndex() == column_id) {
-					column_id = i;
-					found = true;
-					break;
-				}
-			}
-			if (!found) {
-				throw InternalException("Could not find column id for filter");
-			}
-			auto column = make_uniq<BoundColumnRefExpression>(type, ColumnBinding(get.table_index, column_id));
-			new_filter->expressions.push_back(entry.second->ToExpression(*column));
+		for (const auto &entry : get.table_filters) {
+			auto index_ref = entry.GetIndex();
+			auto &column_id = get.GetColumnIndex(index_ref);
+			auto &type = get.returned_types[column_id.GetPrimaryIndex()];
+			auto column = make_uniq<BoundColumnRefExpression>(type, ColumnBinding(get.table_index, index_ref));
+			new_filter->expressions.push_back(entry.Filter().ToExpression(*column));
 		}
 		new_filter->children.push_back(std::move(get_ptr));
 		new_filter->ResolveOperatorTypes();

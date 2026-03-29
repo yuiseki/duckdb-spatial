@@ -21,7 +21,7 @@ vector<ColumnBinding> LogicalSpatialJoin::GetColumnBindings() {
 
 	if (join_type == JoinType::MARK) {
 		// for MARK join we project the left hand side plus the MARK column
-		left_bindings.emplace_back(mark_index, 0);
+		left_bindings.emplace_back(mark_index, ProjectionIndex(0));
 		return left_bindings;
 	}
 	// for other join types we project both the LHS and the RHS
@@ -84,9 +84,9 @@ void LogicalSpatialJoin::Serialize(Serializer &writer) const {
 	writer.WritePropertyWithDefault(300, "operator_type", string(OPERATOR_TYPE_NAME));
 
 	writer.WritePropertyWithDefault<JoinType>(400, "join_type", join_type, JoinType::INNER);
-	writer.WritePropertyWithDefault<idx_t>(401, "mark_index", mark_index);
-	writer.WritePropertyWithDefault<vector<idx_t>>(402, "left_projection_map", left_projection_map);
-	writer.WritePropertyWithDefault<vector<idx_t>>(403, "right_projection_map", right_projection_map);
+	writer.WritePropertyWithDefault<TableIndex>(401, "mark_index", mark_index);
+	writer.WritePropertyWithDefault<vector<ProjectionIndex>>(402, "left_projection_map", left_projection_map);
+	writer.WritePropertyWithDefault<vector<ProjectionIndex>>(403, "right_projection_map", right_projection_map);
 	writer.WritePropertyWithDefault<unique_ptr<Expression>>(404, "spatial_predicate", spatial_predicate);
 	writer.WritePropertyWithDefault<vector<unique_ptr<Expression>>>(405, "extra_conditions", extra_conditions);
 	writer.WritePropertyWithDefault<bool>(406, "has_const_distance", has_const_distance);
@@ -97,9 +97,9 @@ void LogicalSpatialJoin::Serialize(Serializer &writer) const {
 
 unique_ptr<LogicalExtensionOperator> LogicalSpatialJoin::Deserialize(Deserializer &reader) {
 	auto join_type = reader.ReadPropertyWithExplicitDefault<JoinType>(400, "join_type", JoinType::INNER);
-	auto mark_index = reader.ReadPropertyWithDefault<idx_t>(401, "mark_index");
-	auto left_projection_map = reader.ReadPropertyWithDefault<vector<idx_t>>(402, "left_projection_map");
-	auto right_projection_map = reader.ReadPropertyWithDefault<vector<idx_t>>(403, "right_projection_map");
+	auto mark_index = reader.ReadPropertyWithDefault<TableIndex>(401, "mark_index");
+	auto left_projection_map = reader.ReadPropertyWithDefault<vector<ProjectionIndex>>(402, "left_projection_map");
+	auto right_projection_map = reader.ReadPropertyWithDefault<vector<ProjectionIndex>>(403, "right_projection_map");
 	auto spatial_predicate = reader.ReadPropertyWithDefault<unique_ptr<Expression>>(404, "spatial_predicate");
 	auto extra_conditions = reader.ReadPropertyWithDefault<vector<unique_ptr<Expression>>>(405, "extra_conditions");
 	auto has_const_distance = reader.ReadPropertyWithExplicitDefault<bool>(406, "has_const_distance", false);

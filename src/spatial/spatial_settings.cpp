@@ -2,6 +2,7 @@
 
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/main/client_context.hpp"
 
 namespace duckdb {
 

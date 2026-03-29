@@ -77,8 +77,8 @@ static unique_ptr<Expression> GetInversePredicate(ClientContext &context, unique
 	                                                           nullptr, func.is_operator);
 }
 
-static bool IsSpatialJoinPredicate(const unique_ptr<Expression> &expr, const unordered_set<idx_t> &left_bindings,
-                                   const unordered_set<idx_t> &right_bindings, bool &needs_flipping) {
+static bool IsSpatialJoinPredicate(const unique_ptr<Expression> &expr, const unordered_set<TableIndex> &left_bindings,
+                                   const unordered_set<TableIndex> &right_bindings, bool &needs_flipping) {
 
 	const auto total_side = JoinSide::GetJoinSide(*expr, left_bindings, right_bindings);
 
@@ -160,8 +160,8 @@ static bool TrySwapComparisonJoin(OptimizerExtensionInput &input, unique_ptr<Log
 	// Get the table indexes that are reachable from the left and right children
 	const auto &left_child = cmp_join.children[0];
 	const auto &right_child = cmp_join.children[1];
-	unordered_set<idx_t> left_bindings;
-	unordered_set<idx_t> right_bindings;
+	unordered_set<TableIndex> left_bindings;
+	unordered_set<TableIndex> right_bindings;
 	LogicalJoin::GetTableReferences(*left_child, left_bindings);
 	LogicalJoin::GetTableReferences(*right_child, right_bindings);
 
@@ -184,7 +184,6 @@ static bool TrySwapComparisonJoin(OptimizerExtensionInput &input, unique_ptr<Log
 	spatial_join->types = std::move(cmp_join.types);
 	spatial_join->left_projection_map = std::move(cmp_join.left_projection_map);
 	spatial_join->right_projection_map = std::move(cmp_join.right_projection_map);
-	spatial_join->join_stats = std::move(cmp_join.join_stats);
 	spatial_join->mark_index = cmp_join.mark_index;
 	spatial_join->has_estimated_cardinality = cmp_join.has_estimated_cardinality;
 	spatial_join->estimated_cardinality = cmp_join.estimated_cardinality;
@@ -241,8 +240,8 @@ static void TrySwapAnyJoin(OptimizerExtensionInput &input, unique_ptr<LogicalOpe
 	// Get the table indexes that are reachable from the left and right children
 	auto &left_child = any_join.children[0];
 	auto &right_child = any_join.children[1];
-	unordered_set<idx_t> left_bindings;
-	unordered_set<idx_t> right_bindings;
+	unordered_set<TableIndex> left_bindings;
+	unordered_set<TableIndex> right_bindings;
 	LogicalJoin::GetTableReferences(*left_child, left_bindings);
 	LogicalJoin::GetTableReferences(*right_child, right_bindings);
 
@@ -291,7 +290,6 @@ static void TrySwapAnyJoin(OptimizerExtensionInput &input, unique_ptr<LogicalOpe
 	spatial_join->types = std::move(any_join.types);
 	spatial_join->left_projection_map = std::move(any_join.left_projection_map);
 	spatial_join->right_projection_map = std::move(any_join.right_projection_map);
-	spatial_join->join_stats = std::move(any_join.join_stats);
 	spatial_join->mark_index = any_join.mark_index;
 	spatial_join->has_estimated_cardinality = any_join.has_estimated_cardinality;
 	spatial_join->estimated_cardinality = any_join.estimated_cardinality;

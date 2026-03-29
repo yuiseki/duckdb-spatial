@@ -1,3 +1,5 @@
+#include "duckdb/common/vector/map_vector.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
 #include "spatial/index/rtree/rtree_index.hpp"
 
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
@@ -167,11 +169,11 @@ static void ConvertToEntries(Vector &box_vec, Vector &rowid_vec, idx_t count, CA
 	const auto &box_validity = FlatVector::Validity(box_vec);
 	const auto &row_validity = FlatVector::Validity(rowid_vec);
 
-	const auto &box_entries = StructVector::GetEntries(box_vec);
-	const auto box_xmin_data = FlatVector::GetData<float>(*box_entries[0]);
-	const auto box_ymin_data = FlatVector::GetData<float>(*box_entries[1]);
-	const auto box_xmax_data = FlatVector::GetData<float>(*box_entries[2]);
-	const auto box_ymax_data = FlatVector::GetData<float>(*box_entries[3]);
+	auto &box_entries = StructVector::GetEntries(box_vec);
+	const auto box_xmin_data = FlatVector::GetData<float>(box_entries[0]);
+	const auto box_ymin_data = FlatVector::GetData<float>(box_entries[1]);
+	const auto box_xmax_data = FlatVector::GetData<float>(box_entries[2]);
+	const auto box_ymax_data = FlatVector::GetData<float>(box_entries[3]);
 
 	const auto row_data = FlatVector::GetData<row_t>(rowid_vec);
 

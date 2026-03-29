@@ -8,6 +8,7 @@
 #include "duckdb/common/vector_operations/generic_executor.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/execution/expression_executor.hpp"
 #include "spatial/geometry/geometry_serialization.hpp"
 #include "spatial/geometry/sgl.hpp"
 
@@ -304,11 +305,11 @@ struct ST_AsMVTGeom {
 		args.data[0].ToUnifiedFormat(args.size(), geom_format);
 		args.data[1].ToUnifiedFormat(args.size(), bbox_format);
 
-		const auto &bbox_parts = StructVector::GetEntries(args.data[1]);
-		bbox_parts[0]->ToUnifiedFormat(args.size(), minx_format);
-		bbox_parts[1]->ToUnifiedFormat(args.size(), miny_format);
-		bbox_parts[2]->ToUnifiedFormat(args.size(), maxx_format);
-		bbox_parts[3]->ToUnifiedFormat(args.size(), maxy_format);
+		auto &bbox_parts = StructVector::GetEntries(args.data[1]);
+		bbox_parts[0].ToUnifiedFormat(args.size(), minx_format);
+		bbox_parts[1].ToUnifiedFormat(args.size(), miny_format);
+		bbox_parts[2].ToUnifiedFormat(args.size(), maxx_format);
+		bbox_parts[3].ToUnifiedFormat(args.size(), maxy_format);
 
 		const auto geom_data = UnifiedVectorFormat::GetData<string_t>(geom_format);
 		const auto minx_data = UnifiedVectorFormat::GetData<double>(minx_format);
@@ -1653,8 +1654,8 @@ struct ST_MaximumInscribedCircle {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		auto &struct_vecs = StructVector::GetEntries(result);
-		auto &center_vec = *struct_vecs[0];
-		auto &nearest_vec = *struct_vecs[1];
+		auto &center_vec = struct_vecs[0];
+		auto &nearest_vec = struct_vecs[1];
 
 		using STRING_TYPE = PrimitiveType<string_t>;
 		using RESULT_TYPE = StructTypeTernary<string_t, string_t, double>;
@@ -1681,8 +1682,8 @@ struct ST_MaximumInscribedCircle {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		auto &struct_vecs = StructVector::GetEntries(result);
-		auto &center_vec = *struct_vecs[0];
-		auto &nearest_vec = *struct_vecs[1];
+		auto &center_vec = struct_vecs[0];
+		auto &nearest_vec = struct_vecs[1];
 
 		using STRING_TYPE = PrimitiveType<string_t>;
 		using DOUBLE_TYPE = PrimitiveType<double>;
@@ -2610,7 +2611,7 @@ struct ST_Union_Agg {
 
 		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
 			const auto state_idx = state_format.sel->get_index(raw_idx);
-			const auto &state = *state_ptr[state_idx];
+			auto &state = *state_ptr[state_idx];
 
 			// We can't steal the list, we need to clone and append all elements
 			auto &combined_state = *combined_ptr[raw_idx];
@@ -2788,7 +2789,7 @@ struct GEOSCoverageAggFunction {
 
 		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
 			const auto state_idx = state_format.sel->get_index(raw_idx);
-			const auto &state = *state_ptr[state_idx];
+			auto &state = *state_ptr[state_idx];
 
 			// We can't steal the list, we need to clone and append all elements
 			auto &combined_state = *combined_ptr[raw_idx];

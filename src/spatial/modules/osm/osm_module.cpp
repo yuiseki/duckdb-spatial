@@ -1,3 +1,5 @@
+#include "duckdb/common/vector/list_vector.hpp"
+#include "duckdb/common/vector/map_vector.hpp"
 #include "spatial/modules/osm/osm_module.hpp"
 
 #include "duckdb/function/replacement_scan.hpp"

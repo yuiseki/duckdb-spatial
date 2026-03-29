@@ -813,8 +813,8 @@ struct ST_Area_Spheroid {
 		auto ring_entries = ListVector::GetData(ring_vec);
 		auto &coord_vec = ListVector::GetEntry(ring_vec);
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
-		auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
-		auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+		auto x_data = FlatVector::GetData<double>(coord_vec_children[0]);
+		auto y_data = FlatVector::GetData<double>(coord_vec_children[1]);
 
 		if (bdata.always_xy) {
 			std::swap(x_data, y_data);
@@ -1007,8 +1007,8 @@ struct ST_Perimeter_Spheroid {
 		auto ring_entries = ListVector::GetData(ring_vec);
 		auto &coord_vec = ListVector::GetEntry(ring_vec);
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
-		auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
-		auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+		auto x_data = FlatVector::GetData<double>(coord_vec_children[0]);
+		auto y_data = FlatVector::GetData<double>(coord_vec_children[1]);
 
 		if (bdata.always_xy) {
 			std::swap(x_data, y_data);
@@ -1185,8 +1185,8 @@ struct ST_Length_Spheroid {
 
 		auto &coord_vec = ListVector::GetEntry(line_vec);
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
-		auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
-		auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+		auto x_data = FlatVector::GetData<double>(coord_vec_children[0]);
+		auto y_data = FlatVector::GetData<double>(coord_vec_children[1]);
 
 		if (bdata.always_xy) {
 			std::swap(x_data, y_data);
