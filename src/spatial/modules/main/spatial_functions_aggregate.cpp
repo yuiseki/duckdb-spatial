@@ -140,14 +140,16 @@ static constexpr const char *DOC_ALIAS_DESCRIPTION = R"(
 //------------------------------------------------------------------------
 void RegisterSpatialAggregateFunctions(ExtensionLoader &loader) {
 
-	// TODO: Dont use geometry_t here
-	const auto agg = AggregateFunction::UnaryAggregate<ExtentAggState, string_t, string_t, ExtentAggFunction>(
+	auto agg = AggregateFunction::UnaryAggregate<ExtentAggState, string_t, string_t, ExtentAggFunction>(
 	    LogicalType::GEOMETRY(), LogicalType::GEOMETRY());
+
+	agg.bind = GeoTypes::PropagateCRS;
 
 	FunctionBuilder::RegisterAggregate(loader, "ST_Extent_Agg", [&](AggregateFunctionBuilder &func) {
 		func.SetFunction(agg);
 		func.SetDescription(DOC_DESCRIPTION);
 		func.SetExample(DOC_EXAMPLE);
+		func.CanThrowErrors();
 
 		func.SetTag("ext", "spatial");
 		func.SetTag("category", "construction");
@@ -157,6 +159,7 @@ void RegisterSpatialAggregateFunctions(ExtensionLoader &loader) {
 		func.SetFunction(agg);
 		func.SetDescription(DOC_ALIAS_DESCRIPTION);
 		func.SetExample(DOC_EXAMPLE);
+		func.CanThrowErrors();
 
 		func.SetTag("ext", "spatial");
 		func.SetTag("category", "construction");
