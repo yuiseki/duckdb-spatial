@@ -1,3 +1,5 @@
+#include "duckdb/common/vector/map_vector.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
 #include "spatial/modules/shapefile/shapefile_module.hpp"
 #include "spatial/geometry/geometry_serialization.hpp"
 #include "spatial/geometry/sgl.hpp"
@@ -283,9 +285,8 @@ struct ST_ReadSHP {
 		vector<LogicalType> attribute_types;
 
 		explicit ShapefileBindData(string file_name_p)
-		    : file_name(std::move(file_name_p)), shape_count(0),
-		      shape_type(0), min_bound {0, 0, 0, 0}, max_bound {0, 0, 0, 0},
-		      attribute_encoding(AttributeEncoding::LATIN1) {
+		    : file_name(std::move(file_name_p)), shape_count(0), shape_type(0), min_bound {0, 0, 0, 0},
+		      max_bound {0, 0, 0, 0}, attribute_encoding(AttributeEncoding::LATIN1) {
 		}
 	};
 
@@ -1006,11 +1007,11 @@ struct Shapefile_Meta {
 		auto shape_type_data = FlatVector::GetData<uint8_t>(shape_type_vector);
 		auto &bounds_vector = output.data[2];
 		auto &bounds_vector_children = StructVector::GetEntries(bounds_vector);
-		auto minx_data = FlatVector::GetData<double>(*bounds_vector_children[0]);
-		auto miny_data = FlatVector::GetData<double>(*bounds_vector_children[1]);
-		auto maxx_data = FlatVector::GetData<double>(*bounds_vector_children[2]);
-		auto maxy_data = FlatVector::GetData<double>(*bounds_vector_children[3]);
-		auto record_count_vector = output.data[3];
+		auto minx_data = FlatVector::GetData<double>(bounds_vector_children[0]);
+		auto miny_data = FlatVector::GetData<double>(bounds_vector_children[1]);
+		auto maxx_data = FlatVector::GetData<double>(bounds_vector_children[2]);
+		auto maxy_data = FlatVector::GetData<double>(bounds_vector_children[3]);
+		auto &record_count_vector = output.data[3];
 		auto record_count_data = FlatVector::GetData<int32_t>(record_count_vector);
 
 		auto output_count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, bind_data.files.size() - state.current_file_idx);

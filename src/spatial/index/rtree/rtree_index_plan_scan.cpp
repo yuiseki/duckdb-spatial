@@ -1,4 +1,14 @@
+#include "spatial/geometry/bbox.hpp"
+#include "spatial/index/rtree/rtree_index.hpp"
+#include "spatial/index/rtree/rtree_index_create_logical.hpp"
+#include "spatial/index/rtree/rtree_index_scan.hpp"
+#include "spatial/index/rtree/rtree_module.hpp"
+#include "spatial/spatial_types.hpp"
+#include "spatial/geometry/geometry_serialization.hpp"
+#include "spatial/util/math.hpp"
+
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/optimizer/column_binding_replacer.hpp"
 #include "duckdb/optimizer/column_lifetime_analyzer.hpp"
@@ -17,15 +27,7 @@
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/main/database.hpp"
-
-#include "spatial/geometry/bbox.hpp"
-#include "spatial/index/rtree/rtree_index.hpp"
-#include "spatial/index/rtree/rtree_index_create_logical.hpp"
-#include "spatial/index/rtree/rtree_index_scan.hpp"
-#include "spatial/index/rtree/rtree_module.hpp"
-#include "spatial/spatial_types.hpp"
-#include "spatial/geometry/geometry_serialization.hpp"
-#include "spatial/util/math.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
 
 namespace duckdb {
 //-----------------------------------------------------------------------------
@@ -48,7 +50,7 @@ public:
 			// search for the referenced column in the set of column_ids
 			for (idx_t i = 0; i < get_column_ids.size(); i++) {
 				if (get_column_ids[i].GetPrimaryIndex() == referenced_column) {
-					bound_colref.binding.column_index = i;
+					bound_colref.binding.column_index = ProjectionIndex(i);
 					return;
 				}
 			}
@@ -60,7 +62,7 @@ public:
 	}
 
 	static void RewriteIndexExpressionForFilter(Index &index, LogicalGet &get, unique_ptr<Expression> &expr,
-	                                            idx_t filter_idx, bool &rewrite_possible) {
+	                                            const ColumnIndex &filter_idx, bool &rewrite_possible) {
 		if (expr->type == ExpressionType::BOUND_COLUMN_REF) {
 			auto &bound_colref = expr->Cast<BoundColumnRefExpression>();
 
@@ -75,7 +77,7 @@ public:
 			const auto &column_list = duck_table.GetColumns();
 
 			auto &col = column_list.GetColumn(LogicalIndex(indexed_columns[0]));
-			if (filter_idx != col.Physical().index) {
+			if (filter_idx.GetPrimaryIndex() != col.Physical().index) {
 				// RTree does not match the filter column
 				rewrite_possible = false;
 				return;
@@ -114,9 +116,38 @@ public:
 		return true;
 	}
 
-	static bool TryGetBoundingBox(const Value &value, Box2D<float> &bbox) {
-		const auto blob = value.GetValueUnsafe<string_t>();
-		return Serde::TryGetBounds(blob, bbox) != 0;
+	static bool TryGetBoundingBox(ClientContext &context, const Expression &expr, Box2D<float> &bbox) {
+
+		// make a new box expression
+		auto &catalog = Catalog::GetSystemCatalog(context);
+		auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_Extent_Approx");
+		auto func = entry.functions.GetFunctionByArguments(context, {LogicalType::GEOMETRY()});
+
+		vector<unique_ptr<Expression>> children;
+		children.push_back(expr.Copy());
+
+		const auto bbox_expr =
+		    make_uniq<BoundFunctionExpression>(GeoTypes::BOX_2DF(), func, std::move(children), nullptr);
+
+		Value result;
+		if (!ExpressionExecutor::TryEvaluateScalar(context, *bbox_expr, result)) {
+			return false;
+		}
+		if (result.IsNull()) {
+			return false;
+		}
+
+		auto &parts = StructValue::GetChildren(result);
+		if (parts.size() != 4) {
+			return false;
+		}
+
+		bbox.min.x = parts[0].GetValue<float>();
+		bbox.min.y = parts[1].GetValue<float>();
+		bbox.max.x = parts[2].GetValue<float>();
+		bbox.max.y = parts[3].GetValue<float>();
+
+		return true;
 	}
 
 	static bool TryOptimize(Binder &binder, ClientContext &context, unique_ptr<LogicalOperator> &plan,
@@ -140,18 +171,21 @@ public:
 				return false;
 			}
 			auto &get_ptr = filter.children.front();
-			return TryOptimizeGet(binder, context, get_ptr, root, filter, optional_idx(), filter_expr);
+			return TryOptimizeGet(binder, context, get_ptr, root, filter, nullptr, filter_expr);
 		}
 		if (op.type == LogicalOperatorType::LOGICAL_GET) {
 			// this is a LogicalGet - check if there is an ExpressionFilter
 			auto &get = op.Cast<LogicalGet>();
-			for (auto &entry : get.table_filters.filters) {
-				if (entry.second->filter_type != TableFilterType::EXPRESSION_FILTER) {
+			for (auto &entry : get.table_filters) {
+				auto proj_id = entry.GetIndex();
+				auto &filter = entry.Filter();
+				if (filter.filter_type != TableFilterType::EXPRESSION_FILTER) {
 					// not an expression filter
 					continue;
 				}
-				auto &expr_filter = entry.second->Cast<ExpressionFilter>();
-				if (TryOptimizeGet(binder, context, plan, root, nullptr, entry.first, expr_filter.expr)) {
+				auto &column_id = get.GetColumnIndex(proj_id);
+				auto &expr_filter = filter.Cast<ExpressionFilter>();
+				if (TryOptimizeGet(binder, context, plan, root, nullptr, column_id, expr_filter.expr)) {
 					return true;
 				}
 			}
@@ -162,7 +196,7 @@ public:
 
 	static bool TryOptimizeGet(Binder &binder, ClientContext &context, unique_ptr<LogicalOperator> &get_ptr,
 	                           unique_ptr<LogicalOperator> &root, optional_ptr<LogicalFilter> filter,
-	                           optional_idx filter_column_idx, unique_ptr<Expression> &filter_expr) {
+	                           optional_ptr<const ColumnIndex> filter_column_idx, unique_ptr<Expression> &filter_expr) {
 		auto &get = get_ptr->Cast<LogicalGet>();
 		if (get.function.name != "seq_scan") {
 			return false;
@@ -186,14 +220,15 @@ public:
 		auto &table_info = *table.GetStorage().GetDataTableInfo();
 		unique_ptr<RTreeIndexScanBindData> bind_data = nullptr;
 
-		unordered_set<string> spatial_predicates = {"ST_Equals",    "ST_Intersects",      "ST_Touches",  "ST_Crosses",
-		                                            "ST_Within",    "ST_Contains",        "ST_Overlaps", "ST_Covers",
-		                                            "ST_CoveredBy", "ST_ContainsProperly"};
+		unordered_set<string> spatial_predicates = {
+		    "ST_Equals",   "ST_Intersects", "ST_Touches",   "ST_Crosses",          "ST_Within", "ST_Contains",
+		    "ST_Overlaps", "ST_Covers",     "ST_CoveredBy", "ST_ContainsProperly", "&&",        "ST_Intersects_Extent"};
 
 		table_info.BindIndexes(context, RTreeIndex::TYPE_NAME);
-		table_info.GetIndexes().Scan([&](Index &index) {
+
+		for (auto &index : table_info.GetIndexes().Indexes()) {
 			if (!index.IsBound() || RTreeIndex::TYPE_NAME != index.GetIndexType()) {
-				return false;
+				continue;
 			}
 
 			auto &index_entry = index.Cast<RTreeIndex>();
@@ -201,15 +236,15 @@ public:
 			// Create the bind data for this index given the bounding box
 			bool rewrite_possible = true;
 			auto index_expr = index_entry.unbound_expressions[0]->Copy();
-			if (filter_column_idx.IsValid()) {
-				RewriteIndexExpressionForFilter(index_entry, get, index_expr, filter_column_idx.GetIndex(),
+			if (filter_column_idx) {
+				RewriteIndexExpressionForFilter(index_entry, get, index_expr, *filter_column_idx,
 				                                rewrite_possible);
 			} else {
 				RewriteIndexExpression(index_entry, get, *index_expr, rewrite_possible);
 			}
 			if (!rewrite_possible) {
 				// Could not rewrite!
-				return false;
+				continue;
 			}
 
 			FunctionExpressionMatcher matcher;
@@ -222,7 +257,7 @@ public:
 
 			vector<reference<Expression>> bindings;
 			if (!matcher.Match(*filter_expr, bindings)) {
-				return false;
+				continue;
 			}
 
 			// 		bindings[0] = the expression
@@ -230,15 +265,14 @@ public:
 			// 		bindings[2] = the constant
 
 			// Compute the bounding box
-			auto constant_value = bindings[2].get().Cast<BoundConstantExpression>().value;
 			Box2D<float> bbox;
-			if (!TryGetBoundingBox(constant_value, bbox)) {
-				return false;
+			if (!TryGetBoundingBox(context, bindings[2], bbox)) {
+				continue;
 			}
 
 			bind_data = make_uniq<RTreeIndexScanBindData>(duck_table, index_entry, bbox);
-			return true;
-		});
+			break;
+		};
 
 		if (!bind_data) {
 			// No index found
@@ -251,7 +285,7 @@ public:
 		get.has_estimated_cardinality = cardinality->has_estimated_cardinality;
 		get.estimated_cardinality = cardinality->estimated_cardinality;
 		get.bind_data = std::move(bind_data);
-		if (get.table_filters.filters.empty()) {
+		if (!get.table_filters.HasFilters()) {
 			return true;
 		}
 
@@ -268,23 +302,12 @@ public:
 		// Otherwise, things get more complicated. We need to pullup the filters from the table scan as our index scan
 		// does not support regular filter pushdown.
 		auto new_filter = make_uniq<LogicalFilter>();
-		auto &column_ids = get.GetColumnIds();
-		for (const auto &entry : get.table_filters.filters) {
-			idx_t column_id = entry.first;
-			auto &type = get.returned_types[column_id];
-			bool found = false;
-			for (idx_t i = 0; i < column_ids.size(); i++) {
-				if (column_ids[i].GetPrimaryIndex() == column_id) {
-					column_id = i;
-					found = true;
-					break;
-				}
-			}
-			if (!found) {
-				throw InternalException("Could not find column id for filter");
-			}
-			auto column = make_uniq<BoundColumnRefExpression>(type, ColumnBinding(get.table_index, column_id));
-			new_filter->expressions.push_back(entry.second->ToExpression(*column));
+		for (const auto &entry : get.table_filters) {
+			auto index_ref = entry.GetIndex();
+			auto &column_id = get.GetColumnIndex(index_ref);
+			auto &type = get.returned_types[column_id.GetPrimaryIndex()];
+			auto column = make_uniq<BoundColumnRefExpression>(type, ColumnBinding(get.table_index, index_ref));
+			new_filter->expressions.push_back(entry.Filter().ToExpression(*column));
 		}
 		new_filter->children.push_back(std::move(get_ptr));
 		new_filter->ResolveOperatorTypes();
@@ -313,7 +336,9 @@ public:
 void RTreeModule::RegisterIndexPlanScan(ExtensionLoader &loader) {
 	// Register the optimizer extension
 	auto &db = loader.GetDatabaseInstance();
-	db.config.optimizer_extensions.push_back(RTreeIndexScanOptimizer());
+	RTreeIndexScanOptimizer optimizer;
+
+	OptimizerExtension::Register(db.config, optimizer);
 }
 
 } // namespace duckdb

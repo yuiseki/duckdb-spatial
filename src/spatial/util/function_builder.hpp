@@ -53,8 +53,11 @@ public:
 	void SetFunction(scalar_function_t fn);
 	void SetInit(init_local_state_t init);
 	void SetBind(bind_scalar_function_t bind);
+	void SetSerialize(function_serialize_t serialize);
+	void SetDeserialize(function_deserialize_t deserialize);
 	void SetDescription(const string &desc);
 	void SetExample(const string &ex);
+	void CanThrowErrors();
 
 private:
 	explicit ScalarFunctionVariantBuilder() : function({}, LogicalTypeId::INVALID, nullptr) {
@@ -85,6 +88,12 @@ inline void ScalarFunctionVariantBuilder::SetInit(init_local_state_t init) {
 inline void ScalarFunctionVariantBuilder::SetBind(bind_scalar_function_t bind) {
 	function.bind = bind;
 }
+inline void ScalarFunctionVariantBuilder::SetSerialize(function_serialize_t serialize) {
+	function.serialize = serialize;
+}
+inline void ScalarFunctionVariantBuilder::SetDeserialize(function_deserialize_t deserialize) {
+	function.deserialize = deserialize;
+}
 
 inline void ScalarFunctionVariantBuilder::SetDescription(const string &desc) {
 	description.description = desc;
@@ -92,6 +101,10 @@ inline void ScalarFunctionVariantBuilder::SetDescription(const string &desc) {
 
 inline void ScalarFunctionVariantBuilder::SetExample(const string &ex) {
 	description.examples.emplace_back(ex);
+}
+
+inline void ScalarFunctionVariantBuilder::CanThrowErrors() {
+	function.errors = FunctionErrors::CAN_THROW_RUNTIME_ERROR;
 }
 
 //------------------------------------------------------------------------------
@@ -186,6 +199,7 @@ public:
 	void SetDescription(const string &desc);
 	void SetExample(const string &ex);
 	void SetFunction(const AggregateFunction &function);
+	void CanThrowErrors();
 
 private:
 	explicit AggregateFunctionBuilder(const char *name) : set(name) {
@@ -208,6 +222,12 @@ inline void AggregateFunctionBuilder::SetExample(const string &ex) {
 }
 inline void AggregateFunctionBuilder::SetTag(const string &key, const string &value) {
 	tags[key] = value;
+}
+
+inline void AggregateFunctionBuilder::CanThrowErrors() {
+	for (auto &function : set.functions) {
+		function.errors = FunctionErrors::CAN_THROW_RUNTIME_ERROR;
+	}
 }
 
 //------------------------------------------------------------------------------

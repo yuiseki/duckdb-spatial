@@ -27,6 +27,12 @@
 #include "cpl_vsi.h"
 #include "cpl_vsi_error.h"
 #include "cpl_vsi_virtual.h"
+#include "duckdb/common/types/geometry_crs.hpp"
+#include "duckdb/main/settings.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
+#include "spatial/spatial_settings.hpp"
+#include "spatial/modules/proj/proj_module.hpp"
 
 namespace duckdb {
 namespace {
@@ -210,7 +216,7 @@ public:
 			}
 
 			// Fall back to GDAL instead (if external access is enabled)
-			if (!context.db->config.options.enable_external_access) {
+			if (!Settings::Get<EnableExternalAccessSetting>(context)) {
 				if (set_error) {
 					VSIError(VSIE_FileError, "%s", error_data.RawMessage().c_str());
 				}
@@ -350,6 +356,12 @@ public:
 		const auto base_file_path = fs.JoinPath(StringUtil::GetFilePath(real_file_path), real_file_stem);
 		const auto glob_file_path = base_file_path + ".*";
 
+		if (fs.IsRemoteFile(base_file_path)) {
+			// Sibling file listing is expensive for remote files, so avoid it here.
+			// GDAL will fall back to a ReadDir if needed.
+			return nullptr;
+		}
+
 		CPLStringList files;
 		for (auto &file : fs.Glob(glob_file_path)) {
 			files.AddString(AddPrefix(file.path).c_str());
@@ -392,6 +404,16 @@ private:
 
 class DuckDBFileSystemPrefix final : public ClientContextState {
 public:
+	// Use an intentionally leaked heap-allocated mutex to avoid static destruction order issues.
+	// A static mutex (either class-level or function-local) can be destroyed before the last
+	// DuckDBFileSystemPrefix destructor runs during program teardown, causing
+	// "mutex lock failed: Invalid argument". By heap-allocating and never freeing, we guarantee
+	// the mutex outlives all users.
+	static mutex &GetVSIMutex() {
+		static mutex *mtx = new mutex();
+		return *mtx;
+	}
+
 	explicit DuckDBFileSystemPrefix(ClientContext &context) : context(context) {
 		// Create a new random prefix for this client
 		client_prefix = StringUtil::Format("/vsiduckdb-%s/", UUID::ToString(UUID::GenerateRandomUUID()));
@@ -400,18 +422,24 @@ public:
 		fs_handler = make_uniq<DuckDBFileSystemHandler>(client_prefix, context);
 
 		// Register the file handler
+		lock_guard<mutex> lock(GetVSIMutex());
 		VSIFileManager::InstallHandler(client_prefix, fs_handler.get());
 	}
 
+	// Delete copy
+	DuckDBFileSystemPrefix(const DuckDBFileSystemPrefix &) = delete;
+	DuckDBFileSystemPrefix &operator=(const DuckDBFileSystemPrefix &) = delete;
+
 	~DuckDBFileSystemPrefix() override {
 		// Uninstall the file handler for this prefix
+		lock_guard<mutex> lock(GetVSIMutex());
 		VSIFileManager::RemoveHandler(client_prefix);
 	}
 
 	string AddPrefix(const string &value) const {
 		// If the user explicitly asked for a VSI prefix, we don't add our own
 		if (StringUtil::StartsWith(value, "/vsi")) {
-			if (!context.db->config.options.enable_external_access) {
+			if (!Settings::Get<EnableExternalAccessSetting>(context)) {
 				throw PermissionException("Cannot open file '%s' with VSI prefix: External access is disabled", value);
 			}
 			return value;
@@ -450,7 +478,7 @@ public:
 	CPLStringList dataset_sibling;
 	CPLStringList dataset_drivers;
 
-	int64_t estimated_cardinality = 0;
+	int64_t estimated_cardinality = -1;
 	unordered_set<idx_t> geometry_columns = {};
 
 	bool can_filter = false;
@@ -611,7 +639,7 @@ auto Bind(ClientContext &ctx, TableFunctionBindInput &input, vector<LogicalType>
 		// Convert Arrow schema to DuckDB types
 		for (int64_t i = 0; i < schema.n_children; i++) {
 			auto &child_schema = *schema.children[i];
-			const auto gdal_type = ArrowType::GetTypeFromSchema(ctx.db->config, child_schema);
+			const auto gdal_type = ArrowType::GetTypeFromSchema(ctx, child_schema);
 			auto duck_type = gdal_type->GetDuckType();
 
 			// Track geometry columns to compute stats later
@@ -627,6 +655,35 @@ auto Bind(ClientContext &ctx, TableFunctionBindInput &input, vector<LogicalType>
 				col_names.push_back(child_schema.name);
 			}
 
+			if (duck_type.id() != LogicalTypeId::GEOMETRY) {
+				col_types.push_back(std::move(duck_type));
+				continue;
+			}
+
+			if (!GeoType::HasCRS(duck_type)) {
+				col_types.push_back(std::move(duck_type));
+				continue;
+			}
+
+			// Try to identify the CRS
+			const auto &gdal_crs = GeoType::GetCRS(duck_type);
+
+			// FIXME: GDAL should be able to do this on its own, but somehow
+			// OGRSpatialReference::FindBestMatch() dont work
+
+			string auth_name;
+			string auth_code;
+			if (IdentifyProjCRS(gdal_crs.GetDefinition().c_str(), auth_name, auth_code)) {
+				// If we can identify the CRS using PROJ, we can be pretty sure that DuckDB will recognize it.
+				auto authcode = auth_name + ":" + auth_code;
+				auto duck_crs = CoordinateReferenceSystem::TryIdentify(ctx, authcode);
+				if (duck_crs) {
+					col_types.push_back(LogicalType::GEOMETRY(*duck_crs));
+					continue;
+				}
+			}
+
+			// Otherwise just pass on what we got
 			col_types.push_back(std::move(duck_type));
 		}
 
@@ -696,7 +753,9 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		}
 
 		// The set of geometry predicates that can be optimized using the bounding box
-		static constexpr const char *geometry_predicates[2] = {"&&", "st_intersects_extent"};
+		static constexpr const char *geometry_predicates[12] = {
+		    "ST_Equals",   "ST_Intersects", "ST_Touches",   "ST_Crosses",          "ST_Within", "ST_Contains",
+		    "ST_Overlaps", "ST_Covers",     "ST_CoveredBy", "ST_ContainsProperly", "&&",        "ST_Intersects_Extent"};
 
 		auto found = false;
 		for (const auto &name : geometry_predicates) {
@@ -713,10 +772,8 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		const auto lhs_kind = func.children[0]->GetExpressionType();
 		const auto rhs_kind = func.children[1]->GetExpressionType();
 
-		const auto lhs_is_const =
-		    lhs_kind == ExpressionType::VALUE_CONSTANT && rhs_kind == ExpressionType::BOUND_COLUMN_REF;
-		const auto rhs_is_const =
-		    rhs_kind == ExpressionType::VALUE_CONSTANT && lhs_kind == ExpressionType::BOUND_COLUMN_REF;
+		const auto lhs_is_const = lhs_kind == ExpressionType::VALUE_CONSTANT;
+		const auto rhs_is_const = rhs_kind == ExpressionType::VALUE_CONSTANT;
 
 		if (lhs_is_const == rhs_is_const) {
 			// Both sides are constant or both sides are column refs
@@ -724,7 +781,37 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		}
 
 		auto &constant_expr = func.children[lhs_is_const ? 0 : 1]->Cast<BoundConstantExpression>();
-		auto &geometry_expr = func.children[lhs_is_const ? 1 : 0]->Cast<BoundColumnRefExpression>();
+		auto &geometry_expr = func.children[lhs_is_const ? 1 : 0];
+
+		auto found_geom_expr = false;
+		auto multi_geom_expr = false;
+		ExpressionIterator::VisitExpression<BoundColumnRefExpression>(
+		    *geometry_expr, [&](const BoundColumnRefExpression &ref) {
+			    if (found_geom_expr) {
+				    multi_geom_expr = true;
+				    return;
+			    }
+			    if (ref.binding.table_index != get.table_index) {
+				    // Not from the same table
+				    return;
+			    }
+
+			    const auto &col_ids = get.GetColumnIds();
+			    const auto &col = col_ids[ref.binding.column_index];
+
+			    if (!col.HasPrimaryIndex()) {
+				    return;
+			    }
+			    if (col.GetPrimaryIndex() != *bdata.geometry_columns.begin()) {
+				    return;
+			    }
+			    found_geom_expr = true;
+		    });
+
+		if (!found_geom_expr || multi_geom_expr) {
+			// No geometry column ref found or multiple geometry refs found
+			continue;
+		}
 
 		if (constant_expr.value.type().id() != LogicalTypeId::GEOMETRY) {
 			// Constant is not geometry
@@ -734,7 +821,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 			// Constant is NULL
 			continue;
 		}
-		if (geometry_expr.alias != "geom") {
+		if (geometry_expr->return_type.id() != LogicalTypeId::GEOMETRY) {
 			// Not the geometry column
 			continue;
 		}
@@ -753,7 +840,13 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		// Set the index so we can remove it later
 		// We can __ONLY__ do this if the filter predicate is "&&" or "st_intersects_extent"
 		// as other predicates may require exact geometry evaluation, the filter cannot be fully removed
-		geom_filter_idx = expr_idx;
+		for (auto &name : {"&&", "ST_Intersects_Extent"}) {
+			if (StringUtil::CIEquals(func.function.name.c_str(), name)) {
+				geom_filter_idx = expr_idx;
+				break;
+			}
+		}
+
 		break;
 	}
 
@@ -849,7 +942,7 @@ auto InitGlobal(ClientContext &context, TableFunctionInitInput &input) -> unique
 	// Store the column types
 	for (int64_t i = 0; i < schema.n_children; i++) {
 		auto &child_schema = *schema.children[i];
-		result->col_types.push_back(ArrowType::GetTypeFromSchema(context.db->config, child_schema));
+		result->col_types.push_back(ArrowType::GetTypeFromSchema(context, child_schema));
 	}
 
 	return std::move(result);
@@ -973,13 +1066,16 @@ auto Progress(ClientContext &context, const FunctionData *b_data, const GlobalTa
 	auto &gstate = g_state->Cast<GlobalState>();
 
 	if (bdata.estimated_cardinality < 0) {
+		return -1.0;
+	}
+	if (bdata.estimated_cardinality == 0) {
 		return 0.0;
 	}
 
 	const auto count = static_cast<double>(gstate.features_read.load());
 	const auto total = static_cast<double>(bdata.estimated_cardinality);
 
-	return MinValue(100.0 * (total / count), 100.0);
+	return MinValue(100.0 * (count / total), 100.0);
 }
 
 //------------------------------------------------------------------------------------------------------------------
@@ -1000,6 +1096,22 @@ auto ReplacementScan(ClientContext &, ReplacementScanInput &input, optional_ptr<
 	}
 	// else not something we can replace
 	return nullptr;
+}
+
+//------------------------------------------------------------------------------------------------------------------
+// TO STRING
+//------------------------------------------------------------------------------------------------------------------
+auto ToString(TableFunctionToStringInput &input) -> InsertionOrderPreservingMap<string> {
+	auto &bdata = input.bind_data->Cast<BindData>();
+	InsertionOrderPreservingMap<string> result;
+	result.insert("Layer", to_string(bdata.layer_idx));
+
+	if (bdata.has_filter) {
+		result.insert("Filter (MinX, MinY, MaxX, MaxY)",
+		              StringUtil::Format("(%f, %f, %f, %f)", bdata.layer_filter.MinX, bdata.layer_filter.MinY,
+		                                 bdata.layer_filter.MaxX, bdata.layer_filter.MaxY));
+	}
+	return result;
 }
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -1024,7 +1136,7 @@ static constexpr auto DOCUMENTATION = R"(
 	    | `allowed_drivers` | VARCHAR[] | A list of GDAL driver names that are allowed to be used to open the file. If empty, all drivers are allowed. |
 	    | `sibling_files` | VARCHAR[] | A list of sibling files that are required to open the file. E.g., the ESRI Shapefile driver requires a .shx file to be present. Although most of the time these can be discovered automatically. |
 	    | `spatial_filter_box` | BOX_2D | If set to a BOX_2D, the table function will only return rows that intersect with the given bounding box. Similar to spatial_filter. |
-	    | `keep_wkb` | BOOLEAN | If set, the table function will return geometries in a wkb_geometry column with the type WKB_BLOB (which can be cast to BLOB) instead of GEOMETRY. This is useful if you want to use DuckDB with more exotic geometry subtypes that DuckDB spatial doesnt support representing in the GEOMETRY type yet. |
+	    | `keep_wkb` | BOOLEAN | If set, the table function will return geometries in a wkb_geometry column with the type WKB_BLOB (which can be cast to BLOB) instead of GEOMETRY. This is useful if you want to use DuckDB with more exotic geometry subtypes that DuckDB spatial doesn't support representing in the GEOMETRY type yet. |
 
 	    Note that GDAL is single-threaded, so this table function will not be able to make full use of parallelism.
 
@@ -1059,6 +1171,7 @@ void Register(ExtensionLoader &loader) {
 	read_func.statistics = Statistics;
 	read_func.table_scan_progress = Progress;
 	read_func.pushdown_complex_filter = Pushdown;
+	read_func.to_string = ToString;
 
 	read_func.named_parameters["open_options"] = LogicalType::LIST(LogicalType::VARCHAR);
 	read_func.named_parameters["allowed_drivers"] = LogicalType::LIST(LogicalType::VARCHAR);
@@ -1097,6 +1210,9 @@ public:
 	CPLStringList layer_options;
 
 	string target_srs;
+
+	bool always_xy = false;
+
 	OGRwkbGeometryType geometry_type;
 
 	// Arrow info
@@ -1199,6 +1315,36 @@ auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<str
 		throw BinderException("Unknown GDAL COPY option: '%s'", option.first);
 	}
 
+	// Read the global geometry_always_xy setting to control axis order
+	{
+		bool is_set = false;
+		result->always_xy = SpatialSettings::AlwaysXY(context, is_set);
+
+		if (!is_set) {
+			constexpr auto message =
+			    "GDAL COPY TO with an SRS is sensitive to the coordinate axis order.\n"
+			    "DuckDB GEOMETRY uses [EASTING, NORTHING] (= LONGITUDE, LATITUDE) internally.\n"
+			    "Without 'geometry_always_xy', GDAL may interpret coordinates in authority-defined order\n"
+			    "(e.g., [LATITUDE, LONGITUDE] for EPSG:4326), causing incorrect output in KML and similar formats.\n"
+			    "To avoid unexpected results:\n"
+			    " * 'SET geometry_always_xy = true' to always use [EASTING, NORTHING] (recommended)\n"
+			    " * 'SET geometry_always_xy = false' to use authority-defined axis order";
+
+			auto &logger = Logger::Get(context);
+			logger.WriteLog("Spatial", LogLevel::LOG_WARNING, message);
+		}
+	}
+
+	// If no override SRS is set, we will use the SRS of the first geometry column
+	if (result->target_srs.empty()) {
+		for (auto &col : sql_types) {
+			if (col.id() == LogicalTypeId::GEOMETRY && GeoType::HasCRS(col)) {
+				result->target_srs = GeoType::GetCRS(col).GetDefinition();
+				break;
+			}
+		}
+	}
+
 	// Check that options are valid
 	if (result->driver_name.empty()) {
 		throw BinderException("GDAL COPY option 'DRIVER' is required");
@@ -1284,7 +1430,34 @@ auto InitGlobal(ClientContext &context, FunctionData &bdata_p, const string &rea
 	if (!bdata.target_srs.empty()) {
 		// Make a new spatial reference object, and set it from the user input
 		result->srs = OSRNewSpatialReference(nullptr);
-		OSRSetFromUserInput(result->srs, bdata.target_srs.c_str());
+
+		// Try get the complete SRS from duckdb
+		auto converted =
+		    CoordinateReferenceSystem::TryConvert(context, bdata.target_srs, CoordinateReferenceSystemType::PROJJSON);
+		if (!converted) {
+			converted = CoordinateReferenceSystem::TryConvert(context, bdata.target_srs,
+			                                                  CoordinateReferenceSystemType::WKT2_2019);
+			if (!converted) {
+				converted = CoordinateReferenceSystem::TryConvert(context, bdata.target_srs,
+				                                                  CoordinateReferenceSystemType::AUTH_CODE);
+			}
+		}
+
+		if (converted) {
+			OSRSetFromUserInput(result->srs, converted->GetDefinition().c_str());
+		} else {
+			// Try to set it directly from the user input, in case it's in a format that duckdb doesn't recognize but GDAL does
+			OSRSetFromUserInput(result->srs, bdata.target_srs.c_str());
+		}
+
+		if (bdata.always_xy) {
+			// Controlled by the global 'geometry_always_xy' setting.
+			// DuckDB GEOMETRY uses traditional GIS axis order (lon, lat).
+			// Without this, GDAL 3.x defaults to authority-compliant order for
+			// EPSG:4326 (lat, lon), causing KML and other drivers to reject valid
+			// longitudes > 90 as out-of-range latitudes.
+			OSRSetAxisMappingStrategy(result->srs, OAMS_TRADITIONAL_GIS_ORDER);
+		}
 	}
 
 	// Create Layer
@@ -1779,7 +1952,7 @@ void RegisterGDALModule(ExtensionLoader &loader) {
 
 		// Set GDAL error handler
 		CPLSetErrorHandler([](CPLErr e, int code, const char *raw_msg) {
-			// DuckDB doesnt do warnings, so we only throw on errors
+			// DuckDB doesn't do warnings, so we only throw on errors
 			if (e != CE_Failure && e != CE_Fatal) {
 				return;
 			}

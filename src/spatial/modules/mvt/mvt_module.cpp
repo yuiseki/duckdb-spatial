@@ -4,6 +4,7 @@
 
 #include "duckdb/common/types/hash.hpp"
 #include "duckdb/common/vector_operations/generic_executor.hpp"
+#include "duckdb/execution/expression_executor.hpp"
 #include "spatial/geometry/geometry_serialization.hpp"
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/spatial_types.hpp"
@@ -158,6 +159,7 @@ struct ST_TileEnvelope {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(ExecuteWebMercator);
+				variant.CanThrowErrors();
 			});
 
 			func.SetDescription(DESCRIPTION);
@@ -1016,7 +1018,7 @@ struct ST_AsMVT {
 	//------------------------------------------------------------------------------------------------------------------
 	static void Update(Vector inputs[], AggregateInputData &aggr, idx_t, Vector &state_vec, idx_t count) {
 		const auto &bdata = aggr.bind_data->Cast<BindData>();
-		const auto &row_cols = StructVector::GetEntries(inputs[0]);
+		auto &row_cols = StructVector::GetEntries(inputs[0]);
 
 		UnifiedVectorFormat state_format;
 		UnifiedVectorFormat geom_format;
@@ -1030,14 +1032,14 @@ struct ST_AsMVT {
 
 		for (idx_t col_idx = 0; col_idx < row_cols.size(); col_idx++) {
 			if (col_idx == bdata.geometry_column_idx) {
-				row_cols[col_idx]->ToUnifiedFormat(count, geom_format);
+				row_cols[col_idx].ToUnifiedFormat(count, geom_format);
 			} else if (bdata.feature_id_column_idx.IsValid() && col_idx == bdata.feature_id_column_idx.GetIndex()) {
-				row_cols[col_idx]->ToUnifiedFormat(count, fid_format);
-				fid_type = row_cols[col_idx]->GetType();
+				row_cols[col_idx].ToUnifiedFormat(count, fid_format);
+				fid_type = row_cols[col_idx].GetType();
 			} else {
 				property_formats.emplace_back();
-				row_cols[col_idx]->ToUnifiedFormat(count, property_formats.back());
-				property_types.push_back(row_cols[col_idx]->GetType());
+				row_cols[col_idx].ToUnifiedFormat(count, property_formats.back());
+				property_types.push_back(row_cols[col_idx].GetType());
 			}
 		}
 
@@ -1267,6 +1269,7 @@ struct ST_AsMVT {
 			func.SetDescription(DESCRIPTION);
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
+			func.CanThrowErrors();
 		});
 	}
 };

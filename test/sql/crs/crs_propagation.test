@@ -1,0 +1,54 @@
+require spatial
+
+# CRS is propagated through constructive functions
+query I
+SELECT st_crs(st_boundary(CAST('POINT(0 1)' AS "GEOMETRY"('EPSG:3857'))))
+----
+EPSG:3857
+
+# CRS Is propagated through aggregate functions
+query I
+SELECT st_crs(st_coverageunion_agg(('POINT(0 1)'::GEOMETRY('EPSG:3857'))));
+----
+EPSG:3857
+
+# CRS is propagated through lists
+query I
+SELECT st_crs(st_collect(main.list_value(CAST('POINT(0 1)' AS "GEOMETRY"('EPSG:3857')))))
+----
+EPSG:3857
+
+# CRS is propagated through binary functions
+query I
+SELECT st_crs(st_intersection(CAST('POINT(0 1)' AS "GEOMETRY"('EPSG:3857')), CAST('POINT(0 1)' AS "GEOMETRY"('EPSG:3857'))))
+----
+EPSG:3857
+
+# But can't be mixed
+statement error
+SELECT st_crs(st_intersection('POINT(0 1)'::GEOMETRY('EPSG:3857'), 'POINT(0 1)'::GEOMETRY('EPSG:4326')));
+----
+Binder Error:
+
+# ST_Transform should also set CRS if the input is typed
+query I
+SELECT st_crs(st_transform('POINT(0 1)'::GEOMETRY('EPSG:3857'), 'EPSG:4326', always_xy := true));
+----
+EPSG:4326
+
+# Otherwise, error
+statement error
+SELECT st_crs(st_transform('POINT(0 1)'::GEOMETRY, 'EPSG:4326', always_xy := true));
+----
+Binder Error: Source geometry must have a coordinate reference system
+
+# Otherwise, error
+statement error
+SELECT st_crs(st_transform('POINT(0 1)'::GEOMETRY(''), 'EPSG:4326', always_xy := true));
+----
+Binder Error: Encountered unrecognized coordinate system '' when trying to create GEOMETRY type
+
+statement error
+SELECT st_crs(st_transform('POINT(0 1)'::GEOMETRY('EPSG:3857'), 'foobar', always_xy := true));
+----
+Binder Error: The 'target_crs' parameter 'foobar' is not a recognized coordinate reference system

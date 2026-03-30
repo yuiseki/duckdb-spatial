@@ -13,7 +13,7 @@ public:
 	//! The type of the join (INNER, OUTER, etc...)
 	JoinType join_type;
 	//! Table index used to refer to the MARK column (in case of a MARK join)
-	idx_t mark_index {};
+	TableIndex mark_index {};
 
 	//! The spatial predicate of the join
 	unique_ptr<Expression> spatial_predicate;
@@ -22,9 +22,9 @@ public:
 	vector<unique_ptr<Expression>> extra_conditions;
 
 	//! The columns of the LHS that are output by the join
-	vector<idx_t> left_projection_map;
+	vector<ProjectionIndex> left_projection_map;
 	//! The columns of the RHS that are output by the join
-	vector<idx_t> right_projection_map;
+	vector<ProjectionIndex> right_projection_map;
 	//! Join Keys statistics (optional)
 	vector<unique_ptr<BaseStatistics>> join_stats;
 

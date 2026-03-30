@@ -1,3 +1,5 @@
+#include "duckdb/common/vector/map_vector.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
 #include "spatial/index/rtree/rtree_index_create_physical.hpp"
 #include "spatial/index/rtree/rtree_index.hpp"
 #include "spatial/index/rtree/rtree_node.hpp"
@@ -78,7 +80,7 @@ unique_ptr<GlobalSinkState> PhysicalCreateRTreeIndex::GetGlobalSinkState(ClientC
 	auto &db = storage.db;
 	gstate->rtree =
 	    make_uniq<RTreeIndex>(info->index_name, constraint_type, storage_ids, table_manager, unbound_expressions, db,
-	                          info->options, IndexStorageInfo(), estimated_cardinality);
+	                          info->options, context, IndexStorageInfo(), estimated_cardinality);
 
 	gstate->max_node_capacity = gstate->rtree->tree->GetConfig().max_node_capacity;
 	gstate->entry_idx = gstate->max_node_capacity;
@@ -102,12 +104,12 @@ SinkResultType PhysicalCreateRTreeIndex::Sink(ExecutionContext &context, DataChu
 	// TODO: Dont flatten chunk
 	chunk.Flatten();
 
-	const auto &bbox_vecs = StructVector::GetEntries(chunk.data[0]);
+	auto &bbox_vecs = StructVector::GetEntries(chunk.data[0]);
 	const auto &rowid_data = FlatVector::GetData<row_t>(chunk.data[1]);
-	const auto min_x_data = FlatVector::GetData<float>(*bbox_vecs[0]);
-	const auto min_y_data = FlatVector::GetData<float>(*bbox_vecs[1]);
-	const auto max_x_data = FlatVector::GetData<float>(*bbox_vecs[2]);
-	const auto max_y_data = FlatVector::GetData<float>(*bbox_vecs[3]);
+	const auto min_x_data = FlatVector::GetData<float>(bbox_vecs[0]);
+	const auto min_y_data = FlatVector::GetData<float>(bbox_vecs[1]);
+	const auto max_x_data = FlatVector::GetData<float>(bbox_vecs[2]);
+	const auto max_y_data = FlatVector::GetData<float>(bbox_vecs[3]);
 
 	// Vectorized conversion from columnar to row-wise
 	RTreeEntry entries[STANDARD_VECTOR_SIZE];

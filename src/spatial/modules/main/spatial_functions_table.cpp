@@ -1,7 +1,10 @@
+#include "duckdb/common/vector/map_vector.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
 #include "spatial/geometry/bbox.hpp"
 #include "spatial/modules/main/spatial_functions.hpp"
 #include "spatial/spatial_types.hpp"
 #include "spatial/util/function_builder.hpp"
+#include "duckdb/common/random_engine.hpp"
 
 namespace duckdb {
 
@@ -81,9 +84,9 @@ struct ST_GeneratePoints {
 		auto &bind_data = data_p.bind_data->Cast<GeneratePointsBindData>();
 		auto &state = data_p.global_state->Cast<GeneratePointsState>();
 
-		const auto &point_vec = StructVector::GetEntries(output.data[0]);
-		const auto &x_data = FlatVector::GetData<double>(*point_vec[0]);
-		const auto &y_data = FlatVector::GetData<double>(*point_vec[1]);
+		auto &point_vec = StructVector::GetEntries(output.data[0]);
+		const auto &x_data = FlatVector::GetData<double>(point_vec[0]);
+		const auto &y_data = FlatVector::GetData<double>(point_vec[1]);
 
 		const auto chunk_size = MinValue<idx_t>(STANDARD_VECTOR_SIZE, bind_data.count - state.current_idx);
 		for (idx_t i = 0; i < chunk_size; i++) {
