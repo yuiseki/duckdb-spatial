@@ -436,11 +436,39 @@ public:
 		VSIFileManager::RemoveHandler(client_prefix);
 	}
 
+	// Check if a path looks like a GDAL driver-prefixed URL (e.g., "WFS:https://...", "OAPIF:https://...")
+	// These need to be passed directly to GDALOpenEx without our custom VSI prefix.
+	static bool IsGDALDriverPrefixedURL(const string &value) {
+		auto colon_pos = value.find(':');
+		if (colon_pos == string::npos || colon_pos == 0 || colon_pos > 20) {
+			return false;
+		}
+		// Check that the prefix is all uppercase letters (GDAL driver names are uppercase)
+		for (idx_t i = 0; i < colon_pos; i++) {
+			char c = value[i];
+			if (!StringUtil::CharacterIsAlpha(c) || c != StringUtil::CharacterToUpper(c)) {
+				return false;
+			}
+		}
+		// Check that after the colon there is a URL scheme (http:// or https://)
+		// This excludes database connection strings like "PG:dbname=..." which are not supported.
+		auto rest = value.substr(colon_pos + 1);
+		return StringUtil::StartsWith(rest, "http://") || StringUtil::StartsWith(rest, "https://");
+	}
+
 	string AddPrefix(const string &value) const {
 		// If the user explicitly asked for a VSI prefix, we don't add our own
 		if (StringUtil::StartsWith(value, "/vsi")) {
 			if (!Settings::Get<EnableExternalAccessSetting>(context)) {
 				throw PermissionException("Cannot open file '%s' with VSI prefix: External access is disabled", value);
+			}
+			return value;
+		}
+		// If the path is a GDAL driver-prefixed URL (e.g., "WFS:https://..."), pass it through directly
+		if (IsGDALDriverPrefixedURL(value)) {
+			if (!Settings::Get<EnableExternalAccessSetting>(context)) {
+				throw PermissionException(
+				    "Cannot open file '%s' with GDAL driver prefix: External access is disabled", value);
 			}
 			return value;
 		}
@@ -1781,11 +1809,30 @@ auto Bind(ClientContext &context, TableFunctionBindInput &input, vector<LogicalT
 	types.push_back(LogicalType::VARCHAR);
 	types.push_back(LogicalType::LIST(GetLayerType()));
 
-	const auto mf_reader = MultiFileReader::Create(input.table_function);
-	const auto mf_inputs = mf_reader->CreateFileList(context, input.inputs[0], FileGlobOptions::ALLOW_EMPTY);
-
 	auto result = make_uniq<BindData>();
-	result->files = mf_inputs->GetAllFiles();
+
+	// For /vsi* paths and GDAL driver-prefixed URLs (e.g., "WFS:https://..."),
+	// bypass MultiFileReader since these are not local file globs.
+	// We must check the input type first because MultiFileReader::CreateFunctionSet
+	// adds a VARCHAR[] overload, and GetValue<string>() on a LIST would return
+	// the string representation of the list, not an actual path.
+	auto &input_val = input.inputs[0];
+	if (input_val.type().id() == LogicalTypeId::VARCHAR) {
+		auto raw_path = input_val.GetValue<string>();
+		if (StringUtil::StartsWith(raw_path, "/vsi") ||
+		    DuckDBFileSystemPrefix::IsGDALDriverPrefixedURL(raw_path)) {
+			result->files.emplace_back(std::move(raw_path));
+		} else {
+			const auto mf_reader = MultiFileReader::Create(input.table_function);
+			const auto mf_inputs = mf_reader->CreateFileList(context, input_val, FileGlobOptions::ALLOW_EMPTY);
+			result->files = mf_inputs->GetAllFiles();
+		}
+	} else {
+		const auto mf_reader = MultiFileReader::Create(input.table_function);
+		const auto mf_inputs = mf_reader->CreateFileList(context, input_val, FileGlobOptions::ALLOW_EMPTY);
+		result->files = mf_inputs->GetAllFiles();
+	}
+
 	return std::move(result);
 }
 
