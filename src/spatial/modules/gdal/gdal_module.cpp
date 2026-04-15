@@ -646,12 +646,15 @@ auto Bind(ClientContext &ctx, TableFunctionBindInput &input, vector<LogicalType>
 		// Get the layer geometry type if available
 		result->layer_type = OGR_L_GetGeomType(layer);
 
-		// Check FID column
+		// Only suppress the FID if the layer already exposes it as a regular attribute field
 		const auto fid_col = OGR_L_GetFIDColumn(layer);
 		if (fid_col && strcmp(fid_col, "") != 0) {
-			// Do not include the explicit FID if we already have it as a column
-			result->layer_options.AddString("INCLUDE_FID=NO");
+			const auto layer_defn = OGR_L_GetLayerDefn(layer);
+			if (OGR_FD_GetFieldIndex(layer_defn, fid_col) >= 0) {
+				result->layer_options.AddString("INCLUDE_FID=NO");
+			}
 		}
+
 		const auto geom_col_name = OGR_L_GetGeometryColumn(layer);
 
 		// Get the arrow stream

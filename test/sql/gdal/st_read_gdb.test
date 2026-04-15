@@ -16,7 +16,7 @@ Not implemented Error: Can only insert a LineString/MultiLineString/CircularStri
 statement ok
 COPY (SELECT ST_Point(1,2) as geom, 10 as i) TO '__TEST_DIR__/test.gdb' WITH (FORMAT 'GDAL', DRIVER 'OpenFileGDB', GEOMETRY_TYPE 'POINT');
 
-query II
+query III
 FROM st_read('__TEST_DIR__/test.gdb');
 ----
-10	POINT (1 2)
+1	10	POINT (1 2)
