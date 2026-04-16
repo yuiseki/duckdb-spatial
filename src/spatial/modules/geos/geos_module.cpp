@@ -2233,6 +2233,41 @@ struct ST_SimplifyPreserveTopology {
 	}
 };
 
+struct ST_SymDifference {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		BinaryExecutor::Execute<string_t, string_t, string_t>(
+		    args.data[0], args.data[1], result, args.size(), [&](const string_t &lhs_blob, const string_t &rhs_blob) {
+			    const auto lhs = lstate.Deserialize(lhs_blob);
+			    const auto rhs = lstate.Deserialize(rhs_blob);
+			    const auto union_geom = lhs.get_union(rhs);
+			    const auto intersection_geom = lhs.get_intersection(rhs);
+			    const auto sym_diff = union_geom.get_difference(intersection_geom);
+
+			    return lstate.Serialize(result, sym_diff);
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_SymDifference", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom1", LogicalType::GEOMETRY());
+				variant.AddParameter("geom2", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+				variant.CanThrowErrors();
+			});
+
+			func.SetDescription("Returns the symmetric difference of two geometries");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
 struct ST_Touches : SymmetricPreparedBinaryFunction<ST_Touches> {
 	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
 		return lhs.touches(rhs);
@@ -3186,6 +3221,7 @@ void RegisterGEOSModule(ExtensionLoader &loader) {
 	ST_ShortestLine::Register(loader);
 	ST_Simplify::Register(loader);
 	ST_SimplifyPreserveTopology::Register(loader);
+	ST_SymDifference::Register(loader);
 	ST_Touches::Register(loader);
 	ST_Union::Register(loader);
 	ST_VoronoiDiagram::Register(loader);

@@ -124,6 +124,7 @@
 | [`ST_Simplify`](#st_simplify) | Returns a simplified version of the geometry |
 | [`ST_SimplifyPreserveTopology`](#st_simplifypreservetopology) | Returns a simplified version of the geometry that preserves topology |
 | [`ST_StartPoint`](#st_startpoint) | Returns the start point of a LINESTRING. |
+| [`ST_SymDifference`](#st_symdifference) | Returns a geometry that represents the portions of two geometries that do not intersect |
 | [`ST_TileEnvelope`](#st_tileenvelope) | The `ST_TileEnvelope` scalar function generates tile envelope rectangular polygons from specified zoom level and tile indices. |
 | [`ST_Touches`](#st_touches) | Returns true if the geometries touch |
 | [`ST_Transform`](#st_transform) | Transforms a geometry between two coordinate systems |
@@ -2610,6 +2611,21 @@ POINT_2D ST_StartPoint (line LINESTRING_2D)
 #### Description
 
 Returns the start point of a LINESTRING.
+
+----
+
+### ST_SymDifference
+
+
+#### Signatures
+
+```sql
+GEOMETRY ST_SymDifference(geom1 GEOMETRY, geom2 GEOMETRY)
+```
+
+#### Description
+
+Returns a geometry that represents the portions of geom1 and geom2 that do not intersect.
 
 ----
 
