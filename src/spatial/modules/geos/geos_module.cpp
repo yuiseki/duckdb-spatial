@@ -2424,6 +2424,8 @@ struct GeosUnaryAggFunction {
 	static void Initialize(STATE &state) {
 		state.geom = nullptr;
 		state.context = GEOS_init_r();
+		GEOSContext_setErrorMessageHandler_r(
+		    state.context, [](const char *message, void *) { throw InvalidInputException(message); }, nullptr);
 	}
 
 	template <class STATE, class OP>
@@ -2579,6 +2581,8 @@ struct ST_Union_Agg {
 		const auto state_ptr = new (state_mem) State();
 		auto &state = *state_ptr;
 		state.context = GEOS_init_r();
+		GEOSContext_setErrorMessageHandler_r(
+		    state.context, [](const char *message, void *) { throw InvalidInputException(message); }, nullptr);
 	}
 
 	static void Update(Vector inputs[], AggregateInputData &aggr, idx_t, Vector &state_vec, idx_t count) {
@@ -2778,6 +2782,8 @@ struct GEOSCoverageAggFunction {
 		const auto state_ptr = new (state_mem) State();
 		auto &state = *state_ptr;
 		state.context = GEOS_init_r();
+		GEOSContext_setErrorMessageHandler_r(
+		    state.context, [](const char *message, void *) { throw InvalidInputException(message); }, nullptr);
 	}
 
 	static void Absorb(Vector &state_vec, Vector &combined, AggregateInputData &aggr_input_data, idx_t count) {
