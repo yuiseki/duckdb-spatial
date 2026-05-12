@@ -920,6 +920,9 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		//--------------------------------------------------------------------------------------------------------------
 		case SpatialJoinState::INIT: {
 			// We have a new fresh input chunk
+			lstate.probe_side_key_chunk.Reset();
+			lstate.probe_side_box_chunk.Reset();
+
 			// Compute the probe side join key
 			lstate.join_probe_executor.Execute(input, lstate.probe_side_key_chunk);
 			lstate.probe_side_key_chunk.data[0].ToUnifiedFormat(input.size(), lstate.probe_side_key_vformat);
