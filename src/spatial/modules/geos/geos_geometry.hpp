@@ -3,6 +3,7 @@
 #include "geos_c.h"
 
 #include "duckdb/common/vector.hpp"
+#include "duckdb/common/unique_ptr.hpp"
 
 namespace duckdb {
 
@@ -526,7 +527,7 @@ inline GeosGeometry GeosGeometry::get_coverage_clean(double snapping_distance, d
 		}
 	};
 
-	std::unique_ptr<GEOSCoverageCleanParams, ParamsDeleter> params(params_raw, ParamsDeleter{handle});
+	unique_ptr<GEOSCoverageCleanParams, ParamsDeleter> params(params_raw, ParamsDeleter{handle});
 
 	// Conditionally set optional parameters; check return codes and fail fast
 	if (snapping_distance >= 0) {
