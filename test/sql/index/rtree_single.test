@@ -1,9 +1,6 @@
 require spatial
 
 statement ok
-PRAGMA enable_verification;
-
-statement ok
 CREATE TABLE t1(i INT, g GEOMETRY);
 
 statement ok

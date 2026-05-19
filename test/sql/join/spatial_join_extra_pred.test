@@ -1,9 +1,6 @@
 require spatial
 
 statement ok
-PRAGMA enable_verification
-
-statement ok
 CREATE TABLE t1 AS
 SELECT
     ST_Buffer(ST_Point(x, y), 5) as geom,
