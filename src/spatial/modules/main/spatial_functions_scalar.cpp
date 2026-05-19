@@ -14,7 +14,7 @@
 #include "duckdb/common/vector_operations/generic_executor.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
-#include "duckdb/common/vector_operations/septenary_executor.hpp"
+#include "duckdb/common/vector_operations/variadic_executor.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 
 #include "spatial/util/distance_extract.hpp"
@@ -191,7 +191,7 @@ struct ST_Affine {
 		auto &lstate = LocalState::ResetAndGet(state);
 		auto &alloc = lstate.GetAllocator();
 
-		SeptenaryExecutor::Execute<string_t, double, double, double, double, double, double, string_t>(
+		VariadicExecutor::Execute<string_t, string_t, double, double, double, double, double, double>(
 		    args, result,
 		    [&](const string_t &geom_blob, const double a, const double b, const double d, const double e,
 		        const double xoff, const double yoff) {

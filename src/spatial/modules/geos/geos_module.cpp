@@ -4,7 +4,7 @@
 #include "spatial/spatial_types.hpp"
 #include "spatial/util/function_builder.hpp"
 
-#include "duckdb/common/vector_operations/senary_executor.hpp"
+#include "duckdb/common/vector_operations/variadic_executor.hpp"
 #include "duckdb/common/vector_operations/generic_executor.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -550,7 +550,7 @@ struct ST_Buffer {
 	static void ExecuteWithStyle(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
-		SenaryExecutor::Execute<string_t, double, int32_t, string_t, string_t, double, string_t>(
+		VariadicExecutor::Execute<string_t, string_t, double, int32_t, string_t, string_t, double>(
 		    args, result,
 		    [&](const string_t &blob, double radius, int32_t segments, const string_t &cap_style_str,
 		        const string_t &join_style_str, double mitre_limit) {
