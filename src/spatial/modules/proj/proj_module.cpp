@@ -301,7 +301,7 @@ struct ST_Transform {
 		}
 
 		// Set return types
-		func.arguments[0] = geo_arg->return_type;
+		func.GetArguments()[0] = geo_arg->return_type;
 		func.SetReturnType(LogicalType::GEOMETRY(*result_crs));
 
 		// Check if we need to warn for this

@@ -124,7 +124,7 @@ static unique_ptr<FunctionData> PropagateTypesInternal(ClientContext &context, S
 
 		if (has_crs) {
 			// Override the type so that we set the CRS
-			bound_function.arguments[arg_idx] = arg->return_type;
+			bound_function.GetArguments()[arg_idx] = arg->return_type;
 		}
 	}
 

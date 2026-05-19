@@ -133,7 +133,7 @@ struct ST_GeneratePoints {
 		set.AddFunction(generate_points);
 
 		// Overload with seed
-		generate_points.arguments = {GeoTypes::BOX_2D(), LogicalType::BIGINT, LogicalType::BIGINT};
+		generate_points.GetArguments() = {GeoTypes::BOX_2D(), LogicalType::BIGINT, LogicalType::BIGINT};
 		set.AddFunction(generate_points);
 		loader.RegisterFunction(set);
 

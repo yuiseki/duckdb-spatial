@@ -97,15 +97,15 @@ public:
 		if (predicates.find(function.name) == predicates.end()) {
 			return false;
 		}
-		if (function.arguments.size() < 2) {
+		if (function.GetArguments().size() < 2) {
 			// We can only optimize if there are two children
 			return false;
 		}
-		if (function.arguments[0] != LogicalType::GEOMETRY()) {
+		if (function.GetArguments()[0] != LogicalType::GEOMETRY()) {
 			// We can only optimize if the first child is a GEOMETRY
 			return false;
 		}
-		if (function.arguments[1] != LogicalType::GEOMETRY()) {
+		if (function.GetArguments()[1] != LogicalType::GEOMETRY()) {
 			// We can only optimize if the second child is a GEOMETRY
 			return false;
 		}

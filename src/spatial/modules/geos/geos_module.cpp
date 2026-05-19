@@ -2887,7 +2887,7 @@ struct ST_CoverageSimplify_Agg : GEOSCoverageAggFunction {
 
 		if (arguments.size() == 2) {
 			arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::BOOLEAN(true)));
-			function.arguments.push_back(LogicalType::BOOLEAN);
+			function.GetArguments().push_back(LogicalType::BOOLEAN);
 		}
 		return nullptr;
 	}
@@ -2968,7 +2968,7 @@ struct ST_CoverageSimplify_Agg : GEOSCoverageAggFunction {
 			func.SetDescription("Simplifies a set of geometries while maintaining coverage");
 
 			// TODO: this is a hack
-			agg.arguments.push_back(LogicalType::BOOLEAN);
+			agg.GetArguments().push_back(LogicalType::BOOLEAN);
 			func.SetFunction(agg);
 			func.CanThrowErrors();
 
@@ -3058,7 +3058,7 @@ struct ST_CoverageInvalidEdges_Agg : GEOSCoverageAggFunction {
 
 		if (arguments.size() == 1) {
 			arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(0.0)));
-			function.arguments.push_back(LogicalType::DOUBLE);
+			function.GetArguments().push_back(LogicalType::DOUBLE);
 		}
 		return nullptr;
 	}
@@ -3133,7 +3133,7 @@ struct ST_CoverageInvalidEdges_Agg : GEOSCoverageAggFunction {
 			func.CanThrowErrors();
 
 			// TODO: this is a hack
-			agg.arguments.push_back(LogicalType::DOUBLE);
+			agg.GetArguments().push_back(LogicalType::DOUBLE);
 			func.SetFunction(agg);
 			func.CanThrowErrors();
 

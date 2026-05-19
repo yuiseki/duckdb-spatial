@@ -1266,7 +1266,7 @@ struct ST_AsMVT {
 			func.SetFunction(agg);
 			for (auto &arg_type : optional_args) {
 				// Register all the variants with optional arguments
-				agg.arguments.push_back(arg_type);
+				agg.GetArguments().push_back(arg_type);
 				func.SetFunction(agg);
 			}
 
