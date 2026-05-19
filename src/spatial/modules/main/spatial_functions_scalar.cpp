@@ -5457,6 +5457,7 @@ struct ST_LocateAlong {
 		if (arguments.size() == 2) {
 			// Push back offset constant
 			arguments.push_back(make_uniq<BoundConstantExpression>(Value::DOUBLE(0.0)));
+			input.GetBoundFunction().GetArguments().push_back(LogicalType::DOUBLE);
 		}
 		return nullptr; // No additional data needed
 	}
@@ -5558,6 +5559,7 @@ struct ST_LocateBetween {
 		if (arguments.size() == 3) {
 			// Push back offset constant
 			arguments.push_back(make_uniq<BoundConstantExpression>(Value::DOUBLE(0.0)));
+			input.GetBoundFunction().GetArguments().push_back(LogicalType::DOUBLE);
 		}
 		return nullptr; // No additional data needed
 	}
