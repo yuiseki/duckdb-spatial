@@ -653,7 +653,7 @@ struct ST_ReadSHP {
 			blob.Finalize();
 
 			// Set the blob in the result vector
-			FlatVector::GetData<string_t>(result)[result_idx] = blob;
+			FlatVector::GetDataMutable<string_t>(result)[result_idx] = blob;
 		}
 	}
 
@@ -661,7 +661,7 @@ struct ST_ReadSHP {
 	                                  ArenaAllocator &arena, int geom_type) {
 		switch (geom_type) {
 		case SHPT_NULL:
-			FlatVector::Validity(result).SetAllInvalid(count);
+			FlatVector::ValidityMutable(result).SetAllInvalid(count);
 			break;
 		case SHPT_POINT:
 			ConvertGeomLoop<ConvertPoint>(result, record_start, count, shp_handle, arena);
@@ -745,7 +745,7 @@ struct ST_ReadSHP {
 			if (DBFIsAttributeNULL(dbf_handle, record_idx, field_idx)) {
 				FlatVector::SetNull(result, row_idx, true);
 			} else {
-				FlatVector::GetData<typename OP::TYPE>(result)[row_idx] =
+				FlatVector::GetDataMutable<typename OP::TYPE>(result)[row_idx] =
 				    OP::Convert(result, dbf_handle, record_idx, field_idx);
 			}
 			record_idx++;
@@ -775,7 +775,7 @@ struct ST_ReadSHP {
 					throw InvalidInputException("Could not decode VARCHAR field as valid UTF-8, try passing "
 					                            "encoding='blob' to skip decoding of string attributes");
 				}
-				FlatVector::GetData<string_t>(result)[row_idx] = result_str;
+				FlatVector::GetDataMutable<string_t>(result)[row_idx] = result_str;
 			}
 			record_idx++;
 		}
@@ -961,7 +961,7 @@ struct Shapefile_Meta {
 
 		auto shape_type_count = sizeof(shape_type_map) / sizeof(ShapeTypeEntry);
 		auto varchar_vector = Vector(LogicalType::VARCHAR, shape_type_count);
-		auto varchar_data = FlatVector::GetData<string_t>(varchar_vector);
+		auto varchar_data = FlatVector::GetDataMutable<string_t>(varchar_vector);
 		for (idx_t i = 0; i < shape_type_count; i++) {
 			auto str = string_t(shape_type_map[i].shp_name);
 			varchar_data[i] = str.IsInlined() ? str : StringVector::AddString(varchar_vector, str);

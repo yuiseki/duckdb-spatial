@@ -317,7 +317,7 @@ struct ST_AsMVTGeom {
 		const auto maxx_data = UnifiedVectorFormat::GetData<double>(maxx_format);
 		const auto maxy_data = UnifiedVectorFormat::GetData<double>(maxy_format);
 
-		const auto res_data = FlatVector::GetData<string_t>(result);
+		const auto res_data = FlatVector::GetDataMutable<string_t>(result);
 
 		for (idx_t out_idx = 0; out_idx < args.size(); out_idx++) {
 			const auto geom_idx = geom_format.sel->get_index(out_idx);
@@ -2582,7 +2582,7 @@ struct ST_Union_Agg {
 		state_vec.ToUnifiedFormat(count, state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
-		const auto combined_ptr = FlatVector::GetData<State *>(combined);
+		const auto combined_ptr = FlatVector::GetDataMutable<State *>(combined);
 
 		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
 			const auto state_idx = state_format.sel->get_index(raw_idx);
@@ -2647,7 +2647,7 @@ struct ST_Union_Agg {
 				const auto result_union = GEOSUnaryUnion_r(state.context, collection);
 
 				// Serialize the result
-				const auto result_ptr = FlatVector::GetData<string_t>(result);
+				const auto result_ptr = FlatVector::GetDataMutable<string_t>(result);
 				result_ptr[out_idx] = Serialize(state.context, result, result_union);
 
 				// Destroy the unioned geometry
@@ -2753,7 +2753,7 @@ struct GEOSCoverageAggFunction {
 		state_vec.ToUnifiedFormat(count, state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
-		const auto combined_ptr = FlatVector::GetData<State *>(combined);
+		const auto combined_ptr = FlatVector::GetDataMutable<State *>(combined);
 
 		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
 			const auto state_idx = state_format.sel->get_index(raw_idx);
@@ -2820,7 +2820,7 @@ struct GEOSCoverageAggFunction {
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 
-		auto &mask = FlatVector::Validity(result);
+		auto &mask = FlatVector::ValidityMutable(result);
 
 		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
 			auto &state = *state_ptr[state_format.sel->get_index(raw_idx)];
@@ -2943,7 +2943,7 @@ struct ST_CoverageSimplify_Agg : GEOSCoverageAggFunction {
 		    GEOSCoverageSimplifyVW_r(state.context, collection, state.tolerance, !state.simplify_boundary);
 
 		// Serialize the result
-		const auto result_ptr = FlatVector::GetData<string_t>(result);
+		const auto result_ptr = FlatVector::GetDataMutable<string_t>(result);
 		result_ptr[out_idx] = Serialize(state.context, result, simplified);
 		GEOSGeom_destroy_r(state.context, simplified);
 	}
@@ -3017,7 +3017,7 @@ struct ST_CoverageUnion_Agg : GEOSCoverageAggFunction {
 		const auto coverage = GEOSCoverageUnion_r(state.context, collection);
 
 		// Serialize the result
-		const auto result_ptr = FlatVector::GetData<string_t>(result);
+		const auto result_ptr = FlatVector::GetDataMutable<string_t>(result);
 		result_ptr[out_idx] = Serialize(state.context, result, coverage);
 		GEOSGeom_destroy_r(state.context, coverage);
 	}
@@ -3108,7 +3108,7 @@ struct ST_CoverageInvalidEdges_Agg : GEOSCoverageAggFunction {
 			return;
 		}
 		// Serialize the result
-		const auto result_ptr = FlatVector::GetData<string_t>(result);
+		const auto result_ptr = FlatVector::GetDataMutable<string_t>(result);
 		result_ptr[out_idx] = Serialize(state.context, result, edges);
 		GEOSGeom_destroy_r(state.context, edges);
 	}

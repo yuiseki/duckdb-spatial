@@ -44,7 +44,7 @@ unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &in
 	// Create an enum type for all osm kinds
 	vector<string_t> enum_values = {"node", "way", "relation", "changeset"};
 	auto varchar_vector = Vector(LogicalType::VARCHAR, enum_values.size());
-	auto varchar_data = FlatVector::GetData<string_t>(varchar_vector);
+	auto varchar_data = FlatVector::GetDataMutable<string_t>(varchar_vector);
 	for (idx_t i = 0; i < enum_values.size(); i++) {
 		auto str = enum_values[i];
 		varchar_data[i] = str.IsInlined() ? str : StringVector::AddString(varchar_vector, str);
@@ -75,7 +75,7 @@ unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &in
 	// Create an enum type for the member kind
 	vector<string_t> member_enum_values = {"node", "way", "relation"};
 	auto member_varchar_vector = Vector(LogicalType::VARCHAR, member_enum_values.size());
-	auto member_varchar_data = FlatVector::GetData<string_t>(member_varchar_vector);
+	auto member_varchar_data = FlatVector::GetDataMutable<string_t>(member_varchar_vector);
 	for (idx_t i = 0; i < member_enum_values.size(); i++) {
 		auto str = member_enum_values[i];
 		member_varchar_data[i] = str.IsInlined() ? str : StringVector::AddString(member_varchar_vector, str);
@@ -394,8 +394,8 @@ struct LocalState final : LocalTableFunctionState {
 			switch (node.tag()) {
 			case 1: { // ID
 				auto id = node.get_int64();
-				FlatVector::GetData<uint8_t>(output.data[0])[index] = 0;
-				FlatVector::GetData<int64_t>(output.data[1])[index] = id;
+				FlatVector::GetDataMutable<uint8_t>(output.data[0])[index] = 0;
+				FlatVector::GetDataMutable<int64_t>(output.data[1])[index] = id;
 			} break;
 			case 2: { // Tag Keys
 				key_iter = node.get_packed_uint32();
@@ -405,11 +405,11 @@ struct LocalState final : LocalTableFunctionState {
 			} break;
 			case 8: { // Lat
 				auto lat = node.get_sint64();
-				FlatVector::GetData<double>(output.data[4])[index] = 0.000000001 * (lat_offset + (granularity * lat));
+				FlatVector::GetDataMutable<double>(output.data[4])[index] = 0.000000001 * (lat_offset + (granularity * lat));
 			} break;
 			case 9: { // Lon
 				auto lon = node.get_sint64();
-				FlatVector::GetData<double>(output.data[5])[index] = 0.000000001 * (lon_offset + (granularity * lon));
+				FlatVector::GetDataMutable<double>(output.data[5])[index] = 0.000000001 * (lon_offset + (granularity * lon));
 			} break;
 			default:
 				node.skip();
@@ -433,9 +433,9 @@ struct LocalState final : LocalTableFunctionState {
 			auto keys = key_iter.begin();
 			auto vals = val_iter.begin();
 			for (idx_t i = tag_entry.offset; i < tag_entry.offset + tag_count; i++) {
-				FlatVector::GetData<string_t>(key_vector)[i] =
+				FlatVector::GetDataMutable<string_t>(key_vector)[i] =
 				    StringVector::AddString(key_vector, string_table[*keys++]);
-				FlatVector::GetData<string_t>(value_vector)[i] =
+				FlatVector::GetDataMutable<string_t>(value_vector)[i] =
 				    StringVector::AddString(value_vector, string_table[*vals++]);
 			}
 		} else {
@@ -516,8 +516,8 @@ struct LocalState final : LocalTableFunctionState {
 			switch (way.tag()) {
 			case 1: { // ID
 				auto id = way.get_int64();
-				FlatVector::GetData<uint8_t>(output.data[0])[index] = 1;
-				FlatVector::GetData<int64_t>(output.data[1])[index] = id;
+				FlatVector::GetDataMutable<uint8_t>(output.data[0])[index] = 1;
+				FlatVector::GetDataMutable<int64_t>(output.data[1])[index] = id;
 				FlatVector::SetNull(output.data[4], index, true);
 				FlatVector::SetNull(output.data[5], index, true);
 				FlatVector::SetNull(output.data[6], index, true);
@@ -552,9 +552,9 @@ struct LocalState final : LocalTableFunctionState {
 			auto keys = key_iter.begin();
 			auto vals = val_iter.begin();
 			for (idx_t i = tag_entry.offset; i < tag_entry.offset + tag_count; i++) {
-				FlatVector::GetData<string_t>(key_vector)[i] =
+				FlatVector::GetDataMutable<string_t>(key_vector)[i] =
 				    StringVector::AddString(key_vector, string_table[*keys++]);
-				FlatVector::GetData<string_t>(value_vector)[i] =
+				FlatVector::GetDataMutable<string_t>(value_vector)[i] =
 				    StringVector::AddString(value_vector, string_table[*vals++]);
 			}
 		} else {
@@ -571,7 +571,7 @@ struct LocalState final : LocalTableFunctionState {
 			ref_entry.offset = total_refs;
 			ref_entry.length = ref_count;
 
-			auto ref_data = FlatVector::GetData<int64_t>(ref_vector);
+			auto ref_data = FlatVector::GetDataMutable<int64_t>(ref_vector);
 
 			int64_t last_ref = 0;
 			for (auto ref : ref_iter) {
@@ -598,8 +598,8 @@ struct LocalState final : LocalTableFunctionState {
 			switch (relation.tag()) {
 			case 1: { // ID
 				auto id = relation.get_int64();
-				FlatVector::GetData<uint8_t>(output.data[0])[index] = 2;
-				FlatVector::GetData<int64_t>(output.data[1])[index] = id;
+				FlatVector::GetDataMutable<uint8_t>(output.data[0])[index] = 2;
+				FlatVector::GetDataMutable<int64_t>(output.data[1])[index] = id;
 				FlatVector::SetNull(output.data[4], index, true);
 				FlatVector::SetNull(output.data[5], index, true);
 			} break;
@@ -641,9 +641,9 @@ struct LocalState final : LocalTableFunctionState {
 			auto keys = key_iter.begin();
 			auto vals = val_iter.begin();
 			for (idx_t i = tag_entry.offset; i < tag_entry.offset + tag_count; i++) {
-				FlatVector::GetData<string_t>(key_vector)[i] =
+				FlatVector::GetDataMutable<string_t>(key_vector)[i] =
 				    StringVector::AddString(key_vector, string_table[*keys++]);
-				FlatVector::GetData<string_t>(value_vector)[i] =
+				FlatVector::GetDataMutable<string_t>(value_vector)[i] =
 				    StringVector::AddString(value_vector, string_table[*vals++]);
 			}
 		} else {
@@ -668,7 +668,7 @@ struct LocalState final : LocalTableFunctionState {
 				if (role_str.empty()) {
 					FlatVector::SetNull(role_vector, i, true);
 				} else {
-					FlatVector::GetData<string_t>(role_vector)[i] = StringVector::AddString(role_vector, role_str);
+					FlatVector::GetDataMutable<string_t>(role_vector)[i] = StringVector::AddString(role_vector, role_str);
 				}
 			}
 		} else {
@@ -687,7 +687,7 @@ struct LocalState final : LocalTableFunctionState {
 			ref_entry.offset = total_refs;
 			ref_entry.length = ref_count;
 
-			auto ref_data = FlatVector::GetData<int64_t>(ref_vector);
+			auto ref_data = FlatVector::GetDataMutable<int64_t>(ref_vector);
 
 			int64_t last_ref = 0;
 			for (auto ref : ref_iter) {
@@ -710,7 +710,7 @@ struct LocalState final : LocalTableFunctionState {
 			type_entry.offset = total_types;
 			type_entry.length = type_count;
 
-			auto type_data = FlatVector::GetData<uint8_t>(type_vector);
+			auto type_data = FlatVector::GetDataMutable<uint8_t>(type_vector);
 			for (auto type : type_iter) {
 				type_data[total_types++] = (uint8_t)type;
 			}
@@ -727,10 +727,10 @@ struct LocalState final : LocalTableFunctionState {
 		auto nodes_to_write = capacity - index;
 		auto nodes_to_read = std::min(nodes_to_write, dense_node_ids.size() - dense_node_index);
 
-		auto kind_data = FlatVector::GetData<uint8_t>(output.data[0]);
-		auto id_data = FlatVector::GetData<int64_t>(output.data[1]);
-		auto lat_data = FlatVector::GetData<double>(output.data[4]);
-		auto lon_data = FlatVector::GetData<double>(output.data[5]);
+		auto kind_data = FlatVector::GetDataMutable<uint8_t>(output.data[0]);
+		auto id_data = FlatVector::GetDataMutable<int64_t>(output.data[1]);
+		auto lat_data = FlatVector::GetDataMutable<double>(output.data[4]);
+		auto lon_data = FlatVector::GetDataMutable<double>(output.data[5]);
 
 		for (idx_t i = 0; i < nodes_to_read; i++) {
 			auto id = dense_node_ids[dense_node_index];
@@ -766,9 +766,9 @@ struct LocalState final : LocalTableFunctionState {
 						auto key_id = dense_node_tags[t];
 						auto val_id = dense_node_tags[t + 1];
 
-						FlatVector::GetData<string_t>(key_vector)[r] =
+						FlatVector::GetDataMutable<string_t>(key_vector)[r] =
 						    StringVector::AddString(key_vector, string_table[key_id]);
-						FlatVector::GetData<string_t>(value_vector)[r] =
+						FlatVector::GetDataMutable<string_t>(value_vector)[r] =
 						    StringVector::AddString(value_vector, string_table[val_id]);
 
 						t += 2;

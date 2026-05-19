@@ -75,7 +75,7 @@ LogicalType GeoTypes::POLYGON_3D() {
 
 LogicalType GeoTypes::CreateEnumType(const string &name, const vector<string> &members) {
 	auto varchar_vector = Vector(LogicalType::VARCHAR, members.size());
-	auto varchar_data = FlatVector::GetData<string_t>(varchar_vector);
+	auto varchar_data = FlatVector::GetDataMutable<string_t>(varchar_vector);
 	for (idx_t i = 0; i < members.size(); i++) {
 		auto str = string_t(members[i]);
 		varchar_data[i] = str.IsInlined() ? str : StringVector::AddString(varchar_vector, str);

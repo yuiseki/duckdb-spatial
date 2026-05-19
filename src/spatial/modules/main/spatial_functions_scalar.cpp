@@ -179,7 +179,7 @@ struct ST_Affine {
 			sgl::ops::affine_transform(alloc, geom, matrix);
 
 			// Serialize the result
-			FlatVector::GetData<string_t>(result)[out_idx] = lstate.Serialize(result, geom);
+			FlatVector::GetDataMutable<string_t>(result)[out_idx] = lstate.Serialize(result, geom);
 		}
 
 		if (row_count == 1) {
@@ -4801,7 +4801,7 @@ struct ST_GeomFromWKB {
 
 		auto &inner = ListVector::GetEntry(result);
 		const auto lines = ListVector::GetData(result);
-		const auto wkb_data = FlatVector::GetData<string_t>(wkb_blobs);
+		const auto wkb_data = FlatVector::GetDataMutable<string_t>(wkb_blobs);
 
 		idx_t total_size = 0;
 
@@ -4868,7 +4868,7 @@ struct ST_GeomFromWKB {
 		// Set up input data
 		auto &wkb_blobs = args.data[0];
 		wkb_blobs.Flatten(count);
-		auto wkb_data = FlatVector::GetData<string_t>(wkb_blobs);
+		auto wkb_data = FlatVector::GetDataMutable<string_t>(wkb_blobs);
 
 		// Set up output data
 		auto &ring_vec = ListVector::GetEntry(result);
@@ -5589,7 +5589,7 @@ struct ST_LocateBetween {
 		const auto upper_data = UnifiedVectorFormat::GetData<double>(upper_format);
 		const auto offset_data = UnifiedVectorFormat::GetData<double>(offset_format);
 
-		const auto result_data = FlatVector::GetData<string_t>(result);
+		const auto result_data = FlatVector::GetDataMutable<string_t>(result);
 
 		for (idx_t out_idx = 0; out_idx < row_count; out_idx++) {
 			const auto geom_idx = geom_format.sel->get_index(out_idx);
@@ -6213,7 +6213,7 @@ struct ST_InteriorRingN {
 		// To inspect n per-row, extract unified format for n (it might be constant)
 		UnifiedVectorFormat n_format;
 		n_vec.ToUnifiedFormat(count, n_format);
-		auto n_data = FlatVector::GetData<int64_t>(n_vec);
+		auto n_data = FlatVector::GetDataMutable<int64_t>(n_vec);
 
 		for (idx_t i = 0; i < count; i++) {
 			auto row_idx = poly_format.sel->get_index(i);

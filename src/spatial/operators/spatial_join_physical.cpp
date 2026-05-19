@@ -305,7 +305,7 @@ public:
 		}
 
 		idx_t count = 0;
-		const auto ptr = FlatVector::GetData<data_ptr_t>(state.matches);
+		const auto ptr = FlatVector::GetDataMutable<data_ptr_t>(state.matches);
 		Lookup(state, [&](const data_ptr_t &row) {
 			ptr[count++] = row;
 			return count == STANDARD_VECTOR_SIZE;
@@ -879,7 +879,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 	auto &lstate = lstate_p.Cast<SpatialJoinLocalOperatorState>();
 
 	idx_t output_index = 0;
-	idx_t output_count = chunk.GetCapacity();
+	idx_t output_count = STANDARD_VECTOR_SIZE;
 
 	while (true) {
 		switch (lstate.state) {
@@ -1042,7 +1042,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 
 			// Also collect the build side row pointers (if we have a match column)
 			if (IsRightOuterJoin(join_type)) {
-				const auto ptrs = FlatVector::GetData<data_ptr_t>(row_pointers);
+				const auto ptrs = FlatVector::GetDataMutable<data_ptr_t>(row_pointers);
 				for (idx_t i = 0; i < scan_count; i++) {
 					lstate.build_side_pointers[output_index + i] = ptrs[i];
 				}
@@ -1257,7 +1257,7 @@ SourceResultType PhysicalSpatialJoin::GetDataInternal(ExecutionContext &context,
 		return SourceResultType::FINISHED;
 	}
 
-	const auto matches = FlatVector::GetData<bool>(lstate.scan_chunk.data.back());
+	const auto matches = FlatVector::GetDataMutable<bool>(lstate.scan_chunk.data.back());
 
 	idx_t result_count = 0;
 	for (idx_t i = 0; i < lstate.scan_chunk.size(); i++) {

@@ -136,7 +136,7 @@ unique_ptr<IndexScanState> RTreeIndex::InitializeScan(const RTreeBounds &query) 
 
 idx_t RTreeIndex::Scan(IndexScanState &state, Vector &result) const {
 	auto &sstate = state.Cast<RTreeIndexScanState>();
-	const auto row_ids = FlatVector::GetData<row_t>(result);
+	const auto row_ids = FlatVector::GetDataMutable<row_t>(result);
 
 	idx_t output_idx = 0;
 	sstate.scanner.Scan(*tree, [&](const RTreeEntry &entry, const idx_t &) {

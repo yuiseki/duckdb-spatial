@@ -1154,7 +1154,7 @@ struct ST_AsMVT {
 		source_vec.ToUnifiedFormat(count, source_format);
 
 		const auto source_ptr = UnifiedVectorFormat::GetData<State *>(source_format);
-		const auto target_ptr = FlatVector::GetData<State *>(target_vec);
+		const auto target_ptr = FlatVector::GetDataMutable<State *>(target_vec);
 
 		for (idx_t row_idx = 0; row_idx < count; row_idx++) {
 			auto &source = *source_ptr[source_format.sel->get_index(row_idx)];
@@ -1193,7 +1193,7 @@ struct ST_AsMVT {
 			state.layer.Finalize(bdata.extent, bdata.tag_names, bdata.layer_name, buffer, tag_dict);
 
 			// Now we have the layer buffer, we can write it to the result vector
-			const auto result_data = FlatVector::GetData<string_t>(result);
+			const auto result_data = FlatVector::GetDataMutable<string_t>(result);
 			result_data[out_idx] = StringVector::AddStringOrBlob(result, buffer.data(), buffer.size());
 		}
 	}
