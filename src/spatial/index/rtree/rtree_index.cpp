@@ -159,7 +159,7 @@ idx_t RTreeIndex::Scan(IndexScanState &state, Vector &result) const {
 	return output_idx;
 }
 
-void RTreeIndex::CommitDrop(IndexLock &index_lock) {
+void RTreeIndex::ResetStorage(IndexLock &index_lock) {
 	// TODO: Maybe we can drop these much earlier?
 	tree->Reset();
 }
