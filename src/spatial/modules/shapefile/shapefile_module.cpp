@@ -1003,17 +1003,17 @@ struct Shapefile_Meta {
 		auto &fs = FileSystem::GetFileSystem(context);
 
 		auto &file_name_vector = output.data[0];
-		auto file_name_data = FlatVector::GetData<string_t>(file_name_vector);
+		auto file_name_data = FlatVector::GetDataMutable<string_t>(file_name_vector);
 		auto &shape_type_vector = output.data[1];
-		auto shape_type_data = FlatVector::GetData<uint8_t>(shape_type_vector);
+		auto shape_type_data = FlatVector::GetDataMutable<uint8_t>(shape_type_vector);
 		auto &bounds_vector = output.data[2];
 		auto &bounds_vector_children = StructVector::GetEntries(bounds_vector);
-		auto minx_data = FlatVector::GetData<double>(bounds_vector_children[0]);
-		auto miny_data = FlatVector::GetData<double>(bounds_vector_children[1]);
-		auto maxx_data = FlatVector::GetData<double>(bounds_vector_children[2]);
-		auto maxy_data = FlatVector::GetData<double>(bounds_vector_children[3]);
+		auto minx_data = FlatVector::GetDataMutable<double>(bounds_vector_children[0]);
+		auto miny_data = FlatVector::GetDataMutable<double>(bounds_vector_children[1]);
+		auto maxx_data = FlatVector::GetDataMutable<double>(bounds_vector_children[2]);
+		auto maxy_data = FlatVector::GetDataMutable<double>(bounds_vector_children[3]);
 		auto &record_count_vector = output.data[3];
-		auto record_count_data = FlatVector::GetData<int32_t>(record_count_vector);
+		auto record_count_data = FlatVector::GetDataMutable<int32_t>(record_count_vector);
 
 		auto output_count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, bind_data.files.size() - state.current_file_idx);
 

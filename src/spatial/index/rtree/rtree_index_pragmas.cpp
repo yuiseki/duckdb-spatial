@@ -204,13 +204,13 @@ static void RTreeIndexDumpExecute(ClientContext &context, TableFunctionInput &da
 
 	idx_t output_idx = 0;
 
-	const auto level_data = FlatVector::GetData<int32_t>(output.data[0]);
+	auto level_data = FlatVector::GetDataMutable<int32_t>(output.data[0]);
 	auto &bounds_vectors = StructVector::GetEntries(output.data[1]);
-	const auto xmin_data = FlatVector::GetData<float>(bounds_vectors[0]);
-	const auto ymin_data = FlatVector::GetData<float>(bounds_vectors[1]);
-	const auto xmax_data = FlatVector::GetData<float>(bounds_vectors[2]);
-	const auto ymax_data = FlatVector::GetData<float>(bounds_vectors[3]);
-	const auto rowid_data = FlatVector::GetData<row_t>(output.data[2]);
+	auto xmin_data = FlatVector::GetDataMutable<float>(bounds_vectors[0]);
+	auto ymin_data = FlatVector::GetDataMutable<float>(bounds_vectors[1]);
+	auto xmax_data = FlatVector::GetDataMutable<float>(bounds_vectors[2]);
+	auto ymax_data = FlatVector::GetDataMutable<float>(bounds_vectors[3]);
+	auto rowid_data = FlatVector::GetDataMutable<row_t>(output.data[2]);
 
 	const auto &tree = *state.index.tree;
 

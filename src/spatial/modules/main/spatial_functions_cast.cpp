@@ -456,11 +456,11 @@ struct LinestringCasts {
 			auto &coord_vec = ListVector::GetEntry(result);
 			auto &coord_vec_children = StructVector::GetEntries(coord_vec);
 
-			const auto x_data = FlatVector::GetData<double>(coord_vec_children[0]);
-			const auto y_data = FlatVector::GetData<double>(coord_vec_children[1]);
+			auto x_data = FlatVector::GetDataMutable<double>(coord_vec_children[0]);
+			auto y_data = FlatVector::GetDataMutable<double>(coord_vec_children[1]);
 
 			if (HAS_Z) {
-				const auto z_data = FlatVector::GetData<double>(coord_vec_children[2]);
+				auto z_data = FlatVector::GetDataMutable<double>(coord_vec_children[2]);
 				for (idx_t i = 0; i < line_size; i++) {
 					const auto vertex = line.get_vertex_xyzm(i);
 					x_data[entry.offset + i] = vertex.x;
@@ -516,8 +516,8 @@ struct LinestringCasts {
 			auto &coord_dst = ListVector::GetEntry(result);
 			auto &coord_dst_children = StructVector::GetEntries(coord_dst);
 
-			const auto x_dst = FlatVector::GetData<double>(coord_dst_children[0]);
-			const auto y_dst = FlatVector::GetData<double>(coord_dst_children[1]);
+			auto x_dst = FlatVector::GetDataMutable<double>(coord_dst_children[0]);
+			auto y_dst = FlatVector::GetDataMutable<double>(coord_dst_children[1]);
 
 			for (idx_t i = 0; i < line.length; i++) {
 				x_dst[entry.offset + i] = x_src[line.offset + i];
@@ -689,13 +689,13 @@ struct PolygonCasts {
 					const auto ring_entries = ListVector::GetData(ring_vec);
 					auto &coord_vec = ListVector::GetEntry(ring_vec);
 					auto &coord_vec_children = StructVector::GetEntries(coord_vec);
-					const auto x_data = FlatVector::GetData<double>(coord_vec_children[0]);
-					const auto y_data = FlatVector::GetData<double>(coord_vec_children[1]);
+					auto x_data = FlatVector::GetDataMutable<double>(coord_vec_children[0]);
+					auto y_data = FlatVector::GetDataMutable<double>(coord_vec_children[1]);
 
 					ring_entries[total_rings + ring_idx] = ring_entry;
 
 					if (HAS_Z) {
-						const auto z_data = FlatVector::GetData<double>(coord_vec_children[2]);
+						auto z_data = FlatVector::GetDataMutable<double>(coord_vec_children[2]);
 						for (idx_t j = 0; j < ring_size; j++) {
 							const auto vertext = head->get_vertex_xyzm(j);
 							x_data[ring_entry.offset + j] = vertext.x;
@@ -770,8 +770,8 @@ struct PolygonCasts {
 				const auto ring_entries_dst = ListVector::GetData(ring_dst);
 				auto &coord_dst = ListVector::GetEntry(ring_dst);
 				auto &coord_dst_children = StructVector::GetEntries(coord_dst);
-				const auto x_dst = FlatVector::GetData<double>(coord_dst_children[0]);
-				const auto y_dst = FlatVector::GetData<double>(coord_dst_children[1]);
+				auto x_dst = FlatVector::GetDataMutable<double>(coord_dst_children[0]);
+				auto y_dst = FlatVector::GetDataMutable<double>(coord_dst_children[1]);
 
 				ring_entries_dst[total_rings + i] = ring_entry_dst;
 
