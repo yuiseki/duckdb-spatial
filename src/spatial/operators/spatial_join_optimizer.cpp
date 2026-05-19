@@ -71,9 +71,9 @@ static unique_ptr<Expression> GetInversePredicate(ClientContext &context, unique
 	auto &catalog = Catalog::GetSystemCatalog(context);
 	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, it->second);
 	auto inverse_func =
-	    entry.functions.GetFunctionByArguments(context, {func.children[0]->return_type, func.children[1]->return_type});
+	    entry.functions.GetFunctionByArguments(context, {func.children[0]->GetReturnType(), func.children[1]->GetReturnType()});
 
-	return make_uniq_base<Expression, BoundFunctionExpression>(func.return_type, inverse_func, std::move(func.children),
+	return make_uniq_base<Expression, BoundFunctionExpression>(func.GetReturnType(), inverse_func, std::move(func.children),
 	                                                           nullptr, func.is_operator);
 }
 
@@ -87,7 +87,7 @@ static bool IsSpatialJoinPredicate(const unique_ptr<Expression> &expr, const uno
 	}
 
 	// Check if the expression is a spatial predicate
-	if (expr->type != ExpressionType::BOUND_FUNCTION) {
+	if (expr->GetExpressionType() != ExpressionType::BOUND_FUNCTION) {
 		return false;
 	}
 
@@ -99,7 +99,7 @@ static bool IsSpatialJoinPredicate(const unique_ptr<Expression> &expr, const uno
 	}
 
 	// The function must return a boolean
-	if (func.return_type != LogicalType::BOOLEAN) {
+	if (func.GetReturnType() != LogicalType::BOOLEAN) {
 		return false;
 	}
 

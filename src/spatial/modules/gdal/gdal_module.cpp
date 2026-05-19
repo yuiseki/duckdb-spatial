@@ -739,7 +739,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		if (expr->GetExpressionType() != ExpressionType::BOUND_FUNCTION) {
 			continue;
 		}
-		if (expr->return_type != LogicalType::BOOLEAN) {
+		if (expr->GetReturnType() != LogicalType::BOOLEAN) {
 			continue;
 		}
 		const auto &func = expr->Cast<BoundFunctionExpression>();
@@ -747,8 +747,8 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 			continue;
 		}
 
-		if (func.children[0]->return_type.id() != LogicalTypeId::GEOMETRY ||
-		    func.children[1]->return_type.id() != LogicalTypeId::GEOMETRY) {
+		if (func.children[0]->GetReturnType().id() != LogicalTypeId::GEOMETRY ||
+		    func.children[1]->GetReturnType().id() != LogicalTypeId::GEOMETRY) {
 			continue;
 		}
 
@@ -821,7 +821,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 			// Constant is NULL
 			continue;
 		}
-		if (geometry_expr->return_type.id() != LogicalTypeId::GEOMETRY) {
+		if (geometry_expr->GetReturnType().id() != LogicalTypeId::GEOMETRY) {
 			// Not the geometry column
 			continue;
 		}

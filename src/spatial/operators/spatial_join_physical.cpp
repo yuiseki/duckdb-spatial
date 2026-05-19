@@ -444,7 +444,7 @@ PhysicalSpatialJoin::PhysicalSpatialJoin(PhysicalPlan &physical_plan, LogicalOpe
 		conditions_in_layout.emplace(build_side_key->Cast<BoundReferenceExpression>().index, 0); // TODO: i, not 0
 	}
 	// TODO Add rest too
-	build_side_key_types.push_back(build_side_key->return_type);
+	build_side_key_types.push_back(build_side_key->GetReturnType());
 
 	const auto &build_side_input_types = children[1].get().types;
 	auto right_projection_map_copy = FillProjectionMap(children[1].get(), lop.right_projection_map);
@@ -543,7 +543,7 @@ public:
 
 		build_side_payload_chunk.InitializeEmpty(op.build_side_payload_types);
 
-		auto &geom_type = op.build_side_key->return_type;
+		auto &geom_type = op.build_side_key->GetReturnType();
 
 		auto &catalog = Catalog::GetSystemCatalog(context);
 		auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_IsEmpty");
@@ -839,8 +839,8 @@ unique_ptr<OperatorState> PhysicalSpatialJoin::GetOperatorState(ExecutionContext
 	// Create a match expression using the condition, that will be used to filter the results
 	lstate->match_expr = condition->Copy();
 	auto &func_expr = lstate->match_expr->Cast<BoundFunctionExpression>();
-	func_expr.children[0] = make_uniq<BoundReferenceExpression>(probe_side_key->return_type, 0);
-	func_expr.children[1] = make_uniq<BoundReferenceExpression>(build_side_key->return_type, 1);
+	func_expr.children[0] = make_uniq<BoundReferenceExpression>(probe_side_key->GetReturnType(), 0);
+	func_expr.children[1] = make_uniq<BoundReferenceExpression>(build_side_key->GetReturnType(), 1);
 
 	lstate->join_match_executor.AddExpression(*lstate->match_expr);
 
@@ -848,15 +848,15 @@ unique_ptr<OperatorState> PhysicalSpatialJoin::GetOperatorState(ExecutionContext
 	lstate->join_probe_executor.AddExpression(*probe_side_key);
 
 	// Make bbox expression for probe side
-	lstate->bound_expr = GetBBOXExpression(context.client, probe_side_key->return_type);
+	lstate->bound_expr = GetBBOXExpression(context.client, probe_side_key->GetReturnType());
 	lstate->bbox_probe_executor.AddExpression(*lstate->bound_expr);
 
 	// The chunks we need for the join
 	lstate->probe_side_row_chunk.Initialize(context.client, probe_side_output_types);
-	lstate->probe_side_key_chunk.Initialize(context.client, {probe_side_key->return_type});
-	lstate->probe_side_box_chunk.Initialize(context.client, {lstate->bound_expr->return_type});
-	lstate->build_side_key_chunk.Initialize(context.client, {build_side_key->return_type});
-	lstate->match_pred_arg_chunk.Initialize(context.client, {probe_side_key->return_type, build_side_key->return_type});
+	lstate->probe_side_key_chunk.Initialize(context.client, {probe_side_key->GetReturnType()});
+	lstate->probe_side_box_chunk.Initialize(context.client, {lstate->bound_expr->GetReturnType()});
+	lstate->build_side_key_chunk.Initialize(context.client, {build_side_key->GetReturnType()});
+	lstate->match_pred_arg_chunk.Initialize(context.client, {probe_side_key->GetReturnType(), build_side_key->GetReturnType()});
 
 	return std::move(lstate);
 }

@@ -96,7 +96,7 @@ static unique_ptr<FunctionData> PropagateTypesInternal(ClientContext &context, S
 
 		auto has_crs = false;
 
-		TypeVisitor::Contains(arg->return_type, [&](const LogicalType &type) {
+		TypeVisitor::Contains(arg->GetReturnType(), [&](const LogicalType &type) {
 			if (type.id() == LogicalTypeId::GEOMETRY && GeoType::HasCRS(type)) {
 				has_crs = true;
 				if (!found_crs) {
@@ -106,7 +106,7 @@ static unique_ptr<FunctionData> PropagateTypesInternal(ClientContext &context, S
 					auto &type_crs = GeoType::GetCRS(type);
 					if (!crs.Equals(type_crs)) {
 						throw BinderException(
-						    arg->query_location,
+						    arg->GetQueryLocation(),
 						    "Cannot call function '%s' with geometries of different coordinate reference systems "
 						    "(CRS).\n"
 						    "First geometry type is in '%s' which is not compatible with '%s'.\n"
@@ -124,7 +124,7 @@ static unique_ptr<FunctionData> PropagateTypesInternal(ClientContext &context, S
 
 		if (has_crs) {
 			// Override the type so that we set the CRS
-			bound_function.GetArguments()[arg_idx] = arg->return_type;
+			bound_function.GetArguments()[arg_idx] = arg->GetReturnType();
 		}
 	}
 

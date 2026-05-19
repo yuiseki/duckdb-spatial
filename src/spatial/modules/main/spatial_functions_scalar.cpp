@@ -4600,7 +4600,7 @@ struct ST_GeomFromText {
 		if (arguments.empty()) {
 			throw InvalidInputException("ST_GeomFromText requires at least one argument");
 		}
-		const auto &input_type = arguments[0]->return_type;
+		const auto &input_type = arguments[0]->GetReturnType();
 		if (input_type.id() != LogicalTypeId::VARCHAR) {
 			throw InvalidInputException("ST_GeomFromText requires a string argument");
 		}
@@ -4615,8 +4615,8 @@ struct ST_GeomFromText {
 				throw InvalidInputException(
 				    "Non-constant arguments are not supported in ST_GeomFromText optional arguments");
 			}
-			if (arg->alias == "ignore_invalid") {
-				if (arg->return_type.id() != LogicalTypeId::BOOLEAN) {
+			if (arg->GetAlias() == "ignore_invalid") {
+				if (arg->GetReturnType().id() != LogicalTypeId::BOOLEAN) {
 					throw InvalidInputException("ST_GeomFromText optional argument 'ignore_invalid' must be a boolean");
 				}
 				ignore_invalid = BooleanValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));

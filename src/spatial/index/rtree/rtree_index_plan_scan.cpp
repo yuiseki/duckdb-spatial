@@ -40,7 +40,7 @@ public:
 	}
 
 	static void RewriteIndexExpression(Index &index, LogicalGet &get, Expression &expr, bool &rewrite_possible) {
-		if (expr.type == ExpressionType::BOUND_COLUMN_REF) {
+		if (expr.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
 			auto &bound_colref = expr.Cast<BoundColumnRefExpression>();
 			// bound column ref: rewrite to fit in the current set of bound column ids
 			bound_colref.binding.table_index = get.table_index;
@@ -63,7 +63,7 @@ public:
 
 	static void RewriteIndexExpressionForFilter(Index &index, LogicalGet &get, unique_ptr<Expression> &expr,
 	                                            const ColumnIndex &filter_idx, bool &rewrite_possible) {
-		if (expr->type == ExpressionType::BOUND_COLUMN_REF) {
+		if (expr->GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
 			auto &bound_colref = expr->Cast<BoundColumnRefExpression>();
 
 			auto &indexed_columns = index.GetColumnIds();
@@ -84,7 +84,7 @@ public:
 			}
 
 			// this column matches the index column - turn it into a BoundReference
-			expr = make_uniq<BoundReferenceExpression>(bound_colref.return_type, 0ULL);
+			expr = make_uniq<BoundReferenceExpression>(bound_colref.GetReturnType(), 0ULL);
 			return;
 		}
 		ExpressionIterator::EnumerateChildren(*expr, [&](unique_ptr<Expression> &child) {

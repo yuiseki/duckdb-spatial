@@ -151,7 +151,7 @@ PhysicalOperator &RTreeIndex::CreatePlan(PlanIndexInput &input) {
 	auto &expr = op.unbound_expressions[0];
 
 	// Validate that we have the right type of expression (float array)
-	if (expr->return_type != LogicalType::GEOMETRY()) {
+	if (expr->GetReturnType() != LogicalType::GEOMETRY()) {
 		throw BinderException("RTree indexes can only be created over GEOMETRY columns.");
 	}
 
@@ -167,7 +167,7 @@ PhysicalOperator &RTreeIndex::CreatePlan(PlanIndexInput &input) {
 
 	// Add the geometry expression to the select list
 	auto geom_expr = op.expressions[0]->Copy();
-	new_column_types.push_back(geom_expr->return_type);
+	new_column_types.push_back(geom_expr->GetReturnType());
 	select_list.push_back(std::move(geom_expr));
 
 	// Add the row ID to the select list
@@ -218,7 +218,7 @@ PhysicalOperator &LogicalCreateRTreeIndex::CreatePlan(ClientContext &context, Ph
 	auto &expr = op.unbound_expressions[0];
 
 	// Validate that we have the right type of expression (float array)
-	if (expr->return_type != LogicalType::GEOMETRY()) {
+	if (expr->GetReturnType() != LogicalType::GEOMETRY()) {
 		throw BinderException("RTree indexes can only be created over GEOMETRY columns.");
 	}
 
@@ -244,7 +244,7 @@ PhysicalOperator &LogicalCreateRTreeIndex::CreatePlan(ClientContext &context, Ph
 
 	// Add the geometry expression to the select list
 	auto geom_expr = op.expressions[0]->Copy();
-	new_column_types.push_back(geom_expr->return_type);
+	new_column_types.push_back(geom_expr->GetReturnType());
 	select_list.push_back(std::move(geom_expr));
 
 	// Add the row ID to the select list

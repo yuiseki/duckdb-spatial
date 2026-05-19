@@ -833,7 +833,7 @@ struct ST_AsMVT {
 		auto result = make_uniq<BindData>();
 
 		// Figure part of the row is the geometry column
-		const auto &row_type = arguments[0]->return_type;
+		const auto &row_type = arguments[0]->GetReturnType();
 		if (row_type.id() != LogicalTypeId::STRUCT) {
 			throw InvalidInputException("ST_AsMVT: first argument must be a STRUCT (i.e. a row type)");
 		}

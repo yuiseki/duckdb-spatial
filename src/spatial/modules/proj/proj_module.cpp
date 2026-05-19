@@ -251,32 +251,32 @@ struct ST_Transform {
 
 		// Get CRS from source geometry
 		const auto &geo_arg = args[0];
-		if (!GeoType::HasCRS(geo_arg->return_type)) {
-			throw BinderException(geo_arg->query_location, "Source geometry must have a coordinate reference system");
+		if (!GeoType::HasCRS(geo_arg->GetReturnType())) {
+			throw BinderException(geo_arg->GetQueryLocation(), "Source geometry must have a coordinate reference system");
 		}
-		result->source_crs = GeoType::GetCRS(geo_arg->return_type).GetDefinition();
+		result->source_crs = GeoType::GetCRS(geo_arg->GetReturnType()).GetDefinition();
 		if (result->source_crs.empty()) {
-			throw BinderException(geo_arg->query_location, "Source geometry must have a coordinate reference system");
+			throw BinderException(geo_arg->GetQueryLocation(), "Source geometry must have a coordinate reference system");
 		}
 
 		// Constant-fold target_crs
 		const auto &crs_arg = args[1];
 		if (crs_arg->HasParameter()) {
-			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter must be a constant");
+			throw BinderException(crs_arg->GetQueryLocation(), "The 'target_crs' parameter must be a constant");
 		}
 		if (!crs_arg->IsFoldable()) {
-			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter must be a constant");
+			throw BinderException(crs_arg->GetQueryLocation(), "The 'target_crs' parameter must be a constant");
 		}
-		if (crs_arg->return_type.id() != LogicalTypeId::VARCHAR) {
-			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter must be a string");
+		if (crs_arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
+			throw BinderException(crs_arg->GetQueryLocation(), "The 'target_crs' parameter must be a string");
 		}
 		result->target_crs = StringValue::Get(ExpressionExecutor::EvaluateScalar(ctx, *crs_arg));
 		if (result->target_crs.empty()) {
-			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter cannot be empty");
+			throw BinderException(crs_arg->GetQueryLocation(), "The 'target_crs' parameter cannot be empty");
 		}
 		const auto result_crs = CoordinateReferenceSystem::TryIdentify(ctx, result->target_crs);
 		if (!result_crs) {
-			throw BinderException(crs_arg->query_location,
+			throw BinderException(crs_arg->GetQueryLocation(),
 			                      "The 'target_crs' parameter '%s' is not a recognized coordinate reference system",
 			                      result->target_crs);
 		}
@@ -286,13 +286,13 @@ struct ST_Transform {
 		if (args.size() == 3) {
 			const auto &xy_arg = args[2];
 			if (xy_arg->HasParameter()) {
-				throw BinderException(xy_arg->query_location, "The 'always_xy' parameter must be a constant");
+				throw BinderException(xy_arg->GetQueryLocation(), "The 'always_xy' parameter must be a constant");
 			}
 			if (!xy_arg->IsFoldable()) {
-				throw BinderException(xy_arg->query_location, "The 'always_xy' parameter must be a constant");
+				throw BinderException(xy_arg->GetQueryLocation(), "The 'always_xy' parameter must be a constant");
 			}
-			if (xy_arg->return_type.id() != LogicalTypeId::BOOLEAN) {
-				throw BinderException(xy_arg->query_location, "The 'always_xy' parameter must be a boolean");
+			if (xy_arg->GetReturnType().id() != LogicalTypeId::BOOLEAN) {
+				throw BinderException(xy_arg->GetQueryLocation(), "The 'always_xy' parameter must be a boolean");
 			}
 			result->normalize = BooleanValue::Get(ExpressionExecutor::EvaluateScalar(ctx, *xy_arg));
 			explicit_normalize = true;
@@ -301,7 +301,7 @@ struct ST_Transform {
 		}
 
 		// Set return types
-		func.GetArguments()[0] = geo_arg->return_type;
+		func.GetArguments()[0] = geo_arg->GetReturnType();
 		func.SetReturnType(LogicalType::GEOMETRY(*result_crs));
 
 		// Check if we need to warn for this

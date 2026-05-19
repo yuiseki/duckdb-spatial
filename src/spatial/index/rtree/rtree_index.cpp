@@ -109,7 +109,7 @@ RTreeIndex::RTreeIndex(const string &name, IndexConstraintType index_constraint_
 	}
 
 	// Construct the key expression executor
-	auto &source_type = unbound_expressions[0]->return_type;
+	auto &source_type = unbound_expressions[0]->GetReturnType();
 	auto &catalog = Catalog::GetSystemCatalog(context);
 	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_Extent_Approx");
 	auto func = entry.functions.GetFunctionByArguments(context, {source_type});
