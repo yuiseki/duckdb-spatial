@@ -17,7 +17,7 @@ struct WKBTypes {
 	}
 
 	static bool ToWKBCast(Vector &source, Vector &result, idx_t count, CastParameters &) {
-		Geometry::ToBinary(source, result, count);
+		Geometry::ToBinary(source, result);
 		return true;
 	}
 

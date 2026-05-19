@@ -1005,7 +1005,7 @@ struct ST_AsWKB {
 	// GEOMETRY
 	//------------------------------------------------------------------------------------------------------------------
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		return Geometry::ToBinary(args.data[0], result, args.size());
+		return Geometry::ToBinary(args.data[0], result);
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -1276,7 +1276,7 @@ struct ST_AsSVG {
 		vector<char> buffer;
 
 		TernaryExecutor::Execute<string_t, bool, int32_t, string_t>(
-		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    args.data[0], args.data[1], args.data[2], result,
 		    [&](const string_t &blob, const bool rel, const int32_t max_digits) {
 			    // Clear buffer
 			    buffer.clear();
@@ -2687,7 +2687,7 @@ struct ST_DistanceWithin {
 			auto &dst_vec = args.data[2];
 
 			TernaryExecutor::Execute<string_t, string_t, double, bool>(
-			    lhs_vec, rhs_vec, dst_vec, result, count,
+			    lhs_vec, rhs_vec, dst_vec, result,
 			    [&](const string_t &lhs_blob, const string_t &rhs_blob, double distance) {
 				    sgl::prepared_geometry lhs_geom;
 				    sgl::prepared_geometry rhs_geom;
@@ -3003,7 +3003,7 @@ struct ST_Expand {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		BinaryExecutor::Execute<string_t, double, string_t>(
-		    args.data[0], args.data[1], result, args.size(), [&](const string_t &blob, double distance) {
+		    args.data[0], args.data[1], result, [&](const string_t &blob, double distance) {
 			    sgl::geometry geom;
 			    lstate.Deserialize(blob, geom);
 			    auto bbox = sgl::extent_xy::smallest();
@@ -3763,7 +3763,7 @@ struct ST_ForceBase {
 			auto &m_values = args.data[2];
 
 			TernaryExecutor::Execute<string_t, double, double, string_t>(
-			    input, z_values, m_values, result, count, [&](const string_t &blob, double z, double m) {
+			    input, z_values, m_values, result, [&](const string_t &blob, double z, double m) {
 				    sgl::geometry geom;
 				    lstate.Deserialize(blob, geom);
 				    sgl::ops::force_zm(alloc, geom, true, true, z, m);
@@ -3928,7 +3928,7 @@ struct ST_GeometryType {
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
-		UnaryExecutor::Execute<string_t, uint8_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
+		UnaryExecutor::Execute<string_t, uint8_t>(args.data[0], result, [&](const string_t &blob) {
 			// TODO: Peek dont deserialize
 
 			sgl::geometry geom;
@@ -5242,7 +5242,7 @@ struct ST_LineInterpolatePoints {
 		auto &alloc = lstate.GetAllocator();
 
 		TernaryExecutor::Execute<string_t, double, bool, string_t>(
-		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    args.data[0], args.data[1], args.data[2], result,
 		    [&](const string_t &blob, const double fraction, const bool repeat) {
 			    sgl::geometry geom;
 			    lstate.Deserialize(blob, geom);
@@ -5394,7 +5394,7 @@ struct ST_LineSubstring {
 		auto &alloc = lstate.GetAllocator();
 
 		TernaryExecutor::Execute<string_t, double, double, string_t>(
-		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    args.data[0], args.data[1], args.data[2], result,
 		    [&](const string_t &blob, const double start_fraction, const double end_fraction) {
 			    sgl::geometry geom;
 			    lstate.Deserialize(blob, geom);
@@ -5470,7 +5470,7 @@ struct ST_LocateAlong {
 		auto &alloc = lstate.GetAllocator();
 
 		TernaryExecutor::Execute<string_t, double, double, string_t>(
-		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    args.data[0], args.data[1], args.data[2], result,
 		    [&](const string_t &blob, const double measure, const double offset) {
 			    // Reset after each execution, because this can be quite memory hungry
 			    lstate.GetArena().Reset();
@@ -8359,7 +8359,7 @@ struct ST_QuadKey {
 		auto &lev_in = args.data[2];
 
 		TernaryExecutor::Execute<double, double, int32_t, string_t>(
-		    lon_in, lat_in, lev_in, result, args.size(), [&](const double lon, const double lat, const int32_t level) {
+		    lon_in, lat_in, lev_in, result, [&](const double lon, const double lat, const int32_t level) {
 			    if (level < 1 || level > 23) {
 				    throw InvalidInputException("ST_QuadKey: Level must be between 1 and 23");
 			    }

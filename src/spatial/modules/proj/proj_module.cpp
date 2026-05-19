@@ -470,7 +470,7 @@ struct ST_Transform {
 		const auto &info = func_expr.bind_info->Cast<BindData>();
 
 		TernaryExecutor::Execute<string_t, string_t, string_t, string_t>(
-		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    args.data[0], args.data[1], args.data[2], result,
 		    [&](const string_t &blob, const string_t &source, const string_t &target) {
 			    const auto source_str = source.GetString();
 			    const auto target_str = target.GetString();

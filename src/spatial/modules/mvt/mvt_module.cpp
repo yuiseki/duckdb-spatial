@@ -74,7 +74,7 @@ struct ST_TileEnvelope {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		TernaryExecutor::Execute<int32_t, int32_t, int32_t, string_t>(
-		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    args.data[0], args.data[1], args.data[2], result,
 		    [&](int32_t tile_zoom, int32_t tile_x, int32_t tile_y) {
 			    validate_tile_zoom_argument(tile_zoom);
 			    uint32_t zoom_extent = 1u << tile_zoom;

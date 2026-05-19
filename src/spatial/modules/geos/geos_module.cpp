@@ -524,7 +524,7 @@ struct ST_Buffer {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		TernaryExecutor::Execute<string_t, double, int32_t, string_t>(
-		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    args.data[0], args.data[1], args.data[2], result,
 		    [&](const string_t &blob, double radius, int32_t segments) {
 			    const auto geom = lstate.Deserialize(blob);
 			    const auto buffer = geom.get_buffer(radius, segments);
@@ -781,7 +781,7 @@ struct ST_ConcaveHull {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		TernaryExecutor::Execute<string_t, double, bool, string_t>(
-		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    args.data[0], args.data[1], args.data[2], result,
 		    [&](const string_t &geom_blob, const double ratio, const bool allowHoles) {
 			    const auto geom = lstate.Deserialize(geom_blob);
 			    const auto hull = geom.get_concave_hull(ratio, allowHoles);
@@ -963,7 +963,7 @@ struct ST_CoverageSimplify {
 		GeosCollection collection(lstate.GetContext());
 
 		TernaryExecutor::Execute<list_entry_t, double, bool, string_t>(
-		    list_vec, args.data[1], args.data[2], result, args.size(),
+		    list_vec, args.data[1], args.data[2], result,
 		    [&](const list_entry_t &list, double tolerance, bool simplify_boundary) {
 			    // Reset the collection
 			    collection.clear();
@@ -1325,7 +1325,7 @@ struct ST_DistanceWithin {
 		} else {
 			// Both are non-const, just execute normally
 			TernaryExecutor::Execute<string_t, string_t, double, bool>(
-			    lhs_vec, rhs_vec, arg_vec, result, args.size(),
+			    lhs_vec, rhs_vec, arg_vec, result,
 			    [&](const string_t &lhs_blob, const string_t &rhs_blob, double distance) {
 				    const auto lhs = lstate.Deserialize(lhs_blob);
 				    const auto rhs = lstate.Deserialize(rhs_blob);
