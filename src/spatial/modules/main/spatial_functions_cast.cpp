@@ -91,8 +91,8 @@ struct GeometryCasts {
 
 		bool success = true;
 
-		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
-		    source, result, count, [&](const string_t &wkb, ValidityMask &mask, idx_t row_idx) {
+		UnaryExecutor::Execute<string_t, string_t>(
+		    source, result, count, [&](const string_t &wkb) -> optional<string_t> {
 			    const auto wkb_ptr = wkb.GetDataUnsafe();
 			    const auto wkb_len = wkb.GetSize();
 
@@ -105,8 +105,7 @@ struct GeometryCasts {
 					    success = false;
 					    HandleCastError::AssignError(error, params.error_message);
 				    }
-				    mask.SetInvalid(row_idx);
-				    return string_t {};
+				    return nullopt;
 			    }
 
 			    return lstate.Serialize(result, geom);
@@ -972,7 +971,7 @@ void CoreVectorOperations::LineString2DToVarchar(Vector &source, Vector &result,
 	auto x_data = FlatVector::GetData<double>(children[0]);
 	auto y_data = FlatVector::GetData<double>(children[1]);
 
-	UnaryExecutor::Execute<list_entry_t, string_t>(source, result, count, [&](list_entry_t &line) {
+	UnaryExecutor::Execute<list_entry_t, string_t>(source, result, count, [&](const list_entry_t &line) {
 		auto offset = line.offset;
 		auto length = line.length;
 
@@ -1002,7 +1001,7 @@ void CoreVectorOperations::LineString3DToVarchar(Vector &source, Vector &result,
 	auto y_data = FlatVector::GetData<double>(children[1]);
 	auto z_data = FlatVector::GetData<double>(children[2]);
 
-	UnaryExecutor::Execute<list_entry_t, string_t>(source, result, count, [&](list_entry_t &line) {
+	UnaryExecutor::Execute<list_entry_t, string_t>(source, result, count, [&](const list_entry_t &line) {
 		auto offset = line.offset;
 		auto length = line.length;
 

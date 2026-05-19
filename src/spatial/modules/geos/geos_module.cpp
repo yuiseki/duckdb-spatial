@@ -478,12 +478,11 @@ struct ST_Boundary {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
-		    args.data[0], result, args.size(), [&](const string_t &geom_blob, ValidityMask &mask, idx_t row_idx) {
+		UnaryExecutor::Execute<string_t, string_t>(
+		    args.data[0], result, args.size(), [&](const string_t &geom_blob) -> optional<string_t> {
 			    const auto geom = lstate.Deserialize(geom_blob);
 			    if (geom.type() == GEOS_GEOMETRYCOLLECTION) {
-				    mask.SetInvalid(row_idx);
-				    return string_t {};
+				    return nullopt;
 			    }
 			    const auto boundary = geom.get_boundary();
 
@@ -872,9 +871,9 @@ struct ST_CoverageInvalidEdges {
 		// Collection to hold the working set of geometries
 		GeosCollection collection(lstate.GetContext());
 
-		BinaryExecutor::ExecuteWithNulls<list_entry_t, double, string_t>(
+		BinaryExecutor::Execute<list_entry_t, double, string_t>(
 		    list_vec, args.data[1], result, args.size(),
-		    [&](const list_entry_t &list, double tolerance, ValidityMask &mask, idx_t row_idx) {
+		    [&](const list_entry_t &list, double tolerance) -> optional<string_t> {
 			    // Reset the collection
 			    collection.clear();
 			    collection.reserve(list.length);
@@ -901,8 +900,7 @@ struct ST_CoverageInvalidEdges {
 			    const auto invalid = geometry_col.get_coverage_invalid_edges(tolerance);
 
 			    if (invalid.is_empty()) {
-				    mask.SetInvalid(row_idx);
-				    return string_t {};
+				    return nullopt;
 			    }
 
 			    return lstate.Serialize(result, invalid);
@@ -2143,15 +2141,14 @@ struct ST_ShortestLine {
 struct ST_ClosestPoint {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
-		BinaryExecutor::ExecuteWithNulls<string_t, string_t, string_t>(
+		BinaryExecutor::Execute<string_t, string_t, string_t>(
 		    args.data[0], args.data[1], result, args.size(),
-		    [&](const string_t &lhs_blob, const string_t &rhs_blob, ValidityMask &mask, idx_t row_idx) {
+		    [&](const string_t &lhs_blob, const string_t &rhs_blob) -> optional<string_t> {
 			    const auto lhs = lstate.Deserialize(lhs_blob);
 			    const auto rhs = lstate.Deserialize(rhs_blob);
 			    const auto line = lhs.get_shortest_line(rhs);
 			    if (line.is_empty()) {
-				    mask.SetInvalid(row_idx);
-				    return string_t();
+				    return nullopt;
 			    }
 			    const auto point = line.get_point_n(0);
 			    return lstate.Serialize(result, point);

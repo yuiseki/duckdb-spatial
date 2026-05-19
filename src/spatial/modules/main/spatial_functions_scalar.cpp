@@ -824,7 +824,7 @@ struct ST_AsGeoJSON {
 
 		JSONAllocator allocator(lstate.GetArena());
 
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](string_t &blob) {
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &blob) {
 			sgl::geometry geom;
 			lstate.Deserialize(blob, geom);
 
@@ -2225,9 +2225,9 @@ struct ST_Azimuth {
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
-		BinaryExecutor::ExecuteWithNulls<string_t, string_t, double>(
+		BinaryExecutor::Execute<string_t, string_t, double>(
 		    args.data[0], args.data[1], result, args.size(),
-		    [&](const string_t &left, const string_t &right, ValidityMask &mask, idx_t idx) {
+		    [&](const string_t &left, const string_t &right) -> optional<double> {
 			    sgl::geometry left_geom;
 			    sgl::geometry right_geom;
 
@@ -2240,8 +2240,7 @@ struct ST_Azimuth {
 			    }
 
 			    if (left_geom.is_empty() || right_geom.is_empty()) {
-				    mask.SetInvalid(idx);
-				    return 0.0;
+				    return nullopt;
 			    }
 
 			    const auto left_xy = left_geom.get_vertex_xy(0);
@@ -2249,8 +2248,7 @@ struct ST_Azimuth {
 
 			    // If the points are the same, return NULL
 			    if (left_xy.x == right_xy.x && left_xy.y == right_xy.y) {
-				    mask.SetInvalid(idx);
-				    return 0.0;
+				    return nullopt;
 			    }
 
 			    return CalcAngle(left_xy.x, left_xy.y, right_xy.x, right_xy.y);
@@ -3375,15 +3373,14 @@ struct ST_ExteriorRing {
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
-		    args.data[0], result, args.size(), [&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
+		UnaryExecutor::Execute<string_t, string_t>(
+		    args.data[0], result, args.size(), [&](const string_t &blob) -> optional<string_t> {
 			    // TODO: Peek dont deserialize
 			    sgl::geometry geom;
 			    lstate.Deserialize(blob, geom);
 
 			    if (geom.get_type() != sgl::geometry_type::POLYGON) {
-				    mask.SetInvalid(idx);
-				    return string_t {};
+				    return nullopt;
 			    }
 
 			    if (geom.is_empty()) {
@@ -4638,8 +4635,8 @@ struct ST_GeomFromText {
 
 		sgl::wkt_reader reader(alloc);
 
-		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
-		    args.data[0], result, args.size(), [&](const string_t &wkt, ValidityMask &mask, idx_t row_idx) {
+		UnaryExecutor::Execute<string_t, string_t>(
+		    args.data[0], result, args.size(), [&](const string_t &wkt) -> optional<string_t> {
 			    const auto wkt_ptr = wkt.GetDataUnsafe();
 			    const auto wkt_len = wkt.GetSize();
 
@@ -4648,8 +4645,7 @@ struct ST_GeomFromText {
 			    if (!reader.try_parse(geom, wkt_ptr, wkt_len)) {
 
 				    if (ignore_invalid) {
-					    mask.SetInvalid(row_idx);
-					    return string_t {};
+					    return nullopt;
 				    }
 				    const auto error = reader.get_error_message();
 				    throw InvalidInputException(error);
@@ -6008,14 +6004,12 @@ struct ST_Hilbert {
 	// GEOMETRY
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
-		UnaryExecutor::ExecuteWithNulls<string_t, uint32_t>(
-		    args.data[0], result, args.size(),
-		    [&](const string_t &geom, ValidityMask &mask, idx_t out_idx) -> uint32_t {
+		UnaryExecutor::Execute<string_t, uint32_t>(
+		    args.data[0], result, args.size(), [&](const string_t &geom) -> optional<uint32_t> {
 			    // TODO: This is shit, dont rely on cached bounds
 			    Box2D<float> bounds;
 			    if (!Serde::TryGetBounds(geom, bounds)) {
-				    mask.SetInvalid(out_idx);
-				    return 0;
+				    return nullopt;
 			    }
 
 			    const auto dx = bounds.min.x + (bounds.max.x - bounds.min.x) / 2;
@@ -6149,28 +6143,25 @@ struct ST_InteriorRingN {
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
-		BinaryExecutor::ExecuteWithNulls<string_t, int64_t, string_t>(
+		BinaryExecutor::Execute<string_t, int64_t, string_t>(
 		    args.data[0], args.data[1], result, args.size(),
-		    [&](const string_t &blob, const int64_t &n, ValidityMask &mask, idx_t idx) {
+		    [&](const string_t &blob, const int64_t &n) -> optional<string_t> {
 			    sgl::geometry geom;
 			    lstate.Deserialize(blob, geom);
 
 			    // ---- validate geometry ----
 			    if (geom.get_type() != sgl::geometry_type::POLYGON) {
-				    mask.SetInvalid(idx);
-				    return string_t {};
+				    return nullopt;
 			    }
 
 			    if (geom.is_empty()) {
 				    // empty polygon → NULL because ring index must be always out of bounds then
-				    mask.SetInvalid(idx);
-				    return string_t {};
+				    return nullopt;
 			    }
 
 			    if (n < 1) {
 				    // invalid index → NULL
-				    mask.SetInvalid(idx);
-				    return string_t {};
+				    return nullopt;
 			    }
 
 			    const idx_t num_parts = geom.get_part_count(); // includes shell
@@ -6179,8 +6170,7 @@ struct ST_InteriorRingN {
 
 			    if (static_cast<idx_t>(n) > num_interior) {
 				    // ring doesn't exist → NULL
-				    mask.SetInvalid(idx);
-				    return string_t {};
+				    return nullopt;
 			    }
 
 			    // interior ring N = part N (because part 0 = shell)
@@ -7511,14 +7501,13 @@ struct ST_NInteriorRings {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::ExecuteWithNulls<string_t, int32_t>(
-		    args.data[0], result, args.size(), [&](const string_t &blob, ValidityMask &validity, idx_t idx) {
+		UnaryExecutor::Execute<string_t, int32_t>(
+		    args.data[0], result, args.size(), [&](const string_t &blob) -> optional<int32_t> {
 			    sgl::geometry geom;
 			    lstate.Deserialize(blob, geom);
 
 			    if (geom.get_type() != sgl::geometry_type::POLYGON) {
-				    validity.SetInvalid(idx);
-				    return 0;
+				    return nullopt;
 			    }
 
 			    const auto n_rings = static_cast<int32_t>(geom.get_part_count());
@@ -8096,17 +8085,16 @@ struct ST_PointN {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
-		BinaryExecutor::ExecuteWithNulls<string_t, int32_t, string_t>(
+		BinaryExecutor::Execute<string_t, int32_t, string_t>(
 		    args.data[0], args.data[1], result, args.size(),
-		    [&](const string_t &blob, const int32_t index, ValidityMask &mask, const idx_t row_idx) {
+		    [&](const string_t &blob, const int32_t index) -> optional<string_t> {
 			    // TODO: peek type without deserializing
 
 			    sgl::geometry geom;
 			    lstate.Deserialize(blob, geom);
 
 			    if (geom.get_type() != sgl::geometry_type::LINESTRING) {
-				    mask.SetInvalid(row_idx);
-				    return string_t {};
+				    return nullopt;
 			    }
 
 			    const auto point_count = geom.get_vertex_count();
@@ -8116,8 +8104,7 @@ struct ST_PointN {
 			    const auto is_above = index > static_cast<int64_t>(point_count);
 
 			    if (is_empty || is_under || is_above) {
-				    mask.SetInvalid(row_idx);
-				    return string_t {};
+				    return nullopt;
 			    }
 
 			    const auto vertex_elem = index < 0 ? point_count + index : index - 1;
@@ -8739,20 +8726,18 @@ struct ST_StartPoint {
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
-		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
-		    args.data[0], result, args.size(), [&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
+		UnaryExecutor::Execute<string_t, string_t>(
+		    args.data[0], result, args.size(), [&](const string_t &blob) -> optional<string_t> {
 			    // TODO: Peek without deserializing!
 			    sgl::geometry geom;
 			    lstate.Deserialize(blob, geom);
 
 			    if (geom.get_type() != sgl::geometry_type::LINESTRING) {
-				    mask.SetInvalid(idx);
-				    return string_t {};
+				    return nullopt;
 			    }
 
 			    if (geom.is_empty()) {
-				    mask.SetInvalid(idx);
-				    return string_t {};
+				    return nullopt;
 			    }
 
 			    const auto vertex_array = geom.get_vertex_array();
@@ -8860,20 +8845,18 @@ struct ST_EndPoint {
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
-		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
-		    args.data[0], result, args.size(), [&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
+		UnaryExecutor::Execute<string_t, string_t>(
+		    args.data[0], result, args.size(), [&](const string_t &blob) -> optional<string_t> {
 			    // TODO: Peek without deserializing!
 			    sgl::geometry geom;
 			    lstate.Deserialize(blob, geom);
 
 			    if (geom.get_type() != sgl::geometry_type::LINESTRING) {
-				    mask.SetInvalid(idx);
-				    return string_t {};
+				    return nullopt;
 			    }
 
 			    if (geom.is_empty()) {
-				    mask.SetInvalid(idx);
-				    return string_t {};
+				    return nullopt;
 			    }
 
 			    const auto vertex_count = geom.get_vertex_count();
@@ -9043,8 +9026,8 @@ struct PointAccessFunctionBase {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::ExecuteWithNulls<string_t, double>(
-		    args.data[0], result, args.size(), [&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
+		UnaryExecutor::Execute<string_t, double>(
+		    args.data[0], result, args.size(), [&](const string_t &blob) -> optional<double> {
 			    sgl::geometry geom;
 			    lstate.Deserialize(blob, geom);
 
@@ -9053,18 +9036,15 @@ struct PointAccessFunctionBase {
 			    }
 
 			    if (geom.is_empty()) {
-				    mask.SetInvalid(idx);
-				    return 0.0;
+				    return nullopt;
 			    }
 
 			    if (OP::ORDINATE == VertexOrdinate::Z && !geom.has_z()) {
-				    mask.SetInvalid(idx);
-				    return 0.0;
+				    return nullopt;
 			    }
 
 			    if (OP::ORDINATE == VertexOrdinate::M && !geom.has_m()) {
-				    mask.SetInvalid(idx);
-				    return 0.0;
+				    return nullopt;
 			    }
 
 			    const auto vertex_data = geom.get_vertex_array();
@@ -9164,22 +9144,19 @@ struct VertexAggFunctionBase {
 
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
-		UnaryExecutor::ExecuteWithNulls<string_t, double>(
-		    args.data[0], result, args.size(), [&](const string_t &blob, ValidityMask &mask, const idx_t idx) {
+		UnaryExecutor::Execute<string_t, double>(
+		    args.data[0], result, args.size(), [&](const string_t &blob) -> optional<double> {
 			    sgl::geometry geom;
 			    lstate.Deserialize(blob, geom);
 
 			    if (geom.is_empty()) {
-				    mask.SetInvalid(idx);
-				    return 0.0;
+				    return nullopt;
 			    }
 			    if (OP::ORDINATE == VertexOrdinate::Z && !geom.has_z()) {
-				    mask.SetInvalid(idx);
-				    return 0.0;
+				    return nullopt;
 			    }
 			    if (OP::ORDINATE == VertexOrdinate::M && !geom.has_m()) {
-				    mask.SetInvalid(idx);
-				    return 0.0;
+				    return nullopt;
 			    }
 
 			    const auto offset = GetOrdinateOffset(geom);
@@ -9234,12 +9211,11 @@ struct VertexAggFunctionBase {
 		const auto axis = OP::ORDINATE == VertexOrdinate::X ? 0 : 1;
 		auto ordinate_data = FlatVector::GetData<double>(line_coords_vec[axis]);
 
-		UnaryExecutor::ExecuteWithNulls<list_entry_t, double>(
-		    line_vec, result, args.size(), [&](const list_entry_t &line, ValidityMask &mask, idx_t idx) {
+		UnaryExecutor::Execute<list_entry_t, double>(
+		    line_vec, result, args.size(), [&](const list_entry_t &line) -> optional<double> {
 			    // Empty line, return NULL
 			    if (line.length == 0) {
-				    mask.SetInvalid(idx);
-				    return 0.0;
+				    return nullopt;
 			    }
 
 			    auto val = AGG::Init();
@@ -9271,14 +9247,13 @@ struct VertexAggFunctionBase {
 		const auto axis = OP::ORDINATE == VertexOrdinate::X ? 0 : 1;
 		auto ordinate_data = FlatVector::GetData<double>(vertex_vec_children[axis]);
 
-		UnaryExecutor::ExecuteWithNulls<list_entry_t, double>(
-		    input, result, count, [&](const list_entry_t &polygon, ValidityMask &mask, idx_t idx) {
+		UnaryExecutor::Execute<list_entry_t, double>(
+		    input, result, count, [&](const list_entry_t &polygon) -> optional<double> {
 			    auto polygon_offset = polygon.offset;
 
 			    // Empty polygon, return NULL
 			    if (polygon.length == 0) {
-				    mask.SetInvalid(idx);
-				    return 0.0;
+				    return nullopt;
 			    }
 
 			    // We only have to check the outer shell
@@ -9288,8 +9263,7 @@ struct VertexAggFunctionBase {
 
 			    // Polygon is invalid. This should never happen but just in case
 			    if (ring_length == 0) {
-				    mask.SetInvalid(idx);
-				    return 0.0;
+				    return nullopt;
 			    }
 
 			    auto val = AGG::Init();
