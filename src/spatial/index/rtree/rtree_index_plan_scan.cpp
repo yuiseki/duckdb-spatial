@@ -40,7 +40,7 @@ public:
 	}
 
 	static void RewriteIndexExpression(Index &index, LogicalGet &get, Expression &expr, bool &rewrite_possible) {
-		if (expr.type == ExpressionType::BOUND_COLUMN_REF) {
+		if (expr.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
 			auto &bound_colref = expr.Cast<BoundColumnRefExpression>();
 			// bound column ref: rewrite to fit in the current set of bound column ids
 			bound_colref.binding.table_index = get.table_index;
@@ -63,7 +63,7 @@ public:
 
 	static void RewriteIndexExpressionForFilter(Index &index, LogicalGet &get, unique_ptr<Expression> &expr,
 	                                            const ColumnIndex &filter_idx, bool &rewrite_possible) {
-		if (expr->type == ExpressionType::BOUND_COLUMN_REF) {
+		if (expr->GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
 			auto &bound_colref = expr->Cast<BoundColumnRefExpression>();
 
 			auto &indexed_columns = index.GetColumnIds();
@@ -84,7 +84,7 @@ public:
 			}
 
 			// this column matches the index column - turn it into a BoundReference
-			expr = make_uniq<BoundReferenceExpression>(bound_colref.return_type, 0ULL);
+			expr = make_uniq<BoundReferenceExpression>(bound_colref.GetReturnType(), 0ULL);
 			return;
 		}
 		ExpressionIterator::EnumerateChildren(*expr, [&](unique_ptr<Expression> &child) {
@@ -92,24 +92,24 @@ public:
 		});
 	}
 
-	static bool IsSpatialPredicate(const ScalarFunction &function, const unordered_set<string> &predicates) {
+	static bool IsSpatialPredicate(const BoundScalarFunction &function, const unordered_set<string> &predicates) {
 
-		if (predicates.find(function.name) == predicates.end()) {
+		if (predicates.find(function.GetName()) == predicates.end()) {
 			return false;
 		}
-		if (function.arguments.size() < 2) {
+		if (function.GetArguments().size() < 2) {
 			// We can only optimize if there are two children
 			return false;
 		}
-		if (function.arguments[0] != LogicalType::GEOMETRY()) {
+		if (function.GetArguments()[0] != LogicalType::GEOMETRY()) {
 			// We can only optimize if the first child is a GEOMETRY
 			return false;
 		}
-		if (function.arguments[1] != LogicalType::GEOMETRY()) {
+		if (function.GetArguments()[1] != LogicalType::GEOMETRY()) {
 			// We can only optimize if the second child is a GEOMETRY
 			return false;
 		}
-		if (function.return_type != LogicalType::BOOLEAN) {
+		if (function.GetReturnType() != LogicalType::BOOLEAN) {
 			// We can only optimize if the return type is a BOOLEAN
 			return false;
 		}
@@ -121,13 +121,12 @@ public:
 		// make a new box expression
 		auto &catalog = Catalog::GetSystemCatalog(context);
 		auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_Extent_Approx");
-		auto func = entry.functions.GetFunctionByArguments(context, {LogicalType::GEOMETRY()});
+		const auto &func = entry.functions.GetFunctionByArguments(context, {LogicalType::GEOMETRY()});
 
 		vector<unique_ptr<Expression>> children;
 		children.push_back(expr.Copy());
 
-		const auto bbox_expr =
-		    make_uniq<BoundFunctionExpression>(GeoTypes::BOX_2DF(), func, std::move(children), nullptr);
+		const auto bbox_expr = func.Bind(context, std::move(children));
 
 		Value result;
 		if (!ExpressionExecutor::TryEvaluateScalar(context, *bbox_expr, result)) {

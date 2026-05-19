@@ -305,7 +305,7 @@ public:
 		}
 
 		idx_t count = 0;
-		const auto ptr = FlatVector::GetData<data_ptr_t>(state.matches);
+		const auto ptr = FlatVector::GetDataMutable<data_ptr_t>(state.matches);
 		Lookup(state, [&](const data_ptr_t &row) {
 			ptr[count++] = row;
 			return count == STANDARD_VECTOR_SIZE;
@@ -387,13 +387,13 @@ private:
 static unique_ptr<Expression> GetBBOXExpression(ClientContext &context, const LogicalType &geom_type) {
 	auto &catalog = Catalog::GetSystemCatalog(context);
 	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_Extent_Approx");
-	auto func = entry.functions.GetFunctionByArguments(context, {geom_type});
+	const auto &func = entry.functions.GetFunctionByArguments(context, {geom_type});
 
 	auto child_expr = make_uniq<BoundReferenceExpression>(geom_type, 0);
 	vector<unique_ptr<Expression>> children;
 	children.push_back(std::move(child_expr));
 
-	auto bbox_expr = make_uniq<BoundFunctionExpression>(GeoTypes::BOX_2DF(), func, std::move(children), nullptr);
+	auto bbox_expr = func.Bind(context, std::move(children));
 
 	return std::move(bbox_expr);
 }
@@ -444,7 +444,7 @@ PhysicalSpatialJoin::PhysicalSpatialJoin(PhysicalPlan &physical_plan, LogicalOpe
 		conditions_in_layout.emplace(build_side_key->Cast<BoundReferenceExpression>().index, 0); // TODO: i, not 0
 	}
 	// TODO Add rest too
-	build_side_key_types.push_back(build_side_key->return_type);
+	build_side_key_types.push_back(build_side_key->GetReturnType());
 
 	const auto &build_side_input_types = children[1].get().types;
 	auto right_projection_map_copy = FillProjectionMap(children[1].get(), lop.right_projection_map);
@@ -543,15 +543,15 @@ public:
 
 		build_side_payload_chunk.InitializeEmpty(op.build_side_payload_types);
 
-		auto &geom_type = op.build_side_key->return_type;
+		auto &geom_type = op.build_side_key->GetReturnType();
 
 		auto &catalog = Catalog::GetSystemCatalog(context);
 		auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_IsEmpty");
-		auto func = entry.functions.GetFunctionByArguments(context, {geom_type});
+		const auto &func = entry.functions.GetFunctionByArguments(context, {geom_type});
 
-		auto is_empty_expr = make_uniq<BoundFunctionExpression>(LogicalTypeId::BOOLEAN, func,
-		                                                        vector<unique_ptr<Expression>> {}, nullptr);
-		is_empty_expr->children.push_back(make_uniq_base<Expression, BoundReferenceExpression>(geom_type, 0));
+		vector<unique_ptr<Expression>> children;
+		children.push_back(make_uniq_base<Expression, BoundReferenceExpression>(geom_type, 0));
+		auto is_empty_expr = func.Bind(context, std::move(children));
 
 		auto is_not_empty_expr =
 		    make_uniq<BoundOperatorExpression>(ExpressionType::OPERATOR_NOT, LogicalTypeId::BOOLEAN);
@@ -624,7 +624,7 @@ SinkResultType PhysicalSpatialJoin::Sink(ExecutionContext &context, DataChunk &c
 	}
 
 	if (PropagatesBuildSide(join_type)) {
-		lstate.build_side_row_chunk.data[layout_col_idx++].Reference(Value::BOOLEAN(false));
+		lstate.build_side_row_chunk.data[layout_col_idx++].Reference(Value::BOOLEAN(false), count_t(chunk.size()));
 	}
 
 	// Set the cardinality to match the input
@@ -670,8 +670,8 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 	// We need to keep everything pinned so that we can probe the pointers later
 	TupleDataChunkIterator iterator(*gstate.collection, TupleDataPinProperties::KEEP_EVERYTHING_PINNED, true);
 
-	const auto rows_ptr = iterator.GetRowLocations();
-	Vector row_pointer_vector(LogicalType::POINTER, reinterpret_cast<data_ptr_t>(rows_ptr));
+	auto &row_pointer_vector = iterator.GetChunkState().row_locations;
+	auto rows_ptr = FlatVector::GetData<data_ptr_t>(row_pointer_vector);
 
 	auto &sel = *FlatVector::IncrementalSelectionVector();
 
@@ -701,6 +701,7 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 		D_ASSERT(build_side_key_types.size() == 1); // TODO: remove this
 
 		gstate.collection->Gather(row_pointer_vector, sel, row_count, build_side_key_col, geom_vec, sel, nullptr);
+		FlatVector::SetSize(geom_vec, count_t(row_count));
 
 		// This should be flat to begin with, but just to be sure
 		bbox_chunk.Flatten();
@@ -838,8 +839,8 @@ unique_ptr<OperatorState> PhysicalSpatialJoin::GetOperatorState(ExecutionContext
 	// Create a match expression using the condition, that will be used to filter the results
 	lstate->match_expr = condition->Copy();
 	auto &func_expr = lstate->match_expr->Cast<BoundFunctionExpression>();
-	func_expr.children[0] = make_uniq<BoundReferenceExpression>(probe_side_key->return_type, 0);
-	func_expr.children[1] = make_uniq<BoundReferenceExpression>(build_side_key->return_type, 1);
+	func_expr.children[0] = make_uniq<BoundReferenceExpression>(probe_side_key->GetReturnType(), 0);
+	func_expr.children[1] = make_uniq<BoundReferenceExpression>(build_side_key->GetReturnType(), 1);
 
 	lstate->join_match_executor.AddExpression(*lstate->match_expr);
 
@@ -847,15 +848,15 @@ unique_ptr<OperatorState> PhysicalSpatialJoin::GetOperatorState(ExecutionContext
 	lstate->join_probe_executor.AddExpression(*probe_side_key);
 
 	// Make bbox expression for probe side
-	lstate->bound_expr = GetBBOXExpression(context.client, probe_side_key->return_type);
+	lstate->bound_expr = GetBBOXExpression(context.client, probe_side_key->GetReturnType());
 	lstate->bbox_probe_executor.AddExpression(*lstate->bound_expr);
 
 	// The chunks we need for the join
 	lstate->probe_side_row_chunk.Initialize(context.client, probe_side_output_types);
-	lstate->probe_side_key_chunk.Initialize(context.client, {probe_side_key->return_type});
-	lstate->probe_side_box_chunk.Initialize(context.client, {lstate->bound_expr->return_type});
-	lstate->build_side_key_chunk.Initialize(context.client, {build_side_key->return_type});
-	lstate->match_pred_arg_chunk.Initialize(context.client, {probe_side_key->return_type, build_side_key->return_type});
+	lstate->probe_side_key_chunk.Initialize(context.client, {probe_side_key->GetReturnType()});
+	lstate->probe_side_box_chunk.Initialize(context.client, {lstate->bound_expr->GetReturnType()});
+	lstate->build_side_key_chunk.Initialize(context.client, {build_side_key->GetReturnType()});
+	lstate->match_pred_arg_chunk.Initialize(context.client, {probe_side_key->GetReturnType(), build_side_key->GetReturnType()});
 
 	return std::move(lstate);
 }
@@ -878,7 +879,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 	auto &lstate = lstate_p.Cast<SpatialJoinLocalOperatorState>();
 
 	idx_t output_index = 0;
-	idx_t output_count = chunk.GetCapacity();
+	idx_t output_count = STANDARD_VECTOR_SIZE;
 
 	while (true) {
 		switch (lstate.state) {
@@ -1041,7 +1042,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 
 			// Also collect the build side row pointers (if we have a match column)
 			if (IsRightOuterJoin(join_type)) {
-				const auto ptrs = FlatVector::GetData<data_ptr_t>(row_pointers);
+				const auto ptrs = FlatVector::GetDataMutable<data_ptr_t>(row_pointers);
 				for (idx_t i = 0; i < scan_count; i++) {
 					lstate.build_side_pointers[output_index + i] = ptrs[i];
 				}
@@ -1050,6 +1051,13 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			// Increment the output and match index
 			output_index += scan_count;
 			lstate.scan.matches_idx += scan_count;
+
+			// Update vector sizes to match the data we have written so far
+			FlatVector::SetSize(lstate.build_side_key_chunk.data[0], count_t(output_index));
+			for (idx_t i = 0; i < build_side_output_columns.size(); i++) {
+				auto &target = chunk.data[probe_side_output_columns.size() + i];
+				FlatVector::SetSize(target, count_t(output_index));
+			}
 
 			if (output_index != output_count) {
 				// We still have space left. Scan more!
@@ -1140,8 +1148,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 				// Null the RHS columns
 				for (idx_t i = 0; i < build_side_output_columns.size(); i++) {
 					auto &target = chunk.data[probe_side_output_columns.size() + i];
-					target.SetVectorType(VectorType::CONSTANT_VECTOR);
-					ConstantVector::SetNull(target, true);
+					ConstantVector::SetNull(target, count_t(remaining_count));
 				}
 			}
 
@@ -1250,7 +1257,7 @@ SourceResultType PhysicalSpatialJoin::GetDataInternal(ExecutionContext &context,
 		return SourceResultType::FINISHED;
 	}
 
-	const auto matches = FlatVector::GetData<bool>(lstate.scan_chunk.data.back());
+	const auto matches = FlatVector::GetDataMutable<bool>(lstate.scan_chunk.data.back());
 
 	idx_t result_count = 0;
 	for (idx_t i = 0; i < lstate.scan_chunk.size(); i++) {
@@ -1267,8 +1274,7 @@ SourceResultType PhysicalSpatialJoin::GetDataInternal(ExecutionContext &context,
 		// Null the LHS columns
 		for (idx_t i = 0; i < lhs_col_count; i++) {
 			auto &target = chunk.data[i];
-			target.SetVectorType(VectorType::CONSTANT_VECTOR);
-			ConstantVector::SetNull(target, true);
+			ConstantVector::SetNull(target, count_t(result_count));
 		}
 
 		// Set the RHS columns

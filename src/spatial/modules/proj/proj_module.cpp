@@ -163,7 +163,10 @@ struct ST_Transform {
 		}
 	};
 
-	static unique_ptr<FunctionData> Bind(ClientContext &ctx, ScalarFunction &, vector<unique_ptr<Expression>> &args) {
+	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+		auto &ctx = input.GetClientContext();
+		auto &args = input.GetArguments();
+
 		auto result = make_uniq<BindData>();
 
 		// If always_xy is set, then always normalize
@@ -223,14 +226,14 @@ struct ST_Transform {
 		}
 
 		static void Serialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
-		                      const ScalarFunction &function) {
+		                      const BoundScalarFunction &function) {
 			auto &bind_data = bind_data_p->Cast<TypedBindData>();
 			serializer.WritePropertyWithDefault(100, "normalize", bind_data.normalize);
 			serializer.WritePropertyWithDefault(101, "source", bind_data.source_crs);
 			serializer.WritePropertyWithDefault(102, "target", bind_data.target_crs);
 		}
 
-		static unique_ptr<FunctionData> Deserialize(Deserializer &deserializer, ScalarFunction &function) {
+		static unique_ptr<FunctionData> Deserialize(Deserializer &deserializer, BoundScalarFunction &function) {
 			auto result = make_uniq<TypedBindData>();
 			deserializer.ReadPropertyWithDefault(100, "normalize", result->normalize);
 			deserializer.ReadPropertyWithDefault(101, "source", result->source_crs);
@@ -239,39 +242,41 @@ struct ST_Transform {
 		}
 	};
 
-	static unique_ptr<FunctionData> BindTyped(ClientContext &ctx, ScalarFunction &func,
-	                                          vector<unique_ptr<Expression>> &args) {
+	static unique_ptr<FunctionData> BindTyped(BindScalarFunctionInput &input) {
+		auto &ctx = input.GetClientContext();
+		auto &func = input.GetBoundFunction();
+		auto &args = input.GetArguments();
 
 		auto result = make_uniq<TypedBindData>();
 
 		// Get CRS from source geometry
 		const auto &geo_arg = args[0];
-		if (!GeoType::HasCRS(geo_arg->return_type)) {
-			throw BinderException(geo_arg->query_location, "Source geometry must have a coordinate reference system");
+		if (!GeoType::HasCRS(geo_arg->GetReturnType())) {
+			throw BinderException(geo_arg->GetQueryLocation(), "Source geometry must have a coordinate reference system");
 		}
-		result->source_crs = GeoType::GetCRS(geo_arg->return_type).GetDefinition();
+		result->source_crs = GeoType::GetCRS(geo_arg->GetReturnType()).GetDefinition();
 		if (result->source_crs.empty()) {
-			throw BinderException(geo_arg->query_location, "Source geometry must have a coordinate reference system");
+			throw BinderException(geo_arg->GetQueryLocation(), "Source geometry must have a coordinate reference system");
 		}
 
 		// Constant-fold target_crs
 		const auto &crs_arg = args[1];
 		if (crs_arg->HasParameter()) {
-			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter must be a constant");
+			throw BinderException(crs_arg->GetQueryLocation(), "The 'target_crs' parameter must be a constant");
 		}
 		if (!crs_arg->IsFoldable()) {
-			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter must be a constant");
+			throw BinderException(crs_arg->GetQueryLocation(), "The 'target_crs' parameter must be a constant");
 		}
-		if (crs_arg->return_type.id() != LogicalTypeId::VARCHAR) {
-			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter must be a string");
+		if (crs_arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
+			throw BinderException(crs_arg->GetQueryLocation(), "The 'target_crs' parameter must be a string");
 		}
 		result->target_crs = StringValue::Get(ExpressionExecutor::EvaluateScalar(ctx, *crs_arg));
 		if (result->target_crs.empty()) {
-			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter cannot be empty");
+			throw BinderException(crs_arg->GetQueryLocation(), "The 'target_crs' parameter cannot be empty");
 		}
 		const auto result_crs = CoordinateReferenceSystem::TryIdentify(ctx, result->target_crs);
 		if (!result_crs) {
-			throw BinderException(crs_arg->query_location,
+			throw BinderException(crs_arg->GetQueryLocation(),
 			                      "The 'target_crs' parameter '%s' is not a recognized coordinate reference system",
 			                      result->target_crs);
 		}
@@ -281,13 +286,13 @@ struct ST_Transform {
 		if (args.size() == 3) {
 			const auto &xy_arg = args[2];
 			if (xy_arg->HasParameter()) {
-				throw BinderException(xy_arg->query_location, "The 'always_xy' parameter must be a constant");
+				throw BinderException(xy_arg->GetQueryLocation(), "The 'always_xy' parameter must be a constant");
 			}
 			if (!xy_arg->IsFoldable()) {
-				throw BinderException(xy_arg->query_location, "The 'always_xy' parameter must be a constant");
+				throw BinderException(xy_arg->GetQueryLocation(), "The 'always_xy' parameter must be a constant");
 			}
-			if (xy_arg->return_type.id() != LogicalTypeId::BOOLEAN) {
-				throw BinderException(xy_arg->query_location, "The 'always_xy' parameter must be a boolean");
+			if (xy_arg->GetReturnType().id() != LogicalTypeId::BOOLEAN) {
+				throw BinderException(xy_arg->GetQueryLocation(), "The 'always_xy' parameter must be a boolean");
 			}
 			result->normalize = BooleanValue::Get(ExpressionExecutor::EvaluateScalar(ctx, *xy_arg));
 			explicit_normalize = true;
@@ -296,8 +301,8 @@ struct ST_Transform {
 		}
 
 		// Set return types
-		func.arguments[0] = geo_arg->return_type;
-		func.return_type = LogicalType::GEOMETRY(*result_crs);
+		func.GetArguments()[0] = geo_arg->GetReturnType();
+		func.SetReturnType(LogicalType::GEOMETRY(*result_crs));
 
 		// Check if we need to warn for this
 		if (!explicit_normalize) {
@@ -470,7 +475,7 @@ struct ST_Transform {
 		const auto &info = func_expr.bind_info->Cast<BindData>();
 
 		TernaryExecutor::Execute<string_t, string_t, string_t, string_t>(
-		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    args.data[0], args.data[1], args.data[2], result,
 		    [&](const string_t &blob, const string_t &source, const string_t &target) {
 			    const auto source_str = source.GetString();
 			    const auto target_str = target.GetString();
@@ -725,8 +730,10 @@ struct GeodesicBindData final : FunctionData {
 		return always_xy == data.always_xy;
 	}
 
-	static unique_ptr<FunctionData> Bind(ClientContext &ctx, ScalarFunction &func,
-	                                     vector<unique_ptr<Expression>> &args) {
+	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+		auto &ctx = input.GetClientContext();
+		auto &func = input.GetBoundFunction();
+
 		auto result = make_uniq<GeodesicBindData>();
 
 		bool is_set = false;
@@ -743,7 +750,7 @@ struct GeodesicBindData final : FunctionData {
 			    " * 'SET geometry_always_xy = false' to keep the current behavior and make this warning go away.";
 
 			auto &logger = Logger::Get(ctx);
-			logger.WriteLog("Spatial", LogLevel::LOG_WARNING, StringUtil::Format(raw_message, func.name.c_str()));
+			logger.WriteLog("Spatial", LogLevel::LOG_WARNING, StringUtil::Format(raw_message, func.GetName().c_str()));
 		}
 
 		return std::move(result);
@@ -797,7 +804,7 @@ struct GeodesicLocalState final : FunctionLocalState {
 
 struct ST_Area_Spheroid {
 
-	//------------------------------------------------------------------------------------------------------------------
+	//--------------------------------------------------------------------------------------o----------------------------
 	// Execute (POLYGON_2D)
 	//------------------------------------------------------------------------------------------------------------------
 
@@ -1469,7 +1476,7 @@ struct DuckDB_Proj_Version {
 		PJ_INFO pj_info = proj_info();
 		string_t version(pj_info.version);
 		auto val = Value(version);
-		result.Reference(val);
+		result.Reference(val, count_t(args.size()));
 	}
 
 	static constexpr auto DESCRIPTION = R"(
@@ -1510,7 +1517,7 @@ struct DuckDB_Proj_Compiled_Version {
 		D_ASSERT(args.ColumnCount() == 0);
 		string_t version(pj_release);
 		auto val = Value(version);
-		result.Reference(val);
+		result.Reference(val, count_t(args.size()));
 	}
 
 	static constexpr auto DESCRIPTION = R"(

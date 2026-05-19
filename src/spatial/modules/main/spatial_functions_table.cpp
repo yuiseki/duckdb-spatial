@@ -85,8 +85,8 @@ struct ST_GeneratePoints {
 		auto &state = data_p.global_state->Cast<GeneratePointsState>();
 
 		auto &point_vec = StructVector::GetEntries(output.data[0]);
-		const auto &x_data = FlatVector::GetData<double>(point_vec[0]);
-		const auto &y_data = FlatVector::GetData<double>(point_vec[1]);
+		auto x_data = FlatVector::GetDataMutable<double>(point_vec[0]);
+		auto y_data = FlatVector::GetDataMutable<double>(point_vec[1]);
 
 		const auto chunk_size = MinValue<idx_t>(STANDARD_VECTOR_SIZE, bind_data.count - state.current_idx);
 		for (idx_t i = 0; i < chunk_size; i++) {
@@ -96,6 +96,7 @@ struct ST_GeneratePoints {
 
 			state.current_idx++;
 		}
+		FlatVector::SetSize(output.data[0], count_t(chunk_size));
 		output.SetCardinality(chunk_size);
 	}
 
@@ -132,7 +133,7 @@ struct ST_GeneratePoints {
 		set.AddFunction(generate_points);
 
 		// Overload with seed
-		generate_points.arguments = {GeoTypes::BOX_2D(), LogicalType::BIGINT, LogicalType::BIGINT};
+		generate_points.GetArguments() = {GeoTypes::BOX_2D(), LogicalType::BIGINT, LogicalType::BIGINT};
 		set.AddFunction(generate_points);
 		loader.RegisterFunction(set);
 

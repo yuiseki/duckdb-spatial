@@ -739,7 +739,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		if (expr->GetExpressionType() != ExpressionType::BOUND_FUNCTION) {
 			continue;
 		}
-		if (expr->return_type != LogicalType::BOOLEAN) {
+		if (expr->GetReturnType() != LogicalType::BOOLEAN) {
 			continue;
 		}
 		const auto &func = expr->Cast<BoundFunctionExpression>();
@@ -747,8 +747,8 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 			continue;
 		}
 
-		if (func.children[0]->return_type.id() != LogicalTypeId::GEOMETRY ||
-		    func.children[1]->return_type.id() != LogicalTypeId::GEOMETRY) {
+		if (func.children[0]->GetReturnType().id() != LogicalTypeId::GEOMETRY ||
+		    func.children[1]->GetReturnType().id() != LogicalTypeId::GEOMETRY) {
 			continue;
 		}
 
@@ -759,7 +759,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 
 		auto found = false;
 		for (const auto &name : geometry_predicates) {
-			if (StringUtil::CIEquals(func.function.name.c_str(), name)) {
+			if (StringUtil::CIEquals(func.function.GetName().c_str(), name)) {
 				found = true;
 				break;
 			}
@@ -821,7 +821,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 			// Constant is NULL
 			continue;
 		}
-		if (geometry_expr->return_type.id() != LogicalTypeId::GEOMETRY) {
+		if (geometry_expr->GetReturnType().id() != LogicalTypeId::GEOMETRY) {
 			// Not the geometry column
 			continue;
 		}
@@ -841,7 +841,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		// We can __ONLY__ do this if the filter predicate is "&&" or "st_intersects_extent"
 		// as other predicates may require exact geometry evaluation, the filter cannot be fully removed
 		for (auto &name : {"&&", "ST_Intersects_Extent"}) {
-			if (StringUtil::CIEquals(func.function.name.c_str(), name)) {
+			if (StringUtil::CIEquals(func.function.GetName().c_str(), name)) {
 				geom_filter_idx = expr_idx;
 				break;
 			}
@@ -992,6 +992,7 @@ void Scan(ClientContext &context, TableFunctionInput &input, DataChunk &output) 
 		default:
 			throw NotImplementedException("ArrowArrayPhysicalType not recognized");
 		}
+		FlatVector::SetSize(vec, count_t(arrow_array.length));
 	}
 
 	state.features_read += arrow_array.length;
@@ -1179,6 +1180,7 @@ void Register(ExtensionLoader &loader) {
 	read_func.named_parameters["layer"] = LogicalType::VARCHAR;
 	read_func.named_parameters["max_batch_size"] = LogicalType::INTEGER;
 	read_func.named_parameters["keep_wkb"] = LogicalType::BOOLEAN;
+	read_func.parallelism = TableFunctionParallelism::SEQUENTIAL;
 
 	loader.RegisterFunction(read_func);
 
@@ -1691,7 +1693,7 @@ void Scan(ClientContext &context, TableFunctionInput &input, DataChunk &output) 
 		output.data[5].SetValue(count, help_topic_value);
 		count++;
 	}
-	output.SetCardinality(count);
+	output.SetChildCardinality(count);
 }
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -1908,7 +1910,7 @@ void Scan(ClientContext &context, TableFunctionInput &input, DataChunk &output) 
 		output_idx++;
 	}
 
-	output.SetCardinality(output_idx);
+	output.SetChildCardinality(output_idx);
 }
 
 //----------------------------------------------------------------------------------------------------------------------

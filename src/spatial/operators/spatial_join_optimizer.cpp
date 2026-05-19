@@ -56,7 +56,7 @@ static bool HasInversePredicate(const string &func_name) {
 static unique_ptr<Expression> GetInversePredicate(ClientContext &context, unique_ptr<Expression> expr) {
 	auto &func = expr->Cast<BoundFunctionExpression>();
 
-	const auto it = spatial_predicate_inverse_map.find(func.function.name);
+	const auto it = spatial_predicate_inverse_map.find(func.function.GetName());
 	D_ASSERT(it != spatial_predicate_inverse_map.end());
 
 	// Swap the arguments
@@ -70,11 +70,11 @@ static unique_ptr<Expression> GetInversePredicate(ClientContext &context, unique
 	// Get the function from the catalog
 	auto &catalog = Catalog::GetSystemCatalog(context);
 	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, it->second);
-	auto inverse_func =
-	    entry.functions.GetFunctionByArguments(context, {func.children[0]->return_type, func.children[1]->return_type});
+	const auto &inverse_func =
+	    entry.functions.GetFunctionByArguments(context, {func.children[0]->GetReturnType(), func.children[1]->GetReturnType()});
 
-	return make_uniq_base<Expression, BoundFunctionExpression>(func.return_type, inverse_func, std::move(func.children),
-	                                                           nullptr, func.is_operator);
+	auto func_expr = inverse_func.Bind(context, std::move(func.children));
+	return std::move(func_expr);
 }
 
 static bool IsSpatialJoinPredicate(const unique_ptr<Expression> &expr, const unordered_set<TableIndex> &left_bindings,
@@ -87,7 +87,7 @@ static bool IsSpatialJoinPredicate(const unique_ptr<Expression> &expr, const uno
 	}
 
 	// Check if the expression is a spatial predicate
-	if (expr->type != ExpressionType::BOUND_FUNCTION) {
+	if (expr->GetExpressionType() != ExpressionType::BOUND_FUNCTION) {
 		return false;
 	}
 
@@ -99,12 +99,12 @@ static bool IsSpatialJoinPredicate(const unique_ptr<Expression> &expr, const uno
 	}
 
 	// The function must return a boolean
-	if (func.return_type != LogicalType::BOOLEAN) {
+	if (func.GetReturnType() != LogicalType::BOOLEAN) {
 		return false;
 	}
 
 	// The function must be a recognized spatial predicate
-	if (spatial_predicate_map.count(func.function.name) == 0) {
+	if (spatial_predicate_map.count(func.function.GetName()) == 0) {
 		return false;
 	}
 
@@ -117,7 +117,7 @@ static bool IsSpatialJoinPredicate(const unique_ptr<Expression> &expr, const uno
 	}
 
 	if (left_side == JoinSide::RIGHT) {
-		if (!HasInversePredicate(func.function.name)) {
+		if (!HasInversePredicate(func.function.GetName())) {
 			return false;
 		}
 		needs_flipping = true;
@@ -190,7 +190,7 @@ static bool TrySwapComparisonJoin(OptimizerExtensionInput &input, unique_ptr<Log
 
 	// If this is ST_DWithin, try to extract the constant distance value
 	const auto &pred_func = spatial_join->spatial_predicate->Cast<BoundFunctionExpression>();
-	if (pred_func.function.name == "ST_DWithin") {
+	if (pred_func.function.GetName() == "ST_DWithin") {
 		// Try to get the constant distance value from the bind data;
 		spatial_join->has_const_distance =
 		    ST_DWithinHelper::TryGetConstDistance(pred_func.bind_info, spatial_join->const_distance);
@@ -296,7 +296,7 @@ static void TrySwapAnyJoin(OptimizerExtensionInput &input, unique_ptr<LogicalOpe
 
 	// If this is ST_DWithin, try to extract the constant distance value
 	const auto &pred_func = spatial_join->spatial_predicate->Cast<BoundFunctionExpression>();
-	if (pred_func.function.name == "ST_DWithin") {
+	if (pred_func.function.GetName() == "ST_DWithin") {
 		// Try to get the constant distance value from the bind data;
 		spatial_join->has_const_distance =
 		    ST_DWithinHelper::TryGetConstDistance(pred_func.bind_info, spatial_join->const_distance);

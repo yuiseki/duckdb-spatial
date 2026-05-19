@@ -5,6 +5,7 @@
 #include "duckdb/common/types/hash.hpp"
 #include "duckdb/common/vector_operations/generic_executor.hpp"
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/function/aggregate_function.hpp"
 #include "spatial/geometry/geometry_serialization.hpp"
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/spatial_types.hpp"
@@ -74,7 +75,7 @@ struct ST_TileEnvelope {
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		TernaryExecutor::Execute<int32_t, int32_t, int32_t, string_t>(
-		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    args.data[0], args.data[1], args.data[2], result,
 		    [&](int32_t tile_zoom, int32_t tile_x, int32_t tile_y) {
 			    validate_tile_zoom_argument(tile_zoom);
 			    uint32_t zoom_extent = 1u << tile_zoom;
@@ -824,12 +825,16 @@ struct ST_AsMVT {
 		}
 	};
 
-	static unique_ptr<FunctionData> Bind(ClientContext &context, AggregateFunction &function,
-	                                     vector<unique_ptr<Expression>> &arguments) {
+	static unique_ptr<FunctionData> Bind(BindAggregateFunctionInput &input) {
+		auto &context = input.GetClientContext();
+		auto &arguments = input.GetArguments();
+		auto &function = input.GetBoundFunction();
+
+
 		auto result = make_uniq<BindData>();
 
 		// Figure part of the row is the geometry column
-		const auto &row_type = arguments[0]->return_type;
+		const auto &row_type = arguments[0]->GetReturnType();
 		if (row_type.id() != LogicalTypeId::STRUCT) {
 			throw InvalidInputException("ST_AsMVT: first argument must be a STRUCT (i.e. a row type)");
 		}
@@ -1005,11 +1010,11 @@ struct ST_AsMVT {
 		MVTLayer layer;
 	};
 
-	static idx_t StateSize(const AggregateFunction &) {
+	static idx_t StateSize(const BoundAggregateFunction &) {
 		return sizeof(State);
 	}
 
-	static void Initialize(const AggregateFunction &, data_ptr_t state_mem) {
+	static void Initialize(const BoundAggregateFunction &, data_ptr_t state_mem) {
 		new (state_mem) State();
 	}
 
@@ -1154,7 +1159,7 @@ struct ST_AsMVT {
 		source_vec.ToUnifiedFormat(count, source_format);
 
 		const auto source_ptr = UnifiedVectorFormat::GetData<State *>(source_format);
-		const auto target_ptr = FlatVector::GetData<State *>(target_vec);
+		const auto target_ptr = FlatVector::GetDataMutable<State *>(target_vec);
 
 		for (idx_t row_idx = 0; row_idx < count; row_idx++) {
 			auto &source = *source_ptr[source_format.sel->get_index(row_idx)];
@@ -1193,7 +1198,7 @@ struct ST_AsMVT {
 			state.layer.Finalize(bdata.extent, bdata.tag_names, bdata.layer_name, buffer, tag_dict);
 
 			// Now we have the layer buffer, we can write it to the result vector
-			const auto result_data = FlatVector::GetData<string_t>(result);
+			const auto result_data = FlatVector::GetDataMutable<string_t>(result);
 			result_data[out_idx] = StringVector::AddStringOrBlob(result, buffer.data(), buffer.size());
 		}
 	}
@@ -1262,7 +1267,7 @@ struct ST_AsMVT {
 			func.SetFunction(agg);
 			for (auto &arg_type : optional_args) {
 				// Register all the variants with optional arguments
-				agg.arguments.push_back(arg_type);
+				agg.GetSignature().AddParameter(arg_type);
 				func.SetFunction(agg);
 			}
 

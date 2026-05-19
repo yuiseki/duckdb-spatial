@@ -1,9 +1,6 @@
 require spatial
 
 statement ok
-PRAGMA enable_verification;
-
-statement ok
 CREATE TABLE t1 AS SELECT point::GEOMETRY as geom
 FROM st_generatepoints({min_x: 0, min_y: 0, max_x: 1000, max_y: 1000}::BOX_2D, 100_00, 1337);
 
