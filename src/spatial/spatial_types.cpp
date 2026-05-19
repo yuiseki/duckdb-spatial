@@ -85,7 +85,7 @@ LogicalType GeoTypes::CreateEnumType(const string &name, const vector<string> &m
 	return enum_type;
 }
 
-static unique_ptr<FunctionData> PropagateTypesInternal(ClientContext &context, BaseScalarFunction &bound_function,
+static unique_ptr<FunctionData> PropagateTypesInternal(ClientContext &context, SimpleFunction &bound_function,
                                                        vector<unique_ptr<Expression>> &arguments) {
 
 	CoordinateReferenceSystem crs;
