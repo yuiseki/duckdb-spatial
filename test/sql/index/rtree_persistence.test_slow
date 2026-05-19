@@ -1,7 +1,7 @@
 require spatial
 
 # Create a persistent database
-load __TEST_DIR__/rtree_persistence_test.db
+load {TEST_DIR}/rtree_persistence_test.db
 
 statement ok
 CREATE TABLE t1 AS SELECT point::GEOMETRY as geom
