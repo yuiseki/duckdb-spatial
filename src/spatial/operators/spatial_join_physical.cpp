@@ -701,6 +701,7 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 		D_ASSERT(build_side_key_types.size() == 1); // TODO: remove this
 
 		gstate.collection->Gather(row_pointer_vector, sel, row_count, build_side_key_col, geom_vec, sel, nullptr);
+		FlatVector::SetSize(geom_vec, count_t(row_count));
 
 		// This should be flat to begin with, but just to be sure
 		bbox_chunk.Flatten();
@@ -1051,6 +1052,13 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			output_index += scan_count;
 			lstate.scan.matches_idx += scan_count;
 
+			// Update vector sizes to match the data we have written so far
+			FlatVector::SetSize(lstate.build_side_key_chunk.data[0], count_t(output_index));
+			for (idx_t i = 0; i < build_side_output_columns.size(); i++) {
+				auto &target = chunk.data[probe_side_output_columns.size() + i];
+				FlatVector::SetSize(target, count_t(output_index));
+			}
+
 			if (output_index != output_count) {
 				// We still have space left. Scan more!
 				continue;
@@ -1140,8 +1148,7 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 				// Null the RHS columns
 				for (idx_t i = 0; i < build_side_output_columns.size(); i++) {
 					auto &target = chunk.data[probe_side_output_columns.size() + i];
-					target.SetVectorType(VectorType::CONSTANT_VECTOR);
-					ConstantVector::SetNull(target, true);
+					ConstantVector::SetNull(target, count_t(remaining_count));
 				}
 			}
 
@@ -1267,8 +1274,7 @@ SourceResultType PhysicalSpatialJoin::GetDataInternal(ExecutionContext &context,
 		// Null the LHS columns
 		for (idx_t i = 0; i < lhs_col_count; i++) {
 			auto &target = chunk.data[i];
-			target.SetVectorType(VectorType::CONSTANT_VECTOR);
-			ConstantVector::SetNull(target, true);
+			ConstantVector::SetNull(target, count_t(result_count));
 		}
 
 		// Set the RHS columns

@@ -103,7 +103,7 @@ static void RTreeIndexInfoExecute(ClientContext &context, TableFunctionInput &da
 
 		row++;
 	}
-	output.SetCardinality(row);
+	output.SetChildCardinality(row);
 }
 
 static optional_ptr<RTreeIndex> TryGetIndex(ClientContext &context, const string &index_name) {
@@ -233,7 +233,11 @@ static void RTreeIndexDumpExecute(ClientContext &context, TableFunctionInput &da
 		return RTreeScanResult::CONTINUE;
 	});
 
-	output.SetCardinality(output_idx);
+	FlatVector::SetSize(bounds_vectors[0], count_t(output_idx));
+	FlatVector::SetSize(bounds_vectors[1], count_t(output_idx));
+	FlatVector::SetSize(bounds_vectors[2], count_t(output_idx));
+	FlatVector::SetSize(bounds_vectors[3], count_t(output_idx));
+	output.SetChildCardinality(output_idx);
 }
 
 //-------------------------------------------------------------------------

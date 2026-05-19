@@ -992,6 +992,7 @@ void Scan(ClientContext &context, TableFunctionInput &input, DataChunk &output) 
 		default:
 			throw NotImplementedException("ArrowArrayPhysicalType not recognized");
 		}
+		FlatVector::SetSize(vec, count_t(arrow_array.length));
 	}
 
 	state.features_read += arrow_array.length;
@@ -1691,7 +1692,7 @@ void Scan(ClientContext &context, TableFunctionInput &input, DataChunk &output) 
 		output.data[5].SetValue(count, help_topic_value);
 		count++;
 	}
-	output.SetCardinality(count);
+	output.SetChildCardinality(count);
 }
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -1908,7 +1909,7 @@ void Scan(ClientContext &context, TableFunctionInput &input, DataChunk &output) 
 		output_idx++;
 	}
 
-	output.SetCardinality(output_idx);
+	output.SetChildCardinality(output_idx);
 }
 
 //----------------------------------------------------------------------------------------------------------------------

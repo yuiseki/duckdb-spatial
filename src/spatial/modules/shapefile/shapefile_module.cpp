@@ -844,7 +844,7 @@ struct ST_ReadSHP {
 		gstate.shape_idx += output_size;
 
 		// Set the cardinality of the output
-		output.SetCardinality(output_size);
+		output.SetChildCardinality(output_size);
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -1044,7 +1044,11 @@ struct Shapefile_Meta {
 		}
 
 		state.current_file_idx += output_count;
-		output.SetCardinality(output_count);
+		FlatVector::SetSize(bounds_vector_children[0], count_t(output_count));
+		FlatVector::SetSize(bounds_vector_children[1], count_t(output_count));
+		FlatVector::SetSize(bounds_vector_children[2], count_t(output_count));
+		FlatVector::SetSize(bounds_vector_children[3], count_t(output_count));
+		output.SetChildCardinality(output_count);
 	}
 
 	static double GetProgress(ClientContext &context, const FunctionData *bind_data,
