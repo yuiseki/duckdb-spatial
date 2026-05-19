@@ -96,6 +96,7 @@ struct ST_GeneratePoints {
 
 			state.current_idx++;
 		}
+		FlatVector::SetSize(output.data[0], count_t(chunk_size));
 		output.SetCardinality(chunk_size);
 	}
 
