@@ -1469,7 +1469,7 @@ struct DuckDB_Proj_Version {
 		PJ_INFO pj_info = proj_info();
 		string_t version(pj_info.version);
 		auto val = Value(version);
-		result.Reference(val);
+		result.Reference(val, count_t(args.size()));
 	}
 
 	static constexpr auto DESCRIPTION = R"(
@@ -1510,7 +1510,7 @@ struct DuckDB_Proj_Compiled_Version {
 		D_ASSERT(args.ColumnCount() == 0);
 		string_t version(pj_release);
 		auto val = Value(version);
-		result.Reference(val);
+		result.Reference(val, count_t(args.size()));
 	}
 
 	static constexpr auto DESCRIPTION = R"(

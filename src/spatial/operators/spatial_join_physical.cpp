@@ -624,7 +624,7 @@ SinkResultType PhysicalSpatialJoin::Sink(ExecutionContext &context, DataChunk &c
 	}
 
 	if (PropagatesBuildSide(join_type)) {
-		lstate.build_side_row_chunk.data[layout_col_idx++].Reference(Value::BOOLEAN(false));
+		lstate.build_side_row_chunk.data[layout_col_idx++].Reference(Value::BOOLEAN(false), count_t(chunk.size()));
 	}
 
 	// Set the cardinality to match the input
