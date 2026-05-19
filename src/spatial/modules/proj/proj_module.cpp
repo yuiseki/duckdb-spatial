@@ -223,14 +223,14 @@ struct ST_Transform {
 		}
 
 		static void Serialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
-		                      const ScalarFunction &function) {
+		                      const BoundScalarFunction &function) {
 			auto &bind_data = bind_data_p->Cast<TypedBindData>();
 			serializer.WritePropertyWithDefault(100, "normalize", bind_data.normalize);
 			serializer.WritePropertyWithDefault(101, "source", bind_data.source_crs);
 			serializer.WritePropertyWithDefault(102, "target", bind_data.target_crs);
 		}
 
-		static unique_ptr<FunctionData> Deserialize(Deserializer &deserializer, ScalarFunction &function) {
+		static unique_ptr<FunctionData> Deserialize(Deserializer &deserializer, BoundScalarFunction &function) {
 			auto result = make_uniq<TypedBindData>();
 			deserializer.ReadPropertyWithDefault(100, "normalize", result->normalize);
 			deserializer.ReadPropertyWithDefault(101, "source", result->source_crs);
