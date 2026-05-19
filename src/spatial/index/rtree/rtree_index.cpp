@@ -112,13 +112,13 @@ RTreeIndex::RTreeIndex(const string &name, IndexConstraintType index_constraint_
 	auto &source_type = unbound_expressions[0]->GetReturnType();
 	auto &catalog = Catalog::GetSystemCatalog(context);
 	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_Extent_Approx");
-	auto func = entry.functions.GetFunctionByArguments(context, {source_type});
+	const auto &func = entry.functions.GetFunctionByArguments(context, {source_type});
 	auto child_expr = make_uniq<BoundReferenceExpression>(source_type, 0);
 
 	vector<unique_ptr<Expression>> children;
 	children.push_back(std::move(child_expr));
 
-	key_expr = make_uniq<BoundFunctionExpression>(GeoTypes::BOX_2DF(), func, std::move(children), nullptr);
+	key_expr = func.Bind(context, std::move(children));
 	key_executor = make_uniq<ExpressionExecutor>(context);
 	key_executor->AddExpression(*key_expr);
 	key_chunk.Initialize(context, {GeoTypes::BOX_2DF()});

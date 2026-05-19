@@ -759,7 +759,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 
 		auto found = false;
 		for (const auto &name : geometry_predicates) {
-			if (StringUtil::CIEquals(func.function.name.c_str(), name)) {
+			if (StringUtil::CIEquals(func.function.GetName().c_str(), name)) {
 				found = true;
 				break;
 			}
@@ -841,7 +841,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		// We can __ONLY__ do this if the filter predicate is "&&" or "st_intersects_extent"
 		// as other predicates may require exact geometry evaluation, the filter cannot be fully removed
 		for (auto &name : {"&&", "ST_Intersects_Extent"}) {
-			if (StringUtil::CIEquals(func.function.name.c_str(), name)) {
+			if (StringUtil::CIEquals(func.function.GetName().c_str(), name)) {
 				geom_filter_idx = expr_idx;
 				break;
 			}

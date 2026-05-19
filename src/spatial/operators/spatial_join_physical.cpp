@@ -387,13 +387,13 @@ private:
 static unique_ptr<Expression> GetBBOXExpression(ClientContext &context, const LogicalType &geom_type) {
 	auto &catalog = Catalog::GetSystemCatalog(context);
 	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_Extent_Approx");
-	auto func = entry.functions.GetFunctionByArguments(context, {geom_type});
+	const auto &func = entry.functions.GetFunctionByArguments(context, {geom_type});
 
 	auto child_expr = make_uniq<BoundReferenceExpression>(geom_type, 0);
 	vector<unique_ptr<Expression>> children;
 	children.push_back(std::move(child_expr));
 
-	auto bbox_expr = make_uniq<BoundFunctionExpression>(GeoTypes::BOX_2DF(), func, std::move(children), nullptr);
+	auto bbox_expr = func.Bind(context, std::move(children));
 
 	return std::move(bbox_expr);
 }
@@ -547,11 +547,11 @@ public:
 
 		auto &catalog = Catalog::GetSystemCatalog(context);
 		auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_IsEmpty");
-		auto func = entry.functions.GetFunctionByArguments(context, {geom_type});
+		const auto &func = entry.functions.GetFunctionByArguments(context, {geom_type});
 
-		auto is_empty_expr = make_uniq<BoundFunctionExpression>(LogicalTypeId::BOOLEAN, func,
-		                                                        vector<unique_ptr<Expression>> {}, nullptr);
-		is_empty_expr->children.push_back(make_uniq_base<Expression, BoundReferenceExpression>(geom_type, 0));
+		vector<unique_ptr<Expression>> children;
+		children.push_back(make_uniq_base<Expression, BoundReferenceExpression>(geom_type, 0));
+		auto is_empty_expr = func.Bind(context, std::move(children));
 
 		auto is_not_empty_expr =
 		    make_uniq<BoundOperatorExpression>(ExpressionType::OPERATOR_NOT, LogicalTypeId::BOOLEAN);

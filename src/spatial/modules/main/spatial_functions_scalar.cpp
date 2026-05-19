@@ -5816,7 +5816,7 @@ struct ST_Distance_Sphere {
 			    " * 'SET geometry_always_xy = false' to keep the current behavior and make this warning go away.";
 
 			auto &logger = Logger::Get(context);
-			logger.WriteLog("Spatial", LogLevel::LOG_WARNING, StringUtil::Format(raw_message, func.name.c_str()));
+			logger.WriteLog("Spatial", LogLevel::LOG_WARNING, StringUtil::Format(raw_message, func.GetName().c_str()));
 		}
 
 		return std::move(bind_data);

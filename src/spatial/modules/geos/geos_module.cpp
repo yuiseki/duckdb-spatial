@@ -9,6 +9,7 @@
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/function/aggregate_function.hpp"
 #include "spatial/geometry/geometry_serialization.hpp"
 #include "spatial/geometry/sgl.hpp"
 
@@ -2518,7 +2519,7 @@ struct ST_Union_Agg {
 		vector<GEOSGeometry *> geoms;
 	};
 
-	static idx_t StateSize(const AggregateFunction &) {
+	static idx_t StateSize(const BoundAggregateFunction &) {
 		return sizeof(State);
 	}
 
@@ -2543,7 +2544,7 @@ struct ST_Union_Agg {
 		return GeosSerde::Deserialize(context, arena, ptr, size);
 	}
 
-	static void Initialize(const AggregateFunction &, data_ptr_t state_mem) {
+	static void Initialize(const BoundAggregateFunction &, data_ptr_t state_mem) {
 		const auto state_ptr = new (state_mem) State();
 		auto &state = *state_ptr;
 		state.context = GEOS_init_r();
@@ -2742,7 +2743,7 @@ struct GEOSCoverageAggFunction {
 		return GeosSerde::Deserialize(context, arena, ptr, size);
 	}
 
-	static void Initialize(const AggregateFunction &, data_ptr_t state_mem) {
+	static void Initialize(const BoundAggregateFunction &, data_ptr_t state_mem) {
 		const auto state_ptr = new (state_mem) State();
 		auto &state = *state_ptr;
 		state.context = GEOS_init_r();
@@ -2809,7 +2810,7 @@ struct GEOSCoverageAggFunction {
 		}
 	}
 
-	static idx_t StateSize(const AggregateFunction &) {
+	static idx_t StateSize(const BoundAggregateFunction &) {
 		return sizeof(State);
 	}
 
@@ -2965,7 +2966,7 @@ struct ST_CoverageSimplify_Agg : GEOSCoverageAggFunction {
 			func.SetDescription("Simplifies a set of geometries while maintaining coverage");
 
 			// TODO: this is a hack
-			agg.GetArguments().push_back(LogicalType::BOOLEAN);
+			agg.GetSignature().AddParameter(LogicalType::BOOLEAN);
 			func.SetFunction(agg);
 			func.CanThrowErrors();
 
@@ -3130,7 +3131,7 @@ struct ST_CoverageInvalidEdges_Agg : GEOSCoverageAggFunction {
 			func.CanThrowErrors();
 
 			// TODO: this is a hack
-			agg.GetArguments().push_back(LogicalType::DOUBLE);
+			agg.GetSignature().AddParameter(LogicalType::DOUBLE);
 			func.SetFunction(agg);
 			func.CanThrowErrors();
 

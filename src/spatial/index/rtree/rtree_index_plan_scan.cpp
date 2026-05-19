@@ -92,9 +92,9 @@ public:
 		});
 	}
 
-	static bool IsSpatialPredicate(const ScalarFunction &function, const unordered_set<string> &predicates) {
+	static bool IsSpatialPredicate(const BoundScalarFunction &function, const unordered_set<string> &predicates) {
 
-		if (predicates.find(function.name) == predicates.end()) {
+		if (predicates.find(function.GetName()) == predicates.end()) {
 			return false;
 		}
 		if (function.GetArguments().size() < 2) {
@@ -121,13 +121,12 @@ public:
 		// make a new box expression
 		auto &catalog = Catalog::GetSystemCatalog(context);
 		auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_Extent_Approx");
-		auto func = entry.functions.GetFunctionByArguments(context, {LogicalType::GEOMETRY()});
+		const auto &func = entry.functions.GetFunctionByArguments(context, {LogicalType::GEOMETRY()});
 
 		vector<unique_ptr<Expression>> children;
 		children.push_back(expr.Copy());
 
-		const auto bbox_expr =
-		    make_uniq<BoundFunctionExpression>(GeoTypes::BOX_2DF(), func, std::move(children), nullptr);
+		const auto bbox_expr = func.Bind(context, std::move(children));
 
 		Value result;
 		if (!ExpressionExecutor::TryEvaluateScalar(context, *bbox_expr, result)) {

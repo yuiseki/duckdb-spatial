@@ -68,7 +68,7 @@ private:
 };
 
 inline void ScalarFunctionVariantBuilder::AddParameter(const char *name, const LogicalType &type) {
-	function.GetArguments().emplace_back(type);
+	function.GetSignature().AddParameter(name, type);
 	description.parameter_names.emplace_back(name);
 	description.parameter_types.emplace_back(type);
 }

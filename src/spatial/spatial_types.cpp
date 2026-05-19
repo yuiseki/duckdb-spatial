@@ -85,7 +85,7 @@ LogicalType GeoTypes::CreateEnumType(const string &name, const vector<string> &m
 	return enum_type;
 }
 
-static unique_ptr<FunctionData> PropagateTypesInternal(ClientContext &context, SimpleFunction &bound_function,
+static unique_ptr<FunctionData> PropagateTypesInternal(ClientContext &context, BoundSimpleFunction &bound_function,
                                                        vector<unique_ptr<Expression>> &arguments) {
 
 	CoordinateReferenceSystem crs;
@@ -115,7 +115,7 @@ static unique_ptr<FunctionData> PropagateTypesInternal(ClientContext &context, S
 						    " * Use 'ST_SetCRS' to explicitly override the CRS of a geometry expression, without "
 						    "performing a "
 						    "transformation.\n",
-						    bound_function.name, crs.GetIdentifier(), type_crs.GetIdentifier());
+						    bound_function.GetName(), crs.GetIdentifier(), type_crs.GetIdentifier());
 					}
 				}
 			}

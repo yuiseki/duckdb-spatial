@@ -5,6 +5,7 @@
 #include "duckdb/common/types/hash.hpp"
 #include "duckdb/common/vector_operations/generic_executor.hpp"
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/function/aggregate_function.hpp"
 #include "spatial/geometry/geometry_serialization.hpp"
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/spatial_types.hpp"
@@ -1009,11 +1010,11 @@ struct ST_AsMVT {
 		MVTLayer layer;
 	};
 
-	static idx_t StateSize(const AggregateFunction &) {
+	static idx_t StateSize(const BoundAggregateFunction &) {
 		return sizeof(State);
 	}
 
-	static void Initialize(const AggregateFunction &, data_ptr_t state_mem) {
+	static void Initialize(const BoundAggregateFunction &, data_ptr_t state_mem) {
 		new (state_mem) State();
 	}
 
@@ -1266,7 +1267,7 @@ struct ST_AsMVT {
 			func.SetFunction(agg);
 			for (auto &arg_type : optional_args) {
 				// Register all the variants with optional arguments
-				agg.GetArguments().push_back(arg_type);
+				agg.GetSignature().AddParameter(arg_type);
 				func.SetFunction(agg);
 			}
 
