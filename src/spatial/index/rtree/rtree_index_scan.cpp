@@ -261,6 +261,7 @@ TableFunction RTreeIndexScanFunction::GetFunction() {
 	func.get_bind_info = RTreeIndexScanBindInfo;
 	func.serialize = RTreeScanSerialize;
 	func.deserialize = RTreeScanDeserialize;
+	func.parallelism = TableFunctionParallelism::SEQUENTIAL;
 
 	return func;
 }

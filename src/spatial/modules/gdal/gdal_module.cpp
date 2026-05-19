@@ -1180,6 +1180,7 @@ void Register(ExtensionLoader &loader) {
 	read_func.named_parameters["layer"] = LogicalType::VARCHAR;
 	read_func.named_parameters["max_batch_size"] = LogicalType::INTEGER;
 	read_func.named_parameters["keep_wkb"] = LogicalType::BOOLEAN;
+	read_func.parallelism = TableFunctionParallelism::SEQUENTIAL;
 
 	loader.RegisterFunction(read_func);
 

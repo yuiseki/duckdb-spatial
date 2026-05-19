@@ -896,6 +896,7 @@ struct ST_ReadSHP {
 		read_func.table_scan_progress = GetProgress;
 		read_func.cardinality = GetCardinality;
 		read_func.projection_pushdown = true;
+		read_func.parallelism = TableFunctionParallelism::SEQUENTIAL;
 		loader.RegisterFunction(read_func);
 
 		InsertionOrderPreservingMap<string> tags;
