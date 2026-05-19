@@ -163,7 +163,10 @@ struct ST_Transform {
 		}
 	};
 
-	static unique_ptr<FunctionData> Bind(ClientContext &ctx, ScalarFunction &, vector<unique_ptr<Expression>> &args) {
+	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+		auto &ctx = input.GetClientContext();
+		auto &args = input.GetArguments();
+
 		auto result = make_uniq<BindData>();
 
 		// If always_xy is set, then always normalize
@@ -239,8 +242,10 @@ struct ST_Transform {
 		}
 	};
 
-	static unique_ptr<FunctionData> BindTyped(ClientContext &ctx, ScalarFunction &func,
-	                                          vector<unique_ptr<Expression>> &args) {
+	static unique_ptr<FunctionData> BindTyped(BindScalarFunctionInput &input) {
+		auto &ctx = input.GetClientContext();
+		auto &func = input.GetBoundFunction();
+		auto &args = input.GetArguments();
 
 		auto result = make_uniq<TypedBindData>();
 
@@ -725,8 +730,10 @@ struct GeodesicBindData final : FunctionData {
 		return always_xy == data.always_xy;
 	}
 
-	static unique_ptr<FunctionData> Bind(ClientContext &ctx, ScalarFunction &func,
-	                                     vector<unique_ptr<Expression>> &args) {
+	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+		auto &ctx = input.GetClientContext();
+		auto &func = input.GetBoundFunction();
+
 		auto result = make_uniq<GeodesicBindData>();
 
 		bool is_set = false;
@@ -797,7 +804,7 @@ struct GeodesicLocalState final : FunctionLocalState {
 
 struct ST_Area_Spheroid {
 
-	//------------------------------------------------------------------------------------------------------------------
+	//--------------------------------------------------------------------------------------o----------------------------
 	// Execute (POLYGON_2D)
 	//------------------------------------------------------------------------------------------------------------------
 

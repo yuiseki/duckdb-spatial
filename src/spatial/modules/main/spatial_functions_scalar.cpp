@@ -2658,8 +2658,11 @@ struct ST_DistanceWithin {
 	};
 
 	// We try to constant-fold the distance parameter here, because it's a very common have a constant distance
-	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
-	                                     vector<unique_ptr<Expression>> &arguments) {
+	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+
+		auto &arguments = input.GetArguments();
+		auto &bound_function = input.GetBoundFunction();
+		auto &context = input.GetClientContext();
 
 		if (arguments.back()->IsFoldable()) {
 			const auto dist_expr = ExpressionExecutor::EvaluateScalar(context, *arguments.back());
@@ -2885,7 +2888,7 @@ struct ST_Dump {
 			}
 
 			// Push to the result vector
-			auto result_entries = ListVector::GetData(result);
+			auto result_entries = FlatVector::GetDataMutable<list_entry_t>(result);
 
 			auto geom_offset = total_geom_count;
 			auto geom_length = items.size();
@@ -2920,7 +2923,7 @@ struct ST_Dump {
 				ListVector::Reserve(result_path_vec, total_path_count);
 				ListVector::SetListSize(result_path_vec, total_path_count);
 
-				auto path_entries = ListVector::GetData(result_path_vec);
+				auto path_entries = FlatVector::GetDataMutable<list_entry_t>(result_path_vec);
 
 				path_entries[geom_offset + i].offset = path_offset;
 				path_entries[geom_offset + i].length = path_length;
@@ -3559,8 +3562,8 @@ struct ST_FlipCoordinates {
 		ListVector::Reserve(result, coord_count);
 		ListVector::SetListSize(result, coord_count);
 
-		auto line_entries_in = ListVector::GetData(input);
-		auto line_entries_out = ListVector::GetData(result);
+		auto line_entries_in = FlatVector::GetDataMutable<list_entry_t>(input);
+		auto line_entries_out = FlatVector::GetDataMutable<list_entry_t>(result);
 		memcpy(line_entries_out, line_entries_in, count * sizeof(list_entry_t));
 
 		auto &coord_vec_out = ListVector::GetEntry(result);
@@ -3602,12 +3605,12 @@ struct ST_FlipCoordinates {
 		ListVector::Reserve(ring_vec_out, coord_count);
 		ListVector::SetListSize(ring_vec_out, coord_count);
 
-		auto ring_entries_in = ListVector::GetData(input);
-		auto ring_entries_out = ListVector::GetData(result);
+		auto ring_entries_in = FlatVector::GetDataMutable<list_entry_t>(input);
+		auto ring_entries_out = FlatVector::GetDataMutable<list_entry_t>(result);
 		memcpy(ring_entries_out, ring_entries_in, count * sizeof(list_entry_t));
 
-		auto coord_entries_in = ListVector::GetData(ring_vec_in);
-		auto coord_entries_out = ListVector::GetData(ring_vec_out);
+		auto coord_entries_in = FlatVector::GetDataMutable<list_entry_t>(ring_vec_in);
+		auto coord_entries_out = FlatVector::GetDataMutable<list_entry_t>(ring_vec_out);
 		memcpy(coord_entries_out, coord_entries_in, ring_count * sizeof(list_entry_t));
 
 		auto &coord_vec_out = ListVector::GetEntry(ring_vec_out);
@@ -3910,8 +3913,7 @@ struct ST_GeometryType {
 	static constexpr uint8_t LEGACY_GEOMETRYCOLLECTION_TYPE = 6;
 	static constexpr uint8_t LEGACY_UNKNOWN_TYPE = 7;
 
-	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
-	                                     vector<unique_ptr<Expression>> &arguments) {
+	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
 		// Create an enum type for all geometry types
 		// Ensure that these are in the same order as the LegacyGeometryType enum
 		const vector<string> enum_values = {"POINT", "LINESTRING", "POLYGON", "MULTIPOINT", "MULTILINESTRING",
@@ -3919,7 +3921,7 @@ struct ST_GeometryType {
 		                                    // or...
 		                                    "UNKNOWN"};
 
-		bound_function.return_type = GeoTypes::CreateEnumType("GEOMETRY_TYPE", enum_values);
+		input.GetBoundFunction().SetReturnType(GeoTypes::CreateEnumType("GEOMETRY_TYPE", enum_values));
 		return nullptr;
 	}
 
@@ -4591,8 +4593,10 @@ struct ST_GeomFromText {
 		bool ignore_invalid = false;
 	};
 
-	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
-	                                     vector<unique_ptr<Expression>> &arguments) {
+	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+		auto &arguments = input.GetArguments();
+		auto &context = input.GetClientContext();
+
 		if (arguments.empty()) {
 			throw InvalidInputException("ST_GeomFromText requires at least one argument");
 		}
@@ -4800,7 +4804,7 @@ struct ST_GeomFromWKB {
 		wkb_blobs.Flatten(count);
 
 		auto &inner = ListVector::GetEntry(result);
-		const auto lines = ListVector::GetData(result);
+		const auto lines = FlatVector::GetDataMutable<list_entry_t>(result);
 		const auto wkb_data = FlatVector::GetDataMutable<string_t>(wkb_blobs);
 
 		idx_t total_size = 0;
@@ -4872,7 +4876,7 @@ struct ST_GeomFromWKB {
 
 		// Set up output data
 		auto &ring_vec = ListVector::GetEntry(result);
-		auto polygons = ListVector::GetData(result);
+		auto polygons = FlatVector::GetDataMutable<list_entry_t>(result);
 
 		idx_t total_ring_count = 0;
 		idx_t total_point_count = 0;
@@ -4914,7 +4918,7 @@ struct ST_GeomFromWKB {
 					const auto point_count = ring->get_vertex_count();
 
 					ListVector::Reserve(ring_vec, total_point_count + point_count);
-					auto ring_entries = ListVector::GetData(ring_vec);
+					auto ring_entries = FlatVector::GetDataMutable<list_entry_t>(ring_vec);
 					auto &inner = ListVector::GetEntry(ring_vec);
 
 					auto &children = StructVector::GetEntries(inner);
@@ -5452,8 +5456,9 @@ struct ST_LocateAlong {
 	//------------------------------------------------------------------------------------------------------------------
 	// Bind
 	//------------------------------------------------------------------------------------------------------------------
-	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
-	                                     vector<unique_ptr<Expression>> &arguments) {
+	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+		auto &arguments = input.GetArguments();
+
 		if (arguments.size() == 2) {
 			// Push back offset constant
 			arguments.push_back(make_uniq<BoundConstantExpression>(Value::DOUBLE(0.0)));
@@ -5554,8 +5559,9 @@ struct ST_LocateBetween {
 	//------------------------------------------------------------------------------------------------------------------
 	// Bind
 	//------------------------------------------------------------------------------------------------------------------
-	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
-	                                     vector<unique_ptr<Expression>> &arguments) {
+	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+		auto &arguments = input.GetArguments();
+
 		if (arguments.size() == 3) {
 			// Push back offset constant
 			arguments.push_back(make_uniq<BoundConstantExpression>(Value::DOUBLE(0.0)));
@@ -5794,8 +5800,10 @@ struct ST_Distance_Sphere {
 		}
 	};
 
-	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &func,
-	                                     vector<unique_ptr<Expression>> &arguments) {
+	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+		auto &context = input.GetClientContext();
+		auto &func = input.GetBoundFunction();
+
 		auto bind_data = make_uniq<BindData>();
 
 		bool is_set = false;
@@ -7606,7 +7614,7 @@ struct ST_NPoints {
 		auto &input = args.data[0];
 		auto count = args.size();
 		auto &ring_vec = ListVector::GetEntry(input);
-		auto ring_entries = ListVector::GetData(ring_vec);
+		auto ring_entries = FlatVector::GetDataMutable<list_entry_t>(ring_vec);
 
 		UnaryExecutor::Execute<list_entry_t, idx_t>(input, result, count, [&](list_entry_t polygon) {
 			auto polygon_offset = polygon.offset;
@@ -9257,7 +9265,7 @@ struct VertexAggFunctionBase {
 		input.ToUnifiedFormat(count, format);
 
 		auto &ring_vec = ListVector::GetEntry(input);
-		auto ring_entries = ListVector::GetData(ring_vec);
+		auto ring_entries = FlatVector::GetDataMutable<list_entry_t>(ring_vec);
 		auto &vertex_vec = ListVector::GetEntry(ring_vec);
 		auto &vertex_vec_children = StructVector::GetEntries(vertex_vec);
 		const auto axis = OP::ORDINATE == VertexOrdinate::X ? 0 : 1;

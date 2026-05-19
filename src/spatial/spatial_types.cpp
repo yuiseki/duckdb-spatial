@@ -142,13 +142,19 @@ static unique_ptr<FunctionData> PropagateTypesInternal(ClientContext &context, S
 
 	return nullptr;
 }
-unique_ptr<FunctionData> GeoTypes::PropagateCRS(ClientContext &context, ScalarFunction &bound_function,
-                                                vector<unique_ptr<Expression>> &arguments) {
+unique_ptr<FunctionData> GeoTypes::PropagateCRS(BindScalarFunctionInput &input) {
+	auto &context = input.GetClientContext();
+	auto &bound_function = input.GetBoundFunction();
+	auto &arguments = input.GetArguments();
+
 	return PropagateTypesInternal(context, bound_function, arguments);
 }
 
-unique_ptr<FunctionData> GeoTypes::PropagateCRS(ClientContext &context, AggregateFunction &bound_function,
-                                                vector<unique_ptr<Expression>> &arguments) {
+unique_ptr<FunctionData> GeoTypes::PropagateCRS(BindAggregateFunctionInput &input) {
+	auto &context = input.GetClientContext();
+	auto &bound_function = input.GetBoundFunction();
+	auto &arguments = input.GetArguments();
+
 	return PropagateTypesInternal(context, bound_function, arguments);
 }
 

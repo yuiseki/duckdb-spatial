@@ -229,8 +229,11 @@ struct ST_AsMVTGeom {
 		}
 	};
 
-	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
-	                                     vector<unique_ptr<Expression>> &arguments) {
+	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+		auto &arguments = input.GetArguments();
+		auto &bound_function = input.GetBoundFunction();
+		auto &context = input.GetClientContext();
+
 		auto result = make_uniq<BindData>();
 
 		// Extract parameters
@@ -846,8 +849,9 @@ struct ST_ConvexHull {
 
 struct ST_CoverageInvalidEdges {
 
-	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
-	                                     vector<unique_ptr<Expression>> &arguments) {
+	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+
+		auto &arguments = input.GetArguments();
 
 		// Set the default value for the tolerance parameter
 		if (arguments.size() == 1) {
@@ -941,8 +945,9 @@ struct ST_CoverageInvalidEdges {
 
 struct ST_CoverageSimplify {
 
-	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
-	                                     vector<unique_ptr<Expression>> &arguments) {
+	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+		auto &arguments = input.GetArguments();
+
 		// Set the default value for the simplify_boundary parameter
 		if (arguments.size() == 2) {
 			arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::BOOLEAN(true)));
@@ -2876,8 +2881,10 @@ struct GEOSCoverageAggFunction {
 
 struct ST_CoverageSimplify_Agg : GEOSCoverageAggFunction {
 
-	static unique_ptr<FunctionData> Bind(ClientContext &context, AggregateFunction &function,
-	                                     vector<unique_ptr<Expression>> &arguments) {
+	static unique_ptr<FunctionData> Bind(BindAggregateFunctionInput &input) {
+		auto &arguments = input.GetArguments();
+		auto &function = input.GetBoundFunction();
+
 		if (arguments.size() == 2) {
 			arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::BOOLEAN(true)));
 			function.arguments.push_back(LogicalType::BOOLEAN);
@@ -3045,8 +3052,10 @@ struct ST_CoverageUnion_Agg : GEOSCoverageAggFunction {
 
 struct ST_CoverageInvalidEdges_Agg : GEOSCoverageAggFunction {
 
-	static unique_ptr<FunctionData> Bind(ClientContext &context, AggregateFunction &function,
-	                                     vector<unique_ptr<Expression>> &arguments) {
+	static unique_ptr<FunctionData> Bind(BindAggregateFunctionInput &input) {
+		auto &arguments = input.GetArguments();
+		auto &function = input.GetBoundFunction();
+
 		if (arguments.size() == 1) {
 			arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(0.0)));
 			function.arguments.push_back(LogicalType::DOUBLE);

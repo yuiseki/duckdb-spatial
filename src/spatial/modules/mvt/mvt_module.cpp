@@ -824,8 +824,12 @@ struct ST_AsMVT {
 		}
 	};
 
-	static unique_ptr<FunctionData> Bind(ClientContext &context, AggregateFunction &function,
-	                                     vector<unique_ptr<Expression>> &arguments) {
+	static unique_ptr<FunctionData> Bind(BindAggregateFunctionInput &input) {
+		auto &context = input.GetClientContext();
+		auto &arguments = input.GetArguments();
+		auto &function = input.GetBoundFunction();
+
+
 		auto result = make_uniq<BindData>();
 
 		// Figure part of the row is the geometry column

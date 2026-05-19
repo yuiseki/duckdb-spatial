@@ -422,7 +422,7 @@ struct LocalState final : LocalTableFunctionState {
 			auto total_tags = ListVector::GetListSize(output.data[2]);
 			ListVector::Reserve(output.data[2], total_tags + tag_count);
 			ListVector::SetListSize(output.data[2], total_tags + tag_count);
-			auto &tag_entry = ListVector::GetData(output.data[2])[index];
+			auto &tag_entry = FlatVector::GetDataMutable<list_entry_t>(output.data[2])[index];
 
 			tag_entry.offset = total_tags;
 			tag_entry.length = tag_count;
@@ -541,7 +541,7 @@ struct LocalState final : LocalTableFunctionState {
 			auto total_tags = ListVector::GetListSize(output.data[2]);
 			ListVector::Reserve(output.data[2], total_tags + tag_count);
 			ListVector::SetListSize(output.data[2], total_tags + tag_count);
-			auto &tag_entry = ListVector::GetData(output.data[2])[index];
+			auto &tag_entry = FlatVector::GetDataMutable<list_entry_t>(output.data[2])[index];
 
 			tag_entry.offset = total_tags;
 			tag_entry.length = tag_count;
@@ -566,7 +566,7 @@ struct LocalState final : LocalTableFunctionState {
 			auto total_refs = ListVector::GetListSize(output.data[3]);
 			ListVector::Reserve(output.data[3], total_refs + ref_count);
 			ListVector::SetListSize(output.data[3], total_refs + ref_count);
-			auto &ref_entry = ListVector::GetData(output.data[3])[index];
+			auto &ref_entry = FlatVector::GetDataMutable<list_entry_t>(output.data[3])[index];
 			auto &ref_vector = ListVector::GetEntry(output.data[3]);
 			ref_entry.offset = total_refs;
 			ref_entry.length = ref_count;
@@ -630,7 +630,7 @@ struct LocalState final : LocalTableFunctionState {
 			auto total_tags = ListVector::GetListSize(output.data[2]);
 			ListVector::Reserve(output.data[2], total_tags + tag_count);
 			ListVector::SetListSize(output.data[2], total_tags + tag_count);
-			auto &tag_entry = ListVector::GetData(output.data[2])[index];
+			auto &tag_entry = FlatVector::GetDataMutable<list_entry_t>(output.data[2])[index];
 
 			tag_entry.offset = total_tags;
 			tag_entry.length = tag_count;
@@ -657,7 +657,7 @@ struct LocalState final : LocalTableFunctionState {
 			auto total_roles = ListVector::GetListSize(output.data[6]);
 			ListVector::Reserve(output.data[6], total_roles + role_count);
 			ListVector::SetListSize(output.data[6], total_roles + role_count);
-			auto &role_entry = ListVector::GetData(output.data[6])[index];
+			auto &role_entry = FlatVector::GetDataMutable<list_entry_t>(output.data[6])[index];
 			auto &role_vector = ListVector::GetEntry(output.data[6]);
 			role_entry.offset = total_roles;
 			role_entry.length = role_count;
@@ -682,7 +682,7 @@ struct LocalState final : LocalTableFunctionState {
 			auto total_refs = ListVector::GetListSize(output.data[3]);
 			ListVector::Reserve(output.data[3], total_refs + ref_count);
 			ListVector::SetListSize(output.data[3], total_refs + ref_count);
-			auto &ref_entry = ListVector::GetData(output.data[3])[index];
+			auto &ref_entry = FlatVector::GetDataMutable<list_entry_t>(output.data[3])[index];
 			auto &ref_vector = ListVector::GetEntry(output.data[3]);
 			ref_entry.offset = total_refs;
 			ref_entry.length = ref_count;
@@ -705,7 +705,7 @@ struct LocalState final : LocalTableFunctionState {
 			auto total_types = ListVector::GetListSize(output.data[7]);
 			ListVector::Reserve(output.data[7], total_types + type_count);
 			ListVector::SetListSize(output.data[7], total_types + type_count);
-			auto &type_entry = ListVector::GetData(output.data[7])[index];
+			auto &type_entry = FlatVector::GetDataMutable<list_entry_t>(output.data[7])[index];
 			auto &type_vector = ListVector::GetEntry(output.data[7]);
 			type_entry.offset = total_types;
 			type_entry.length = type_count;
@@ -751,7 +751,7 @@ struct LocalState final : LocalTableFunctionState {
 					auto total_tags = ListVector::GetListSize(output.data[2]);
 					ListVector::Reserve(output.data[2], total_tags + tag_count);
 					ListVector::SetListSize(output.data[2], total_tags + tag_count);
-					auto &tag_entry = ListVector::GetData(output.data[2])[index];
+					auto &tag_entry = FlatVector::GetDataMutable<list_entry_t>(output.data[2])[index];
 
 					tag_entry.offset = total_tags;
 					tag_entry.length = tag_count;
