@@ -2466,7 +2466,7 @@ struct ST_MemUnion_Agg : GeosUnaryAggFunction {
 		auto agg = AggregateFunction::UnaryAggregateDestructor<GeosUnaryAggState, string_t, string_t, ST_MemUnion_Agg>(
 		    LogicalType::GEOMETRY(), LogicalType::GEOMETRY());
 
-		agg.bind = GeoTypes::PropagateCRS;
+		agg.SetBindCallback(GeoTypes::PropagateCRS);
 
 		FunctionBuilder::RegisterAggregate(loader, "ST_MemUnion_Agg", [&](AggregateFunctionBuilder &func) {
 			func.SetFunction(agg);
@@ -2494,7 +2494,7 @@ struct ST_Intersection_Agg : GeosUnaryAggFunction {
 		    AggregateFunction::UnaryAggregateDestructor<GeosUnaryAggState, string_t, string_t, ST_Intersection_Agg>(
 		        LogicalType::GEOMETRY(), LogicalType::GEOMETRY());
 
-		agg.bind = GeoTypes::PropagateCRS;
+		agg.SetBindCallback(GeoTypes::PropagateCRS);
 		FunctionBuilder::RegisterAggregate(loader, "ST_Intersection_Agg", [&](AggregateFunctionBuilder &func) {
 			func.SetFunction(agg);
 			func.CanThrowErrors();

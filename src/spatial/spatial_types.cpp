@@ -128,16 +128,16 @@ static unique_ptr<FunctionData> PropagateTypesInternal(ClientContext &context, B
 		}
 	}
 
-	const auto return_has_geom = TypeVisitor::Contains(bound_function.return_type, LogicalTypeId::GEOMETRY);
+	const auto return_has_geom = TypeVisitor::Contains(bound_function.GetReturnType(), LogicalTypeId::GEOMETRY);
 	if (found_crs && return_has_geom) {
 		// If the return type is geometry, we need to set the CRS on it as well
-		bound_function.return_type =
-		    TypeVisitor::VisitReplace(bound_function.return_type, [&](const LogicalType &type) {
+		bound_function.SetReturnType(
+		    TypeVisitor::VisitReplace(bound_function.GetReturnType(), [&](const LogicalType &type) {
 			    if (type.id() == LogicalTypeId::GEOMETRY) {
 				    return LogicalType::GEOMETRY(crs);
 			    }
 			    return type;
-		    });
+		    }));
 	}
 
 	return nullptr;

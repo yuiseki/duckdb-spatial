@@ -297,7 +297,7 @@ struct ST_Transform {
 
 		// Set return types
 		func.arguments[0] = geo_arg->return_type;
-		func.return_type = LogicalType::GEOMETRY(*result_crs);
+		func.SetReturnType(LogicalType::GEOMETRY(*result_crs));
 
 		// Check if we need to warn for this
 		if (!explicit_normalize) {

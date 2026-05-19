@@ -109,7 +109,7 @@ public:
 			// We can only optimize if the second child is a GEOMETRY
 			return false;
 		}
-		if (function.return_type != LogicalType::BOOLEAN) {
+		if (function.GetReturnType() != LogicalType::BOOLEAN) {
 			// We can only optimize if the return type is a BOOLEAN
 			return false;
 		}
