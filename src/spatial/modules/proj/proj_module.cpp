@@ -816,9 +816,9 @@ struct ST_Area_Spheroid {
 		auto &input = args.data[0];
 		auto count = args.size();
 
-		auto &ring_vec = ListVector::GetEntry(input);
-		auto ring_entries = ListVector::GetData(ring_vec);
-		auto &coord_vec = ListVector::GetEntry(ring_vec);
+		auto &ring_vec = ListVector::GetChild(input);
+		auto ring_entries = FlatVector::GetData<list_entry_t>(ring_vec);
+		auto &coord_vec = ListVector::GetChild(ring_vec);
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
 		auto x_data = FlatVector::GetData<double>(coord_vec_children[0]);
 		auto y_data = FlatVector::GetData<double>(coord_vec_children[1]);
@@ -1010,9 +1010,9 @@ struct ST_Perimeter_Spheroid {
 		auto &input = args.data[0];
 		auto count = args.size();
 
-		auto &ring_vec = ListVector::GetEntry(input);
-		auto ring_entries = ListVector::GetData(ring_vec);
-		auto &coord_vec = ListVector::GetEntry(ring_vec);
+		auto &ring_vec = ListVector::GetChild(input);
+		auto ring_entries = FlatVector::GetData<list_entry_t>(ring_vec);
+		auto &coord_vec = ListVector::GetChild(ring_vec);
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
 		auto x_data = FlatVector::GetData<double>(coord_vec_children[0]);
 		auto y_data = FlatVector::GetData<double>(coord_vec_children[1]);
@@ -1190,7 +1190,7 @@ struct ST_Length_Spheroid {
 		auto &line_vec = args.data[0];
 		auto count = args.size();
 
-		auto &coord_vec = ListVector::GetEntry(line_vec);
+		auto &coord_vec = ListVector::GetChild(line_vec);
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
 		auto x_data = FlatVector::GetData<double>(coord_vec_children[0]);
 		auto y_data = FlatVector::GetData<double>(coord_vec_children[1]);

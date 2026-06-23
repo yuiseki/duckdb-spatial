@@ -306,14 +306,14 @@ struct ST_AsMVTGeom {
 		UnifiedVectorFormat maxx_format;
 		UnifiedVectorFormat maxy_format;
 
-		args.data[0].ToUnifiedFormat(args.size(), geom_format);
-		args.data[1].ToUnifiedFormat(args.size(), bbox_format);
+		args.data[0].ToUnifiedFormat(geom_format);
+		args.data[1].ToUnifiedFormat(bbox_format);
 
 		auto &bbox_parts = StructVector::GetEntries(args.data[1]);
-		bbox_parts[0].ToUnifiedFormat(args.size(), minx_format);
-		bbox_parts[1].ToUnifiedFormat(args.size(), miny_format);
-		bbox_parts[2].ToUnifiedFormat(args.size(), maxx_format);
-		bbox_parts[3].ToUnifiedFormat(args.size(), maxy_format);
+		bbox_parts[0].ToUnifiedFormat(minx_format);
+		bbox_parts[1].ToUnifiedFormat(miny_format);
+		bbox_parts[2].ToUnifiedFormat(maxx_format);
+		bbox_parts[3].ToUnifiedFormat(maxy_format);
 
 		const auto geom_data = UnifiedVectorFormat::GetData<string_t>(geom_format);
 		const auto minx_data = UnifiedVectorFormat::GetData<double>(minx_format);
@@ -849,8 +849,8 @@ struct ST_ConvexHull {
 
 struct ST_CoverageClean {
 
-       static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
-                                                                                vector<unique_ptr<Expression>> &arguments) {
+       static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+               auto &arguments = input.GetArguments();
                // set default values for coverage_clean parameters
                const size_t num_args = arguments.size();
                if (num_args == 2) { // gap max width
@@ -870,15 +870,15 @@ struct ST_CoverageClean {
                UnifiedVectorFormat format;
 
                auto &list_vec = args.data[0];
-               auto &item_vec = ListVector::GetEntry(list_vec);
-               item_vec.ToUnifiedFormat(ListVector::GetListSize(list_vec), format);
+               auto &item_vec = ListVector::GetChild(list_vec);
+               item_vec.ToUnifiedFormat(format);
 
                // Collection to hold the working set of geometries
                GeosCollection collection(lstate.GetContext());
 
                TernaryExecutor::Execute<list_entry_t, double, double, string_t>(
                    list_vec, args.data[1], args.data[2],
-                   result, args.size(), [&](const list_entry_t &list,
+                   result, [&](const list_entry_t &list,
                        double snapping_distance, double gap_maximum_width) {
                            // Reset the collection
                            collection.clear();
@@ -970,8 +970,8 @@ struct ST_CoverageInvalidEdges {
 		UnifiedVectorFormat format;
 
 		auto &list_vec = args.data[0];
-		auto &item_vec = ListVector::GetEntry(list_vec);
-		item_vec.ToUnifiedFormat(ListVector::GetListSize(list_vec), format);
+		auto &item_vec = ListVector::GetChild(list_vec);
+		item_vec.ToUnifiedFormat(format);
 
 		// Collection to hold the working set of geometries
 		GeosCollection collection(lstate.GetContext());
@@ -1064,8 +1064,8 @@ struct ST_CoverageSimplify {
 		UnifiedVectorFormat format;
 
 		auto &list_vec = args.data[0];
-		auto &item_vec = ListVector::GetEntry(list_vec);
-		item_vec.ToUnifiedFormat(ListVector::GetListSize(list_vec), format);
+		auto &item_vec = ListVector::GetChild(list_vec);
+		item_vec.ToUnifiedFormat(format);
 
 		// Collection to hold the working set of geometries
 		GeosCollection collection(lstate.GetContext());
@@ -2035,8 +2035,8 @@ struct ST_Polygonize {
 		UnifiedVectorFormat format;
 
 		auto &list_vec = args.data[0];
-		auto &item_vec = ListVector::GetEntry(list_vec);
-		item_vec.ToUnifiedFormat(ListVector::GetListSize(list_vec), format);
+		auto &item_vec = ListVector::GetChild(list_vec);
+		item_vec.ToUnifiedFormat(format);
 
 		// Collection to hold the working set of geometries
 		GeosCollection collection(lstate.GetContext());
@@ -2607,7 +2607,7 @@ struct ST_MemUnion_Agg : GeosUnaryAggFunction {
 	}
 
 	static void Register(ExtensionLoader &loader) {
-		auto agg = AggregateFunction::UnaryAggregateDestructor<GeosUnaryAggState, string_t, string_t, ST_MemUnion_Agg>(
+		auto agg = AggregateFunction::UnaryAggregate<GeosUnaryAggState, string_t, string_t, ST_MemUnion_Agg>(
 		    LogicalType::GEOMETRY(), LogicalType::GEOMETRY());
 
 		agg.SetBindCallback(GeoTypes::PropagateCRS);
@@ -2635,7 +2635,7 @@ struct ST_Intersection_Agg : GeosUnaryAggFunction {
 
 	static void Register(ExtensionLoader &loader) {
 		auto agg =
-		    AggregateFunction::UnaryAggregateDestructor<GeosUnaryAggState, string_t, string_t, ST_Intersection_Agg>(
+		    AggregateFunction::UnaryAggregate<GeosUnaryAggState, string_t, string_t, ST_Intersection_Agg>(
 		        LogicalType::GEOMETRY(), LogicalType::GEOMETRY());
 
 		agg.SetBindCallback(GeoTypes::PropagateCRS);
@@ -2698,10 +2698,10 @@ struct ST_Union_Agg {
 		auto &geom_vec = inputs[0];
 
 		UnifiedVectorFormat geom_format;
-		geom_vec.ToUnifiedFormat(count, geom_format);
+		geom_vec.ToUnifiedFormat(geom_format);
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		const auto geom_ptr = UnifiedVectorFormat::GetData<string_t>(geom_format);
@@ -2725,7 +2725,7 @@ struct ST_Union_Agg {
 		D_ASSERT(aggr_input_data.combine_type == AggregateCombineType::ALLOW_DESTRUCTIVE);
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		const auto combined_ptr = FlatVector::GetDataMutable<State *>(combined);
@@ -2750,7 +2750,7 @@ struct ST_Union_Agg {
 		}
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		const auto combined_ptr = FlatVector::GetData<State *>(combined);
@@ -2772,7 +2772,7 @@ struct ST_Union_Agg {
 	                     idx_t offset) {
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 
@@ -2812,7 +2812,7 @@ struct ST_Union_Agg {
 
 	static void Destroy(Vector &state_vec, AggregateInputData &aggr, idx_t count) {
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
@@ -2898,7 +2898,7 @@ struct GEOSCoverageAggFunction {
 		D_ASSERT(aggr_input_data.combine_type == AggregateCombineType::ALLOW_DESTRUCTIVE);
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		const auto combined_ptr = FlatVector::GetDataMutable<State *>(combined);
@@ -2930,7 +2930,7 @@ struct GEOSCoverageAggFunction {
 		}
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		const auto combined_ptr = FlatVector::GetData<State *>(combined);
@@ -2964,7 +2964,7 @@ struct GEOSCoverageAggFunction {
 	                     idx_t offset) {
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 
@@ -2999,7 +2999,7 @@ struct GEOSCoverageAggFunction {
 
 	static void Destroy(Vector &state_vec, AggregateInputData &aggr, idx_t count) {
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
@@ -3041,16 +3041,16 @@ struct ST_CoverageSimplify_Agg : GEOSCoverageAggFunction {
 		auto &geom_vec = inputs[0];
 
 		UnifiedVectorFormat geom_format;
-		geom_vec.ToUnifiedFormat(count, geom_format);
+		geom_vec.ToUnifiedFormat(geom_format);
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		UnifiedVectorFormat tolerance_format;
-		inputs[1].ToUnifiedFormat(count, tolerance_format);
+		inputs[1].ToUnifiedFormat(tolerance_format);
 
 		UnifiedVectorFormat simplify_boundary_format;
-		inputs[2].ToUnifiedFormat(count, simplify_boundary_format);
+		inputs[2].ToUnifiedFormat(simplify_boundary_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		const auto geom_ptr = UnifiedVectorFormat::GetData<string_t>(geom_format);
@@ -3133,10 +3133,10 @@ struct ST_CoverageUnion_Agg : GEOSCoverageAggFunction {
 		auto &geom_vec = inputs[0];
 
 		UnifiedVectorFormat geom_format;
-		geom_vec.ToUnifiedFormat(count, geom_format);
+		geom_vec.ToUnifiedFormat(geom_format);
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		const auto geom_ptr = UnifiedVectorFormat::GetData<string_t>(geom_format);
@@ -3212,13 +3212,13 @@ struct ST_CoverageInvalidEdges_Agg : GEOSCoverageAggFunction {
 		auto &geom_vec = inputs[0];
 
 		UnifiedVectorFormat geom_format;
-		geom_vec.ToUnifiedFormat(count, geom_format);
+		geom_vec.ToUnifiedFormat(geom_format);
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		UnifiedVectorFormat tolerance_format;
-		inputs[1].ToUnifiedFormat(count, tolerance_format);
+		inputs[1].ToUnifiedFormat(tolerance_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		const auto geom_ptr = UnifiedVectorFormat::GetData<string_t>(geom_format);

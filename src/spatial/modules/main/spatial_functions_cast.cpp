@@ -380,7 +380,7 @@ struct LinestringCasts {
 		auto &lstate = LocalState::ResetAndGet(parameters);
 		auto &arena = lstate.GetArena();
 
-		auto &coord_vec = ListVector::GetEntry(source);
+		auto &coord_vec = ListVector::GetChild(source);
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
 		const auto x_data = FlatVector::GetData<double>(coord_vec_children[0]);
 		const auto y_data = FlatVector::GetData<double>(coord_vec_children[1]);
@@ -453,7 +453,7 @@ struct LinestringCasts {
 			ListVector::Reserve(result, total_coords);
 
 			// Re-fetch the coord vector children, as the ListVector::Reserve() call may have invalidated the pointers
-			auto &coord_vec = ListVector::GetEntry(result);
+			auto &coord_vec = ListVector::GetChildMutable(result);
 			auto &coord_vec_children = StructVector::GetEntries(coord_vec);
 
 			auto x_data = FlatVector::GetDataMutable<double>(coord_vec_children[0]);
@@ -498,7 +498,7 @@ struct LinestringCasts {
 	// LINESTRING_3D -> LINESTRING_2D
 	//------------------------------------------------------------------------------------------------------------------
 	static bool ToLine2DCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
-		auto &coord_src = ListVector::GetEntry(source);
+		auto &coord_src = ListVector::GetChild(source);
 		auto &coord_src_children = StructVector::GetEntries(coord_src);
 		const auto x_src = FlatVector::GetData<double>(coord_src_children[0]);
 		const auto y_src = FlatVector::GetData<double>(coord_src_children[1]);
@@ -513,7 +513,7 @@ struct LinestringCasts {
 			ListVector::Reserve(result, total_coords);
 
 			// Re-fetch the coord vector children, as the ListVector::Reserve() call may have invalidated the pointers
-			auto &coord_dst = ListVector::GetEntry(result);
+			auto &coord_dst = ListVector::GetChildMutable(result);
 			auto &coord_dst_children = StructVector::GetEntries(coord_dst);
 
 			auto x_dst = FlatVector::GetDataMutable<double>(coord_dst_children[0]);
@@ -584,13 +584,14 @@ struct PolygonCasts {
 		auto &lstate = LocalState::ResetAndGet(parameters);
 		auto &arena = lstate.GetArena();
 
-		auto &ring_vec = ListVector::GetEntry(source);
-		const auto ring_entries = ListVector::GetData(ring_vec);
-		const auto &coord_vec = ListVector::GetEntry(ring_vec);
+		auto &ring_vec = ListVector::GetChild(source);
+		const auto ring_entries = FlatVector::GetData<list_entry_t>(ring_vec);
+		const auto &coord_vec = ListVector::GetChild(ring_vec);
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
 		const auto x_data = FlatVector::GetData<double>(coord_vec_children[0]);
 		const auto y_data = FlatVector::GetData<double>(coord_vec_children[1]);
 		const auto z_data = HAS_Z ? FlatVector::GetData<double>(coord_vec_children[2]) : nullptr;
+
 
 		const auto coord_size = HAS_Z ? 3 : 2;
 
@@ -652,7 +653,7 @@ struct PolygonCasts {
 	template <bool HAS_Z>
 	static bool FromGeometryCastTemplate(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 		auto &lstate = LocalState::ResetAndGet(parameters);
-		auto &ring_vec = ListVector::GetEntry(result);
+		auto &ring_vec = ListVector::GetChildMutable(result);
 
 		idx_t total_rings = 0;
 		idx_t total_coords = 0;
@@ -686,8 +687,8 @@ struct PolygonCasts {
 
 					ListVector::Reserve(ring_vec, total_coords + ring_size);
 
-					const auto ring_entries = ListVector::GetData(ring_vec);
-					auto &coord_vec = ListVector::GetEntry(ring_vec);
+					const auto ring_entries = FlatVector::GetDataMutable<list_entry_t>(ring_vec);
+					auto &coord_vec = ListVector::GetChildMutable(ring_vec);
 					auto &coord_vec_children = StructVector::GetEntries(coord_vec);
 					auto x_data = FlatVector::GetDataMutable<double>(coord_vec_children[0]);
 					auto y_data = FlatVector::GetDataMutable<double>(coord_vec_children[1]);
@@ -744,11 +745,11 @@ struct PolygonCasts {
 	// POLYGON_3D -> POLYGON_2D
 	//------------------------------------------------------------------------------------------------------------------
 	static bool ToPolygon2DCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
-		auto &ring_dst = ListVector::GetEntry(result);
+		auto &ring_dst = ListVector::GetChildMutable(result);
 
-		auto &ring_src = ListVector::GetEntry(source);
-		const auto ring_entries_src = ListVector::GetData(ring_src);
-		const auto &coord_src = ListVector::GetEntry(ring_src);
+		auto &ring_src = ListVector::GetChild(source);
+		const auto ring_entries_src = FlatVector::GetData<list_entry_t>(ring_src);
+		const auto &coord_src = ListVector::GetChild(ring_src);
 		auto &coord_src_children = StructVector::GetEntries(coord_src);
 		const auto x_src = FlatVector::GetData<double>(coord_src_children[0]);
 		const auto y_src = FlatVector::GetData<double>(coord_src_children[1]);
@@ -767,8 +768,8 @@ struct PolygonCasts {
 
 				ListVector::Reserve(ring_dst, total_coords + ring_size);
 
-				const auto ring_entries_dst = ListVector::GetData(ring_dst);
-				auto &coord_dst = ListVector::GetEntry(ring_dst);
+				const auto ring_entries_dst = FlatVector::GetDataMutable<list_entry_t>(ring_dst);
+				auto &coord_dst = ListVector::GetChildMutable(ring_dst);
 				auto &coord_dst_children = StructVector::GetEntries(coord_dst);
 				auto x_dst = FlatVector::GetDataMutable<double>(coord_dst_children[0]);
 				auto y_dst = FlatVector::GetDataMutable<double>(coord_dst_children[1]);
@@ -966,7 +967,7 @@ void CoreVectorOperations::Point4DToVarchar(Vector &source, Vector &result, idx_
 // LINESTRING_2D -> VARCHAR
 //------------------------------------------------------------------------------
 void CoreVectorOperations::LineString2DToVarchar(Vector &source, Vector &result, idx_t count) {
-	auto &inner = ListVector::GetEntry(source);
+	auto &inner = ListVector::GetChild(source);
 	auto &children = StructVector::GetEntries(inner);
 	auto x_data = FlatVector::GetData<double>(children[0]);
 	auto y_data = FlatVector::GetData<double>(children[1]);
@@ -995,7 +996,7 @@ void CoreVectorOperations::LineString2DToVarchar(Vector &source, Vector &result,
 // LINESTRING_3D -> VARCHAR
 //------------------------------------------------------------------------------
 void CoreVectorOperations::LineString3DToVarchar(Vector &source, Vector &result, idx_t count) {
-	auto &inner = ListVector::GetEntry(source);
+	auto &inner = ListVector::GetChild(source);
 	auto &children = StructVector::GetEntries(inner);
 	auto x_data = FlatVector::GetData<double>(children[0]);
 	auto y_data = FlatVector::GetData<double>(children[1]);
@@ -1026,9 +1027,9 @@ void CoreVectorOperations::LineString3DToVarchar(Vector &source, Vector &result,
 //------------------------------------------------------------------------------
 void CoreVectorOperations::Polygon2DToVarchar(Vector &source, Vector &result, idx_t count) {
 	auto &poly_vector = source;
-	auto &ring_vector = ListVector::GetEntry(poly_vector);
-	auto ring_entries = ListVector::GetData(ring_vector);
-	auto &point_vector = ListVector::GetEntry(ring_vector);
+	auto &ring_vector = ListVector::GetChild(poly_vector);
+	auto ring_entries = FlatVector::GetData<list_entry_t>(ring_vector);
+	auto &point_vector = ListVector::GetChild(ring_vector);
 	auto &point_children = StructVector::GetEntries(point_vector);
 	auto x_data = FlatVector::GetData<double>(point_children[0]);
 	auto y_data = FlatVector::GetData<double>(point_children[1]);
@@ -1068,9 +1069,9 @@ void CoreVectorOperations::Polygon2DToVarchar(Vector &source, Vector &result, id
 //------------------------------------------------------------------------------
 void CoreVectorOperations::Polygon3DToVarchar(Vector &source, Vector &result, idx_t count) {
 	auto &poly_vector = source;
-	auto &ring_vector = ListVector::GetEntry(poly_vector);
-	auto ring_entries = ListVector::GetData(ring_vector);
-	auto &point_vector = ListVector::GetEntry(ring_vector);
+	auto &ring_vector = ListVector::GetChild(poly_vector);
+	auto ring_entries = FlatVector::GetData<list_entry_t>(ring_vector);
+	auto &point_vector = ListVector::GetChild(ring_vector);
 	auto &point_children = StructVector::GetEntries(point_vector);
 	auto x_data = FlatVector::GetData<double>(point_children[0]);
 	auto y_data = FlatVector::GetData<double>(point_children[1]);

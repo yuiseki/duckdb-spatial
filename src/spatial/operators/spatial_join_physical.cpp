@@ -915,17 +915,17 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 
 			// Compute the probe side join key
 			lstate.join_probe_executor.Execute(input, lstate.probe_side_key_chunk);
-			lstate.probe_side_key_chunk.data[0].ToUnifiedFormat(input.size(), lstate.probe_side_key_vformat);
+			lstate.probe_side_key_chunk.data[0].ToUnifiedFormat(lstate.probe_side_key_vformat);
 
 			// Setup bounding box
 			lstate.bbox_probe_executor.Execute(lstate.probe_side_key_chunk, lstate.probe_side_box_chunk);
-			lstate.probe_side_box_chunk.data[0].ToUnifiedFormat(input.size(), lstate.probe_side_box_vformat);
+			lstate.probe_side_box_chunk.data[0].ToUnifiedFormat(lstate.probe_side_box_vformat);
 
 			auto &entries = StructVector::GetEntries(lstate.probe_side_box_chunk.data[0]);
-			entries[0].ToUnifiedFormat(input.size(), lstate.probe_side_box_xmin_vformat);
-			entries[1].ToUnifiedFormat(input.size(), lstate.probe_side_box_ymin_vformat);
-			entries[2].ToUnifiedFormat(input.size(), lstate.probe_side_box_xmax_vformat);
-			entries[3].ToUnifiedFormat(input.size(), lstate.probe_side_box_ymax_vformat);
+			entries[0].ToUnifiedFormat(lstate.probe_side_box_xmin_vformat);
+			entries[1].ToUnifiedFormat(lstate.probe_side_box_ymin_vformat);
+			entries[2].ToUnifiedFormat(lstate.probe_side_box_xmax_vformat);
+			entries[3].ToUnifiedFormat(lstate.probe_side_box_ymax_vformat);
 
 			// Reference the columns that we actually care about
 			lstate.probe_side_row_chunk.ReferenceColumns(input, probe_side_output_columns);
