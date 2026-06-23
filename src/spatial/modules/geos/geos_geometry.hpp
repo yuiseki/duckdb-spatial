@@ -3,6 +3,7 @@
 #include "geos_c.h"
 
 #include "duckdb/common/vector.hpp"
+#include "duckdb/common/unique_ptr.hpp"
 
 namespace duckdb {
 
@@ -96,6 +97,7 @@ public:
 	GeosGeometry get_buffer_style(double distance, int quadsegs, int endcap_style, int join_style,
 	                              double mitre_limit) const;
 
+	GeosGeometry get_coverage_clean(double snapping_distance, double gap_maximum_width) const;
 	GeosGeometry get_coverage_invalid_edges(double tolerance) const;
 	GeosGeometry get_coverage_simplified(double tolerance, bool preserve_boundary) const;
 	GeosGeometry get_coverage_union() const;
@@ -507,11 +509,53 @@ inline GeosGeometry GeosGeometry::get_buffer_style(double distance, int quadsegs
 	return GeosGeometry(handle, buffer);
 }
 
+inline GeosGeometry GeosGeometry::get_coverage_clean(double snapping_distance, double gap_maximum_width) const {
+
+	auto *params_raw = GEOSCoverageCleanParams_create_r(handle);
+	if (!params_raw) {
+		// Failed to allocate params; return an empty/invalid geometry handle
+		return GeosGeometry(handle, nullptr);
+	}
+
+	// ensure params tidy themselves up after use
+	struct ParamsDeleter {
+		GEOSContextHandle_t h;
+		void operator()(GEOSCoverageCleanParams *p) const {
+			if (p) {
+				GEOSCoverageCleanParams_destroy_r(h, p);
+			}
+		}
+	};
+
+	unique_ptr<GEOSCoverageCleanParams, ParamsDeleter> params(params_raw, ParamsDeleter{handle});
+
+	// Conditionally set optional parameters; check return codes and fail fast
+	if (snapping_distance >= 0) {
+		if (!GEOSCoverageCleanParams_setSnappingDistance_r(handle, params.get(), snapping_distance)) {
+			return GeosGeometry(handle, nullptr);
+		}
+	}
+	if (gap_maximum_width >= 0) {
+		if (!GEOSCoverageCleanParams_setGapMaximumWidth_r(handle, params.get(), gap_maximum_width)) {
+			return GeosGeometry(handle, nullptr);
+		}
+	}
+
+	// Overlap merge strategy: using a literal to avoid a dependency on enum values when I don't know the wider impact
+	// 0 is MERGE_LONGEST_BORDER
+	if (!GEOSCoverageCleanParams_setOverlapMergeStrategy_r(handle, params.get(), 0)) {
+		return GeosGeometry(handle, nullptr);
+	}
+
+	return GeosGeometry(handle, GEOSCoverageCleanWithParams_r(handle, geom, params.get()));
+}
+
 inline GeosGeometry GeosGeometry::get_coverage_invalid_edges(double tolerance) const {
 	GEOSGeometry *output = nullptr;
 	GEOSCoverageIsValid_r(handle, geom, tolerance, &output);
 	return GeosGeometry(handle, output);
 }
+
 inline GeosGeometry GeosGeometry::get_coverage_simplified(double tolerance, bool preserve_boundary) const {
 	return GeosGeometry(handle, GEOSCoverageSimplifyVW_r(handle, geom, tolerance, preserve_boundary));
 }
