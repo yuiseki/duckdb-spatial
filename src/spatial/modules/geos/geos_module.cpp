@@ -851,15 +851,20 @@ struct ST_CoverageClean {
 
        static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
                auto &arguments = input.GetArguments();
+               auto &bound_function = input.GetBoundFunction();
                // set default values for coverage_clean parameters
+               // also extend the declared argument types so they match the padded argument expressions
                const size_t num_args = arguments.size();
                if (num_args == 2) { // gap max width
                     arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
+                    bound_function.GetArguments().push_back(LogicalType::DOUBLE);
                }
 
                if (num_args == 1) { // snapping distance, gap max width
                		arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
                     arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
+                    bound_function.GetArguments().push_back(LogicalType::DOUBLE);
+                    bound_function.GetArguments().push_back(LogicalType::DOUBLE);
                }
 
                return nullptr;
