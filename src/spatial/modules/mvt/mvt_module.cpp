@@ -982,7 +982,7 @@ struct ST_AsMVT {
 					                            "DOUBLE, INTEGER, BIGINT, BOOLEAN",
 					                            name.c_str(), type_name.c_str());
 				}
-				result->tag_names.push_back(name);
+				result->tag_names.emplace_back(name);
 			}
 		}
 
@@ -1178,7 +1178,7 @@ struct ST_AsMVT {
 	//------------------------------------------------------------------------------------------------------------------
 	// Finalize
 	//------------------------------------------------------------------------------------------------------------------
-	static void Finalize(Vector &state_vec, AggregateInputData &aggr, Vector &result, idx_t count, idx_t offset) {
+	static void Finalize(Vector &state_vec, AggregateFinalizeInputData &aggr, Vector &result, idx_t count, idx_t offset) {
 		const auto &bdata = aggr.bind_data->Cast<BindData>();
 
 		UnifiedVectorFormat state_format;

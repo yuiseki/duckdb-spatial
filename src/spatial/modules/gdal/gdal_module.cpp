@@ -743,12 +743,12 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 			continue;
 		}
 		const auto &func = expr->Cast<BoundFunctionExpression>();
-		if (func.children.size() != 2) {
+		if (func.GetChildren().size() != 2) {
 			continue;
 		}
 
-		if (func.children[0]->GetReturnType().id() != LogicalTypeId::GEOMETRY ||
-		    func.children[1]->GetReturnType().id() != LogicalTypeId::GEOMETRY) {
+		if (func.GetChildren()[0]->GetReturnType().id() != LogicalTypeId::GEOMETRY ||
+		    func.GetChildren()[1]->GetReturnType().id() != LogicalTypeId::GEOMETRY) {
 			continue;
 		}
 
@@ -759,7 +759,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 
 		auto found = false;
 		for (const auto &name : geometry_predicates) {
-			if (StringUtil::CIEquals(func.function.GetName().c_str(), name)) {
+			if (StringUtil::CIEquals(func.Function().GetName().c_str(), name)) {
 				found = true;
 				break;
 			}
@@ -769,8 +769,8 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 			continue;
 		}
 
-		const auto lhs_kind = func.children[0]->GetExpressionType();
-		const auto rhs_kind = func.children[1]->GetExpressionType();
+		const auto lhs_kind = func.GetChildren()[0]->GetExpressionType();
+		const auto rhs_kind = func.GetChildren()[1]->GetExpressionType();
 
 		const auto lhs_is_const = lhs_kind == ExpressionType::VALUE_CONSTANT;
 		const auto rhs_is_const = rhs_kind == ExpressionType::VALUE_CONSTANT;
@@ -780,8 +780,8 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 			continue;
 		}
 
-		auto &constant_expr = func.children[lhs_is_const ? 0 : 1]->Cast<BoundConstantExpression>();
-		auto &geometry_expr = func.children[lhs_is_const ? 1 : 0];
+		auto &constant_expr = func.GetChildren()[lhs_is_const ? 0 : 1]->Cast<BoundConstantExpression>();
+		auto &geometry_expr = func.GetChildren()[lhs_is_const ? 1 : 0];
 
 		auto found_geom_expr = false;
 		auto multi_geom_expr = false;
@@ -791,13 +791,13 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 				    multi_geom_expr = true;
 				    return;
 			    }
-			    if (ref.binding.table_index != get.table_index) {
+			    if (ref.Binding().table_index != get.table_index) {
 				    // Not from the same table
 				    return;
 			    }
 
 			    const auto &col_ids = get.GetColumnIds();
-			    const auto &col = col_ids[ref.binding.column_index];
+			    const auto &col = col_ids[ref.Binding().column_index];
 
 			    if (!col.HasPrimaryIndex()) {
 				    return;
@@ -813,11 +813,11 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 			continue;
 		}
 
-		if (constant_expr.value.type().id() != LogicalTypeId::GEOMETRY) {
+		if (constant_expr.GetValue().type().id() != LogicalTypeId::GEOMETRY) {
 			// Constant is not geometry
 			continue;
 		}
-		if (constant_expr.value.IsNull()) {
+		if (constant_expr.GetValue().IsNull()) {
 			// Constant is NULL
 			continue;
 		}
@@ -827,7 +827,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		}
 
 		auto geom_extent = GeometryExtent::Empty();
-		auto geom_binary = string_t(StringValue::Get(constant_expr.value));
+		auto geom_binary = string_t(StringValue::Get(constant_expr.GetValue()));
 
 		if (Geometry::GetExtent(geom_binary, geom_extent)) {
 			bdata.has_filter = true;
@@ -841,7 +841,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		// We can __ONLY__ do this if the filter predicate is "&&" or "st_intersects_extent"
 		// as other predicates may require exact geometry evaluation, the filter cannot be fully removed
 		for (auto &name : {"&&", "ST_Intersects_Extent"}) {
-			if (StringUtil::CIEquals(func.function.GetName().c_str(), name)) {
+			if (StringUtil::CIEquals(func.Function().GetName().c_str(), name)) {
 				geom_filter_idx = expr_idx;
 				break;
 			}
@@ -1253,7 +1253,7 @@ bool MatchOption(const char *name, const pair<string, vector<Value>> &option, bo
 	return false;
 }
 
-auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<string> &names,
+auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<Identifier> &names,
           const vector<LogicalType> &sql_types) -> unique_ptr<FunctionData> {
 	auto result = make_uniq<BindData>();
 
@@ -1383,7 +1383,7 @@ auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<str
 	// Setup arrow schema
 	result->props = context.GetClientProperties();
 	result->extension_type_cast = duckdb::ArrowTypeExtensionData::GetExtensionTypes(context, sql_types);
-	ArrowConverter::ToArrowSchema(&result->schema, sql_types, names, result->props);
+	ArrowConverter::ToArrowSchema(&result->schema, sql_types, IdentifiersToStrings(names), result->props);
 
 	return std::move(result);
 }

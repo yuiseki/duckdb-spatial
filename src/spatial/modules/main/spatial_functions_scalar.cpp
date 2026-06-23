@@ -2704,7 +2704,7 @@ struct ST_DistanceWithin {
 		} else {
 			// No distance argument, so we use the bind data
 			const auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-			const auto &bind_data = func_expr.bind_info->Cast<BindData>();
+			const auto &bind_data = func_expr.BindInfo()->Cast<BindData>();
 
 			const auto distance = bind_data.distance;
 
@@ -4628,7 +4628,7 @@ struct ST_GeomFromText {
 		auto &alloc = lstate.GetAllocator();
 
 		const auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-		const auto &bind_data = func_expr.bind_info->Cast<BindData>();
+		const auto &bind_data = func_expr.BindInfo()->Cast<BindData>();
 		const auto ignore_invalid = bind_data.ignore_invalid;
 
 		sgl::wkt_reader reader(alloc);
@@ -5834,7 +5834,7 @@ struct ST_Distance_Sphere {
 
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
-		auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<BindData>();
+		auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<BindData>();
 
 		// Depending on the axis order setting, switch the order of coordinates for the haversine distance calculation
 		const auto compute = bdata.always_xy ? ComputeDistance<true> : ComputeDistance<false>;
@@ -5868,7 +5868,7 @@ struct ST_Distance_Sphere {
 	static void ExecutePoint(DataChunk &args, ExpressionState &state, Vector &result) {
 		D_ASSERT(args.data.size() == 2);
 
-		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<BindData>();
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<BindData>();
 
 		auto &left = args.data[0];
 		auto &right = args.data[1];

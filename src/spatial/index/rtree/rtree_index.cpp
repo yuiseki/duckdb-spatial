@@ -73,12 +73,13 @@ static RTreeConfig ParseOptions(const case_insensitive_map_t<Value> &options) {
 //------------------------------------------------------------------------------
 
 // Constructor
-RTreeIndex::RTreeIndex(const string &name, IndexConstraintType index_constraint_type,
+RTreeIndex::RTreeIndex(const Identifier &name, IndexConstraintType index_constraint_type,
                        const vector<column_t> &column_ids, TableIOManager &table_io_manager,
                        const vector<unique_ptr<Expression>> &unbound_expressions, AttachedDatabase &db,
                        const case_insensitive_map_t<Value> &options, ClientContext &context,
                        const IndexStorageInfo &info, idx_t estimated_cardinality)
-    : BoundIndex(name, TYPE_NAME, index_constraint_type, column_ids, table_io_manager, unbound_expressions, db) {
+    : BoundIndex(Identifier(name), TYPE_NAME, index_constraint_type, column_ids, table_io_manager, unbound_expressions,
+                 db) {
 
 	if (index_constraint_type != IndexConstraintType::NONE) {
 		throw NotImplementedException("RTree indexes do not support unique or primary key constraints");
@@ -111,7 +112,7 @@ RTreeIndex::RTreeIndex(const string &name, IndexConstraintType index_constraint_
 	// Construct the key expression executor
 	auto &source_type = unbound_expressions[0]->GetReturnType();
 	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_Extent_Approx");
+	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, Identifier::DefaultSchema(), "ST_Extent_Approx");
 	const auto &func = entry.functions.GetFunctionByArguments(context, {source_type});
 	auto child_expr = make_uniq<BoundReferenceExpression>(source_type, 0);
 

@@ -294,7 +294,7 @@ struct ST_AsMVTGeom {
 
 		// Bind data
 		const auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-		const auto &bind_data = func_expr.bind_info->Cast<BindData>();
+		const auto &bind_data = func_expr.BindInfo()->Cast<BindData>();
 
 		// Local state
 		auto &lstate = LocalState::ResetAndGet(state);
@@ -1041,8 +1041,8 @@ struct ST_CoverageUnion {
 		UnifiedVectorFormat format;
 
 		auto &list_vec = args.data[0];
-		auto &item_vec = ListVector::GetEntry(list_vec);
-		item_vec.ToUnifiedFormat(ListVector::GetListSize(list_vec), format);
+		auto &item_vec = ListVector::GetChild(list_vec);
+		item_vec.ToUnifiedFormat(format);
 
 		// Collection to hold the working set of geometries
 		GeosCollection collection(lstate.GetContext());
@@ -2625,7 +2625,7 @@ struct ST_Union_Agg {
 		}
 	}
 
-	static void Finalize(Vector &state_vec, AggregateInputData &aggr_input_data, Vector &result, idx_t count,
+	static void Finalize(Vector &state_vec, AggregateFinalizeInputData &aggr_input_data, Vector &result, idx_t count,
 	                     idx_t offset) {
 
 		UnifiedVectorFormat state_format;
@@ -2815,7 +2815,7 @@ struct GEOSCoverageAggFunction {
 	}
 
 	template <class OP>
-	static void Finalize(Vector &state_vec, AggregateInputData &aggr_input_data, Vector &result, idx_t count,
+	static void Finalize(Vector &state_vec, AggregateFinalizeInputData &aggr_input_data, Vector &result, idx_t count,
 	                     idx_t offset) {
 
 		UnifiedVectorFormat state_format;

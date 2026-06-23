@@ -175,8 +175,8 @@ static InsertionOrderPreservingMap<string> RTreeIndexScanToString(TableFunctionT
 	D_ASSERT(input.bind_data);
 	InsertionOrderPreservingMap<string> result;
 	auto &bind_data = input.bind_data->Cast<RTreeIndexScanBindData>();
-	result["Table"] = bind_data.table.name;
-	result["Index"] = bind_data.index.GetIndexName();
+	result["Table"] = bind_data.table.name.GetIdentifierName();
+	result["Index"] = bind_data.index.GetIndexName().GetIdentifierName();
 	return result;
 }
 
@@ -205,7 +205,7 @@ static unique_ptr<FunctionData> RTreeScanDeserialize(Deserializer &deserializer,
 	const auto catalog = deserializer.ReadProperty<string>(100, "catalog");
 	const auto schema = deserializer.ReadProperty<string>(101, "schema");
 	const auto table = deserializer.ReadProperty<string>(102, "table");
-	auto &catalog_entry = Catalog::GetEntry<TableCatalogEntry>(context, catalog, schema, table);
+	auto &catalog_entry = Catalog::GetEntry<TableCatalogEntry>(context, Identifier(catalog), Identifier(schema), Identifier(table));
 	if (catalog_entry.type != CatalogType::TABLE_ENTRY) {
 		throw SerializationException("Cant find table for %s.%s", schema, table);
 	}

@@ -18,7 +18,7 @@ public:
 	static constexpr auto TYPE_NAME = "RTREE";
 
 public:
-	RTreeIndex(const string &name, IndexConstraintType index_constraint_type, const vector<column_t> &column_ids,
+	RTreeIndex(const Identifier &name, IndexConstraintType index_constraint_type, const vector<column_t> &column_ids,
 	           TableIOManager &table_io_manager, const vector<unique_ptr<Expression>> &unbound_expressions,
 	           AttachedDatabase &db, const case_insensitive_map_t<Value> &options, ClientContext &context,
 	           const IndexStorageInfo &info = IndexStorageInfo(), idx_t estimated_cardinality = 0);
