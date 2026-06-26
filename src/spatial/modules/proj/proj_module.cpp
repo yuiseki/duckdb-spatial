@@ -113,13 +113,17 @@ void ProjModule::RegisterVFS(ExtensionLoader &loader) {
 		sqlite3 *sdb = nullptr;
 		const auto sok = sqlite3_open_v2(path.c_str(), &sdb, SQLITE_OPEN_READONLY, "memvfs");
 		if (sok != SQLITE_OK) {
+			sqlite3_close_v2(sdb);
 			throw InternalException("Could not open sqlite3 memvfs database");
 		}
 
 		const auto ok = proj_context_set_database_path(nullptr, path.c_str(), nullptr, nullptr);
 		if (!ok) {
+			sqlite3_close_v2(sdb);
 			throw InternalException("Could not set proj.db path");
 		}
+
+		sqlite3_close_v2(sdb);
 	});
 }
 
