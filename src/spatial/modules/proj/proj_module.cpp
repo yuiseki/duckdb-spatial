@@ -418,7 +418,7 @@ struct ST_Transform {
 
 		auto &lstate = LocalState::ResetAndGet(state);
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-		const auto &info = func_expr.bind_info->Cast<BindData>();
+		const auto &info = func_expr.BindInfo()->Cast<BindData>();
 
 		GenericExecutor::ExecuteTernary<POINT_TYPE, PROJ_TYPE, PROJ_TYPE, POINT_TYPE>(
 		    args.data[0], args.data[1], args.data[2], result, args.size(),
@@ -446,7 +446,7 @@ struct ST_Transform {
 
 		auto &lstate = LocalState::ResetAndGet(state);
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-		const auto &info = func_expr.bind_info->Cast<BindData>();
+		const auto &info = func_expr.BindInfo()->Cast<BindData>();
 
 		GenericExecutor::ExecuteTernary<BOX_TYPE, PROJ_TYPE, PROJ_TYPE, BOX_TYPE>(
 		    args.data[0], args.data[1], args.data[2], result, args.size(),
@@ -472,7 +472,7 @@ struct ST_Transform {
 		auto &lstate = LocalState::ResetAndGet(state);
 		auto &alloc = lstate.allocator;
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-		const auto &info = func_expr.bind_info->Cast<BindData>();
+		const auto &info = func_expr.BindInfo()->Cast<BindData>();
 
 		TernaryExecutor::Execute<string_t, string_t, string_t, string_t>(
 		    args.data[0], args.data[1], args.data[2], result,
@@ -504,7 +504,7 @@ struct ST_Transform {
 		auto &lstate = LocalState::ResetAndGet(state);
 		auto &alloc = lstate.allocator;
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-		const auto &info = func_expr.bind_info->Cast<TypedBindData>();
+		const auto &info = func_expr.BindInfo()->Cast<TypedBindData>();
 
 		const auto crs = lstate.GetOrCreateProjection(info.source_crs, info.target_crs, info.normalize);
 
@@ -811,14 +811,14 @@ struct ST_Area_Spheroid {
 	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
 		D_ASSERT(args.data.size() == 1);
 
-		auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+		auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<GeodesicBindData>();
 
 		auto &input = args.data[0];
 		auto count = args.size();
 
-		auto &ring_vec = ListVector::GetEntry(input);
-		auto ring_entries = ListVector::GetData(ring_vec);
-		auto &coord_vec = ListVector::GetEntry(ring_vec);
+		auto &ring_vec = ListVector::GetChild(input);
+		auto ring_entries = FlatVector::GetData<list_entry_t>(ring_vec);
+		auto &coord_vec = ListVector::GetChild(ring_vec);
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
 		auto x_data = FlatVector::GetData<double>(coord_vec_children[0]);
 		auto y_data = FlatVector::GetData<double>(coord_vec_children[1]);
@@ -925,7 +925,7 @@ struct ST_Area_Spheroid {
 
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
-		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<GeodesicBindData>();
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
@@ -1005,14 +1005,14 @@ struct ST_Perimeter_Spheroid {
 	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
 		D_ASSERT(args.data.size() == 1);
 
-		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<GeodesicBindData>();
 
 		auto &input = args.data[0];
 		auto count = args.size();
 
-		auto &ring_vec = ListVector::GetEntry(input);
-		auto ring_entries = ListVector::GetData(ring_vec);
-		auto &coord_vec = ListVector::GetEntry(ring_vec);
+		auto &ring_vec = ListVector::GetChild(input);
+		auto ring_entries = FlatVector::GetData<list_entry_t>(ring_vec);
+		auto &coord_vec = ListVector::GetChild(ring_vec);
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
 		auto x_data = FlatVector::GetData<double>(coord_vec_children[0]);
 		auto y_data = FlatVector::GetData<double>(coord_vec_children[1]);
@@ -1106,7 +1106,7 @@ struct ST_Perimeter_Spheroid {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
-		auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+		auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<GeodesicBindData>();
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
 			sgl::geometry geom;
@@ -1185,12 +1185,12 @@ struct ST_Length_Spheroid {
 	static void ExecuteLineString(DataChunk &args, ExpressionState &state, Vector &result) {
 		D_ASSERT(args.data.size() == 1);
 
-		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<GeodesicBindData>();
 
 		auto &line_vec = args.data[0];
 		auto count = args.size();
 
-		auto &coord_vec = ListVector::GetEntry(line_vec);
+		auto &coord_vec = ListVector::GetChild(line_vec);
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
 		auto x_data = FlatVector::GetData<double>(coord_vec_children[0]);
 		auto y_data = FlatVector::GetData<double>(coord_vec_children[1]);
@@ -1262,7 +1262,7 @@ struct ST_Length_Spheroid {
 
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
-		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<GeodesicBindData>();
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
@@ -1343,7 +1343,7 @@ struct ST_Distance_Spheroid {
 		geod_geodesic geod = {};
 		geod_init(&geod, EARTH_A, EARTH_F);
 
-		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<GeodesicBindData>();
 
 		if (bdata.always_xy) {
 			GenericExecutor::ExecuteBinary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE>(
@@ -1416,7 +1416,7 @@ struct ST_DWithin_Spheroid {
 		geod_geodesic geod = {};
 		geod_init(&geod, EARTH_A, EARTH_F);
 
-		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<GeodesicBindData>();
 
 		if (bdata.always_xy) {
 			GenericExecutor::ExecuteTernary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE, BOOL_TYPE>(
@@ -1579,14 +1579,14 @@ public:
 	}
 
 public:
-	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const string &entry_name) override {
+	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const Identifier &entry_name) override {
 
 		if (schema.name != DEFAULT_SCHEMA) {
 			return nullptr;
 		}
 
 		// Try to split name by ":"
-		auto parts = StringUtil::Split(entry_name, ":");
+		auto parts = StringUtil::Split(entry_name.GetIdentifierName(), ":");
 		if (parts.size() != 2) {
 			return nullptr;
 		}
@@ -1631,13 +1631,13 @@ public:
 		return std::move(result);
 	}
 
-	vector<string> GetDefaultEntries() override {
+	vector<Identifier> GetDefaultEntries() override {
 
 		if (schema.name != DEFAULT_SCHEMA) {
 			return {};
 		}
 
-		vector<string> entries;
+		vector<Identifier> entries;
 
 		auto scan_authority = [&](const char *auth) {
 			int ncrs = 0;
@@ -1652,7 +1652,7 @@ public:
 						continue;
 					}
 
-					entries.push_back(StringUtil::Format("%s:%s", auth_name, auth_code));
+					entries.emplace_back(StringUtil::Format("%s:%s", auth_name, auth_code));
 				}
 			}
 
@@ -1672,7 +1672,7 @@ public:
 		auto &db = loader.GetDatabaseInstance();
 		auto system_transaction = CatalogTransaction::GetSystemTransaction(db);
 		auto &catalog = Catalog::GetSystemCatalog(db);
-		auto &schema = catalog.GetSchema(system_transaction, DEFAULT_SCHEMA);
+		auto &schema = catalog.GetSchema(system_transaction, Identifier::DefaultSchema());
 		auto &duck_schema = schema.Cast<DuckSchemaEntry>();
 
 		auto &set = duck_schema.GetCatalogSet(CatalogType::COORDINATE_SYSTEM_ENTRY);

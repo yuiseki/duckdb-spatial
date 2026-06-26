@@ -386,7 +386,7 @@ private:
 
 static unique_ptr<Expression> GetBBOXExpression(ClientContext &context, const LogicalType &geom_type) {
 	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_Extent_Approx");
+	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, Identifier::DefaultSchema(), "ST_Extent_Approx");
 	const auto &func = entry.functions.GetFunctionByArguments(context, {geom_type});
 
 	auto child_expr = make_uniq<BoundReferenceExpression>(geom_type, 0);
@@ -415,8 +415,8 @@ PhysicalSpatialJoin::PhysicalSpatialJoin(PhysicalPlan &physical_plan, LogicalOpe
 	auto &func = condition->Cast<BoundFunctionExpression>();
 
 	// Extract the probe side and build side join keys
-	probe_side_key = func.children[0].get();
-	build_side_key = func.children[1].get();
+	probe_side_key = func.GetChildren()[0].get();
+	build_side_key = func.GetChildren()[1].get();
 
 	// Only simple join types are supported
 	D_ASSERT(join_type == JoinType::INNER || join_type == JoinType::LEFT || join_type == JoinType::OUTER ||
@@ -441,7 +441,7 @@ PhysicalSpatialJoin::PhysicalSpatialJoin(PhysicalPlan &physical_plan, LogicalOpe
 	unordered_map<idx_t, idx_t> conditions_in_layout;
 	// TODO: Loop over multiple conds
 	if (build_side_key->GetExpressionClass() == ExpressionClass::BOUND_REF) {
-		conditions_in_layout.emplace(build_side_key->Cast<BoundReferenceExpression>().index, 0); // TODO: i, not 0
+		conditions_in_layout.emplace(build_side_key->Cast<BoundReferenceExpression>().Index(), 0); // TODO: i, not 0
 	}
 	// TODO Add rest too
 	build_side_key_types.push_back(build_side_key->GetReturnType());
@@ -491,7 +491,7 @@ InsertionOrderPreservingMap<string> PhysicalSpatialJoin::ParamsToString() const 
 	// TODO: Add condition to the result (GetName is wrong)
 	auto result = PhysicalOperator::ParamsToString();
 	result["Join Type"] = EnumUtil::ToString(join_type);
-	result["Conditions"] = condition->GetName();
+	result["Conditions"] = condition->GetName().GetIdentifierName();
 	SetEstimatedCardinality(result, estimated_cardinality);
 	return result;
 }
@@ -546,7 +546,8 @@ public:
 		auto &geom_type = op.build_side_key->GetReturnType();
 
 		auto &catalog = Catalog::GetSystemCatalog(context);
-		auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_IsEmpty");
+		auto &entry =
+	    catalog.GetEntry<ScalarFunctionCatalogEntry>(context, Identifier::DefaultSchema(), "ST_IsEmpty");
 		const auto &func = entry.functions.GetFunctionByArguments(context, {geom_type});
 
 		vector<unique_ptr<Expression>> children;
@@ -555,11 +556,11 @@ public:
 
 		auto is_not_empty_expr =
 		    make_uniq<BoundOperatorExpression>(ExpressionType::OPERATOR_NOT, LogicalTypeId::BOOLEAN);
-		is_not_empty_expr->children.push_back(std::move(is_empty_expr));
+		is_not_empty_expr->GetChildrenMutable().push_back(std::move(is_empty_expr));
 
 		auto is_not_null_expr =
 		    make_uniq<BoundOperatorExpression>(ExpressionType::OPERATOR_IS_NOT_NULL, LogicalTypeId::BOOLEAN);
-		is_not_null_expr->children.push_back(make_uniq_base<Expression, BoundReferenceExpression>(geom_type, 0));
+		is_not_null_expr->GetChildrenMutable().push_back(make_uniq_base<Expression, BoundReferenceExpression>(geom_type, 0));
 
 		auto filter_expr = make_uniq_base<Expression, BoundConjunctionExpression>(
 		    ExpressionType::CONJUNCTION_AND, std::move(is_not_empty_expr), std::move(is_not_null_expr));
@@ -839,8 +840,8 @@ unique_ptr<OperatorState> PhysicalSpatialJoin::GetOperatorState(ExecutionContext
 	// Create a match expression using the condition, that will be used to filter the results
 	lstate->match_expr = condition->Copy();
 	auto &func_expr = lstate->match_expr->Cast<BoundFunctionExpression>();
-	func_expr.children[0] = make_uniq<BoundReferenceExpression>(probe_side_key->GetReturnType(), 0);
-	func_expr.children[1] = make_uniq<BoundReferenceExpression>(build_side_key->GetReturnType(), 1);
+	func_expr.GetChildrenMutable()[0] = make_uniq<BoundReferenceExpression>(probe_side_key->GetReturnType(), 0);
+	func_expr.GetChildrenMutable()[1] = make_uniq<BoundReferenceExpression>(build_side_key->GetReturnType(), 1);
 
 	lstate->join_match_executor.AddExpression(*lstate->match_expr);
 
@@ -909,19 +910,22 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 		//--------------------------------------------------------------------------------------------------------------
 		case SpatialJoinState::INIT: {
 			// We have a new fresh input chunk
+			lstate.probe_side_key_chunk.Reset();
+			lstate.probe_side_box_chunk.Reset();
+
 			// Compute the probe side join key
 			lstate.join_probe_executor.Execute(input, lstate.probe_side_key_chunk);
-			lstate.probe_side_key_chunk.data[0].ToUnifiedFormat(input.size(), lstate.probe_side_key_vformat);
+			lstate.probe_side_key_chunk.data[0].ToUnifiedFormat(lstate.probe_side_key_vformat);
 
 			// Setup bounding box
 			lstate.bbox_probe_executor.Execute(lstate.probe_side_key_chunk, lstate.probe_side_box_chunk);
-			lstate.probe_side_box_chunk.data[0].ToUnifiedFormat(input.size(), lstate.probe_side_box_vformat);
+			lstate.probe_side_box_chunk.data[0].ToUnifiedFormat(lstate.probe_side_box_vformat);
 
 			auto &entries = StructVector::GetEntries(lstate.probe_side_box_chunk.data[0]);
-			entries[0].ToUnifiedFormat(input.size(), lstate.probe_side_box_xmin_vformat);
-			entries[1].ToUnifiedFormat(input.size(), lstate.probe_side_box_ymin_vformat);
-			entries[2].ToUnifiedFormat(input.size(), lstate.probe_side_box_xmax_vformat);
-			entries[3].ToUnifiedFormat(input.size(), lstate.probe_side_box_ymax_vformat);
+			entries[0].ToUnifiedFormat(lstate.probe_side_box_xmin_vformat);
+			entries[1].ToUnifiedFormat(lstate.probe_side_box_ymin_vformat);
+			entries[2].ToUnifiedFormat(lstate.probe_side_box_xmax_vformat);
+			entries[3].ToUnifiedFormat(lstate.probe_side_box_ymax_vformat);
 
 			// Reference the columns that we actually care about
 			lstate.probe_side_row_chunk.ReferenceColumns(input, probe_side_output_columns);

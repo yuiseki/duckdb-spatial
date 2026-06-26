@@ -567,7 +567,7 @@ struct LocalState final : LocalTableFunctionState {
 			ListVector::Reserve(output.data[3], total_refs + ref_count);
 			ListVector::SetListSize(output.data[3], total_refs + ref_count);
 			auto &ref_entry = FlatVector::GetDataMutable<list_entry_t>(output.data[3])[index];
-			auto &ref_vector = ListVector::GetEntry(output.data[3]);
+			auto &ref_vector = ListVector::GetChildMutable(output.data[3]);
 			ref_entry.offset = total_refs;
 			ref_entry.length = ref_count;
 
@@ -658,7 +658,7 @@ struct LocalState final : LocalTableFunctionState {
 			ListVector::Reserve(output.data[6], total_roles + role_count);
 			ListVector::SetListSize(output.data[6], total_roles + role_count);
 			auto &role_entry = FlatVector::GetDataMutable<list_entry_t>(output.data[6])[index];
-			auto &role_vector = ListVector::GetEntry(output.data[6]);
+			auto &role_vector = ListVector::GetChildMutable(output.data[6]);
 			role_entry.offset = total_roles;
 			role_entry.length = role_count;
 
@@ -683,7 +683,7 @@ struct LocalState final : LocalTableFunctionState {
 			ListVector::Reserve(output.data[3], total_refs + ref_count);
 			ListVector::SetListSize(output.data[3], total_refs + ref_count);
 			auto &ref_entry = FlatVector::GetDataMutable<list_entry_t>(output.data[3])[index];
-			auto &ref_vector = ListVector::GetEntry(output.data[3]);
+			auto &ref_vector = ListVector::GetChildMutable(output.data[3]);
 			ref_entry.offset = total_refs;
 			ref_entry.length = ref_count;
 
@@ -706,7 +706,7 @@ struct LocalState final : LocalTableFunctionState {
 			ListVector::Reserve(output.data[7], total_types + type_count);
 			ListVector::SetListSize(output.data[7], total_types + type_count);
 			auto &type_entry = FlatVector::GetDataMutable<list_entry_t>(output.data[7])[index];
-			auto &type_vector = ListVector::GetEntry(output.data[7]);
+			auto &type_vector = ListVector::GetChildMutable(output.data[7]);
 			type_entry.offset = total_types;
 			type_entry.length = type_count;
 

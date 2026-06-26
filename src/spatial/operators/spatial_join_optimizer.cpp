@@ -56,11 +56,11 @@ static bool HasInversePredicate(const string &func_name) {
 static unique_ptr<Expression> GetInversePredicate(ClientContext &context, unique_ptr<Expression> expr) {
 	auto &func = expr->Cast<BoundFunctionExpression>();
 
-	const auto it = spatial_predicate_inverse_map.find(func.function.GetName());
+	const auto it = spatial_predicate_inverse_map.find(func.Function().GetName().GetIdentifierName());
 	D_ASSERT(it != spatial_predicate_inverse_map.end());
 
 	// Swap the arguments
-	std::swap(func.children[0], func.children[1]);
+	std::swap(func.GetChildrenMutable()[0], func.GetChildrenMutable()[1]);
 
 	if (it->first == it->second) {
 		// We've already swapped the child, so just return the expression
@@ -69,11 +69,11 @@ static unique_ptr<Expression> GetInversePredicate(ClientContext &context, unique
 
 	// Get the function from the catalog
 	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, it->second);
+	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, Identifier::DefaultSchema(), Identifier(it->second));
 	const auto &inverse_func =
-	    entry.functions.GetFunctionByArguments(context, {func.children[0]->GetReturnType(), func.children[1]->GetReturnType()});
+	    entry.functions.GetFunctionByArguments(context, {func.GetChildren()[0]->GetReturnType(), func.GetChildren()[1]->GetReturnType()});
 
-	auto func_expr = inverse_func.Bind(context, std::move(func.children));
+	auto func_expr = inverse_func.Bind(context, std::move(func.GetChildrenMutable()));
 	return std::move(func_expr);
 }
 
@@ -94,7 +94,7 @@ static bool IsSpatialJoinPredicate(const unique_ptr<Expression> &expr, const uno
 	auto &func = expr->Cast<BoundFunctionExpression>();
 
 	// The function must be a binary predicate
-	if (func.children.size() != 2) {
+	if (func.GetChildren().size() != 2) {
 		return false;
 	}
 
@@ -104,12 +104,12 @@ static bool IsSpatialJoinPredicate(const unique_ptr<Expression> &expr, const uno
 	}
 
 	// The function must be a recognized spatial predicate
-	if (spatial_predicate_map.count(func.function.GetName()) == 0) {
+	if (spatial_predicate_map.count(func.Function().GetName().GetIdentifierName()) == 0) {
 		return false;
 	}
 
-	const auto left_side = JoinSide::GetJoinSide(*func.children[0], left_bindings, right_bindings);
-	const auto right_side = JoinSide::GetJoinSide(*func.children[1], left_bindings, right_bindings);
+	const auto left_side = JoinSide::GetJoinSide(*func.GetChildren()[0], left_bindings, right_bindings);
+	const auto right_side = JoinSide::GetJoinSide(*func.GetChildren()[1], left_bindings, right_bindings);
 
 	// Can the condition can be cleanly split into two sides?
 	if (left_side == JoinSide::BOTH || right_side == JoinSide::BOTH) {
@@ -117,7 +117,7 @@ static bool IsSpatialJoinPredicate(const unique_ptr<Expression> &expr, const uno
 	}
 
 	if (left_side == JoinSide::RIGHT) {
-		if (!HasInversePredicate(func.function.GetName())) {
+		if (!HasInversePredicate(func.Function().GetName().GetIdentifierName())) {
 			return false;
 		}
 		needs_flipping = true;
@@ -190,10 +190,10 @@ static bool TrySwapComparisonJoin(OptimizerExtensionInput &input, unique_ptr<Log
 
 	// If this is ST_DWithin, try to extract the constant distance value
 	const auto &pred_func = spatial_join->spatial_predicate->Cast<BoundFunctionExpression>();
-	if (pred_func.function.GetName() == "ST_DWithin") {
+	if (pred_func.Function().GetName() == "ST_DWithin") {
 		// Try to get the constant distance value from the bind data;
 		spatial_join->has_const_distance =
-		    ST_DWithinHelper::TryGetConstDistance(pred_func.bind_info, spatial_join->const_distance);
+		    ST_DWithinHelper::TryGetConstDistance(pred_func.BindInfo(), spatial_join->const_distance);
 	}
 
 	// Also take all the conditions from the comparison join and add them as filters
@@ -296,10 +296,10 @@ static void TrySwapAnyJoin(OptimizerExtensionInput &input, unique_ptr<LogicalOpe
 
 	// If this is ST_DWithin, try to extract the constant distance value
 	const auto &pred_func = spatial_join->spatial_predicate->Cast<BoundFunctionExpression>();
-	if (pred_func.function.GetName() == "ST_DWithin") {
+	if (pred_func.Function().GetName() == "ST_DWithin") {
 		// Try to get the constant distance value from the bind data;
 		spatial_join->has_const_distance =
-		    ST_DWithinHelper::TryGetConstDistance(pred_func.bind_info, spatial_join->const_distance);
+		    ST_DWithinHelper::TryGetConstDistance(pred_func.BindInfo(), spatial_join->const_distance);
 	}
 
 	if (spatial_join->join_type == JoinType::INNER && !extra_predicates.empty()) {

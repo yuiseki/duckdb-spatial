@@ -43,14 +43,14 @@ public:
 		if (expr.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
 			auto &bound_colref = expr.Cast<BoundColumnRefExpression>();
 			// bound column ref: rewrite to fit in the current set of bound column ids
-			bound_colref.binding.table_index = get.table_index;
+			bound_colref.BindingMutable().table_index = get.table_index;
 			auto &column_ids = index.GetColumnIds();
 			auto &get_column_ids = get.GetColumnIds();
-			column_t referenced_column = column_ids[bound_colref.binding.column_index];
+			column_t referenced_column = column_ids[bound_colref.Binding().column_index];
 			// search for the referenced column in the set of column_ids
 			for (idx_t i = 0; i < get_column_ids.size(); i++) {
 				if (get_column_ids[i].GetPrimaryIndex() == referenced_column) {
-					bound_colref.binding.column_index = ProjectionIndex(i);
+					bound_colref.BindingMutable().column_index = ProjectionIndex(i);
 					return;
 				}
 			}
@@ -94,7 +94,7 @@ public:
 
 	static bool IsSpatialPredicate(const BoundScalarFunction &function, const unordered_set<string> &predicates) {
 
-		if (predicates.find(function.GetName()) == predicates.end()) {
+		if (predicates.find(function.GetName().GetIdentifierName()) == predicates.end()) {
 			return false;
 		}
 		if (function.GetArguments().size() < 2) {
@@ -120,7 +120,7 @@ public:
 
 		// make a new box expression
 		auto &catalog = Catalog::GetSystemCatalog(context);
-		auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_Extent_Approx");
+		auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, Identifier::DefaultSchema(), "ST_Extent_Approx");
 		const auto &func = entry.functions.GetFunctionByArguments(context, {LogicalType::GEOMETRY()});
 
 		vector<unique_ptr<Expression>> children;
@@ -219,7 +219,7 @@ public:
 		auto &table_info = *table.GetStorage().GetDataTableInfo();
 		unique_ptr<RTreeIndexScanBindData> bind_data = nullptr;
 
-		unordered_set<string> spatial_predicates = {
+		identifier_set_t spatial_predicates = {
 		    "ST_Equals",   "ST_Intersects", "ST_Touches",   "ST_Crosses",          "ST_Within", "ST_Contains",
 		    "ST_Overlaps", "ST_Covers",     "ST_CoveredBy", "ST_ContainsProperly", "&&",        "ST_Intersects_Extent"};
 

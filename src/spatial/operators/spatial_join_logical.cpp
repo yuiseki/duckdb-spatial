@@ -38,12 +38,12 @@ void LogicalSpatialJoin::ResolveColumnBindings(ColumnBindingResolver &res, vecto
 	auto &cond = spatial_predicate->Cast<BoundFunctionExpression>();
 
 	res.VisitOperator(*children[0]);
-	res.VisitExpression(&cond.children[0]);
+	res.VisitExpression(&cond.GetChildrenMutable()[0]);
 
 	// TODO: Duplicate eliminated joins?
 
 	res.VisitOperator(*children[1]);
-	res.VisitExpression(&cond.children[1]);
+	res.VisitExpression(&cond.GetChildrenMutable()[1]);
 
 	// Finally, update the bindings
 	bindings = GetColumnBindings();

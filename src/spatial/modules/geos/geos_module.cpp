@@ -294,7 +294,7 @@ struct ST_AsMVTGeom {
 
 		// Bind data
 		const auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-		const auto &bind_data = func_expr.bind_info->Cast<BindData>();
+		const auto &bind_data = func_expr.BindInfo()->Cast<BindData>();
 
 		// Local state
 		auto &lstate = LocalState::ResetAndGet(state);
@@ -306,14 +306,14 @@ struct ST_AsMVTGeom {
 		UnifiedVectorFormat maxx_format;
 		UnifiedVectorFormat maxy_format;
 
-		args.data[0].ToUnifiedFormat(args.size(), geom_format);
-		args.data[1].ToUnifiedFormat(args.size(), bbox_format);
+		args.data[0].ToUnifiedFormat(geom_format);
+		args.data[1].ToUnifiedFormat(bbox_format);
 
 		auto &bbox_parts = StructVector::GetEntries(args.data[1]);
-		bbox_parts[0].ToUnifiedFormat(args.size(), minx_format);
-		bbox_parts[1].ToUnifiedFormat(args.size(), miny_format);
-		bbox_parts[2].ToUnifiedFormat(args.size(), maxx_format);
-		bbox_parts[3].ToUnifiedFormat(args.size(), maxy_format);
+		bbox_parts[0].ToUnifiedFormat(minx_format);
+		bbox_parts[1].ToUnifiedFormat(miny_format);
+		bbox_parts[2].ToUnifiedFormat(maxx_format);
+		bbox_parts[3].ToUnifiedFormat(maxy_format);
 
 		const auto geom_data = UnifiedVectorFormat::GetData<string_t>(geom_format);
 		const auto minx_data = UnifiedVectorFormat::GetData<double>(minx_format);
@@ -847,6 +847,115 @@ struct ST_ConvexHull {
 	}
 };
 
+struct ST_CoverageClean {
+
+       static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+               auto &arguments = input.GetArguments();
+               auto &bound_function = input.GetBoundFunction();
+               // set default values for coverage_clean parameters
+               // also extend the declared argument types so they match the padded argument expressions
+               const size_t num_args = arguments.size();
+               if (num_args == 2) { // gap max width
+                    arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
+                    bound_function.GetArguments().push_back(LogicalType::DOUBLE);
+               }
+
+               if (num_args == 1) { // snapping distance, gap max width
+               		arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
+                    arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
+                    bound_function.GetArguments().push_back(LogicalType::DOUBLE);
+                    bound_function.GetArguments().push_back(LogicalType::DOUBLE);
+               }
+
+               return nullptr;
+       }
+
+       static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+               auto &lstate = LocalState::ResetAndGet(state);
+               UnifiedVectorFormat format;
+
+               auto &list_vec = args.data[0];
+               auto &item_vec = ListVector::GetChild(list_vec);
+               item_vec.ToUnifiedFormat(format);
+
+               // Collection to hold the working set of geometries
+               GeosCollection collection(lstate.GetContext());
+
+               TernaryExecutor::Execute<list_entry_t, double, double, string_t>(
+                   list_vec, args.data[1], args.data[2],
+                   result, [&](const list_entry_t &list,
+                       double snapping_distance, double gap_maximum_width) {
+                           // Reset the collection
+                           collection.clear();
+                           collection.reserve(list.length);
+
+                           const auto offset = list.offset;
+                           const auto length = list.length;
+
+                           // Collect all geometries in the list into the collection
+                           for (idx_t i = offset; i < offset + length; i++) {
+                                   const auto mapped_idx = format.sel->get_index(i);
+
+                                   if (!format.validity.RowIsValid(mapped_idx)) {
+                                           continue;
+                                   }
+
+                                   const auto &geom_blob = UnifiedVectorFormat::GetData<string_t>(format)[mapped_idx];
+
+                                   auto geom = lstate.Deserialize(geom_blob);
+                                   collection.add(std::move(geom));
+                           }
+
+                           // Now make a geometrycollection and simplify
+                           const auto geometry_col = collection.get_collection();
+                           const auto cleaned = geometry_col.get_coverage_clean(snapping_distance, gap_maximum_width);
+                           return lstate.Serialize(result, cleaned);
+                   });
+       }
+
+       static void Register(ExtensionLoader &loader) {
+               FunctionBuilder::RegisterScalar(loader, "ST_CoverageClean", [](ScalarFunctionBuilder &func) {
+                       func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+                               variant.AddParameter("geoms", LogicalType::LIST(LogicalType::GEOMETRY()));
+                               variant.AddParameter("snapping_distance", LogicalType::DOUBLE);
+                               variant.AddParameter("gap_maximum_width", LogicalType::DOUBLE);
+                               variant.SetReturnType(LogicalType::GEOMETRY());
+
+                               variant.SetInit(LocalState::Init);
+                       	       variant.SetBind(Bind);
+                               variant.SetFunction(Execute);
+                       });
+
+                       func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+                               variant.AddParameter("geoms", LogicalType::LIST(LogicalType::GEOMETRY()));
+                               variant.AddParameter("snapping_distance", LogicalType::DOUBLE);
+                               variant.SetReturnType(LogicalType::GEOMETRY());
+
+                               variant.SetInit(LocalState::Init);
+                               variant.SetBind(Bind);
+                               variant.SetFunction(Execute);
+                       });
+
+                       func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+                               variant.AddParameter("geoms", LogicalType::LIST(LogicalType::GEOMETRY()));
+                               variant.SetReturnType(LogicalType::GEOMETRY());
+
+                               variant.SetInit(LocalState::Init);
+                               variant.SetBind(Bind);
+                               variant.SetFunction(Execute);
+                       });
+
+                       func.SetDescription(R"(
+                               Aligns the edges of a list of polygons whose edges are meant to align but are in fact exact matches.
+
+                               Returns a collection of fixed polygons with the same size and order as the input polygons. EMPTY will be used in place of collapsed polygons.
+                       )");
+                       func.SetTag("ext", "spatial");
+                       func.SetTag("category", "construction");
+               });
+       }
+};
+
 struct ST_CoverageInvalidEdges {
 
 	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
@@ -866,8 +975,8 @@ struct ST_CoverageInvalidEdges {
 		UnifiedVectorFormat format;
 
 		auto &list_vec = args.data[0];
-		auto &item_vec = ListVector::GetEntry(list_vec);
-		item_vec.ToUnifiedFormat(ListVector::GetListSize(list_vec), format);
+		auto &item_vec = ListVector::GetChild(list_vec);
+		item_vec.ToUnifiedFormat(format);
 
 		// Collection to hold the working set of geometries
 		GeosCollection collection(lstate.GetContext());
@@ -960,8 +1069,8 @@ struct ST_CoverageSimplify {
 		UnifiedVectorFormat format;
 
 		auto &list_vec = args.data[0];
-		auto &item_vec = ListVector::GetEntry(list_vec);
-		item_vec.ToUnifiedFormat(ListVector::GetListSize(list_vec), format);
+		auto &item_vec = ListVector::GetChild(list_vec);
+		item_vec.ToUnifiedFormat(format);
 
 		// Collection to hold the working set of geometries
 		GeosCollection collection(lstate.GetContext());
@@ -1041,8 +1150,8 @@ struct ST_CoverageUnion {
 		UnifiedVectorFormat format;
 
 		auto &list_vec = args.data[0];
-		auto &item_vec = ListVector::GetEntry(list_vec);
-		item_vec.ToUnifiedFormat(ListVector::GetListSize(list_vec), format);
+		auto &item_vec = ListVector::GetChild(list_vec);
+		item_vec.ToUnifiedFormat(format);
 
 		// Collection to hold the working set of geometries
 		GeosCollection collection(lstate.GetContext());
@@ -1931,8 +2040,8 @@ struct ST_Polygonize {
 		UnifiedVectorFormat format;
 
 		auto &list_vec = args.data[0];
-		auto &item_vec = ListVector::GetEntry(list_vec);
-		item_vec.ToUnifiedFormat(ListVector::GetListSize(list_vec), format);
+		auto &item_vec = ListVector::GetChild(list_vec);
+		item_vec.ToUnifiedFormat(format);
 
 		// Collection to hold the working set of geometries
 		GeosCollection collection(lstate.GetContext());
@@ -2237,6 +2346,41 @@ struct ST_SimplifyPreserveTopology {
 	}
 };
 
+struct ST_SymDifference {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		BinaryExecutor::Execute<string_t, string_t, string_t>(
+		    args.data[0], args.data[1], result, args.size(), [&](const string_t &lhs_blob, const string_t &rhs_blob) {
+			    const auto lhs = lstate.Deserialize(lhs_blob);
+			    const auto rhs = lstate.Deserialize(rhs_blob);
+			    const auto union_geom = lhs.get_union(rhs);
+			    const auto intersection_geom = lhs.get_intersection(rhs);
+			    const auto sym_diff = union_geom.get_difference(intersection_geom);
+
+			    return lstate.Serialize(result, sym_diff);
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_SymDifference", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom1", LogicalType::GEOMETRY());
+				variant.AddParameter("geom2", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+				variant.CanThrowErrors();
+			});
+
+			func.SetDescription("Returns the symmetric difference of two geometries");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
 struct ST_Touches : SymmetricPreparedBinaryFunction<ST_Touches> {
 	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
 		return lhs.touches(rhs);
@@ -2393,6 +2537,8 @@ struct GeosUnaryAggFunction {
 	static void Initialize(STATE &state) {
 		state.geom = nullptr;
 		state.context = GEOS_init_r();
+		GEOSContext_setErrorMessageHandler_r(
+		    state.context, [](const char *message, void *) { throw InvalidInputException(message); }, nullptr);
 	}
 
 	template <class STATE, class OP>
@@ -2466,7 +2612,7 @@ struct ST_MemUnion_Agg : GeosUnaryAggFunction {
 	}
 
 	static void Register(ExtensionLoader &loader) {
-		auto agg = AggregateFunction::UnaryAggregateDestructor<GeosUnaryAggState, string_t, string_t, ST_MemUnion_Agg>(
+		auto agg = AggregateFunction::UnaryAggregate<GeosUnaryAggState, string_t, string_t, ST_MemUnion_Agg>(
 		    LogicalType::GEOMETRY(), LogicalType::GEOMETRY());
 
 		agg.SetBindCallback(GeoTypes::PropagateCRS);
@@ -2494,7 +2640,7 @@ struct ST_Intersection_Agg : GeosUnaryAggFunction {
 
 	static void Register(ExtensionLoader &loader) {
 		auto agg =
-		    AggregateFunction::UnaryAggregateDestructor<GeosUnaryAggState, string_t, string_t, ST_Intersection_Agg>(
+		    AggregateFunction::UnaryAggregate<GeosUnaryAggState, string_t, string_t, ST_Intersection_Agg>(
 		        LogicalType::GEOMETRY(), LogicalType::GEOMETRY());
 
 		agg.SetBindCallback(GeoTypes::PropagateCRS);
@@ -2548,6 +2694,8 @@ struct ST_Union_Agg {
 		const auto state_ptr = new (state_mem) State();
 		auto &state = *state_ptr;
 		state.context = GEOS_init_r();
+		GEOSContext_setErrorMessageHandler_r(
+		    state.context, [](const char *message, void *) { throw InvalidInputException(message); }, nullptr);
 	}
 
 	static void Update(Vector inputs[], AggregateInputData &aggr, idx_t, Vector &state_vec, idx_t count) {
@@ -2555,10 +2703,10 @@ struct ST_Union_Agg {
 		auto &geom_vec = inputs[0];
 
 		UnifiedVectorFormat geom_format;
-		geom_vec.ToUnifiedFormat(count, geom_format);
+		geom_vec.ToUnifiedFormat(geom_format);
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		const auto geom_ptr = UnifiedVectorFormat::GetData<string_t>(geom_format);
@@ -2582,7 +2730,7 @@ struct ST_Union_Agg {
 		D_ASSERT(aggr_input_data.combine_type == AggregateCombineType::ALLOW_DESTRUCTIVE);
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		const auto combined_ptr = FlatVector::GetDataMutable<State *>(combined);
@@ -2607,7 +2755,7 @@ struct ST_Union_Agg {
 		}
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		const auto combined_ptr = FlatVector::GetData<State *>(combined);
@@ -2625,11 +2773,11 @@ struct ST_Union_Agg {
 		}
 	}
 
-	static void Finalize(Vector &state_vec, AggregateInputData &aggr_input_data, Vector &result, idx_t count,
+	static void Finalize(Vector &state_vec, AggregateFinalizeInputData &aggr_input_data, Vector &result, idx_t count,
 	                     idx_t offset) {
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 
@@ -2669,7 +2817,7 @@ struct ST_Union_Agg {
 
 	static void Destroy(Vector &state_vec, AggregateInputData &aggr, idx_t count) {
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
@@ -2747,13 +2895,15 @@ struct GEOSCoverageAggFunction {
 		const auto state_ptr = new (state_mem) State();
 		auto &state = *state_ptr;
 		state.context = GEOS_init_r();
+		GEOSContext_setErrorMessageHandler_r(
+		    state.context, [](const char *message, void *) { throw InvalidInputException(message); }, nullptr);
 	}
 
 	static void Absorb(Vector &state_vec, Vector &combined, AggregateInputData &aggr_input_data, idx_t count) {
 		D_ASSERT(aggr_input_data.combine_type == AggregateCombineType::ALLOW_DESTRUCTIVE);
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		const auto combined_ptr = FlatVector::GetDataMutable<State *>(combined);
@@ -2785,7 +2935,7 @@ struct GEOSCoverageAggFunction {
 		}
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		const auto combined_ptr = FlatVector::GetData<State *>(combined);
@@ -2815,11 +2965,11 @@ struct GEOSCoverageAggFunction {
 	}
 
 	template <class OP>
-	static void Finalize(Vector &state_vec, AggregateInputData &aggr_input_data, Vector &result, idx_t count,
+	static void Finalize(Vector &state_vec, AggregateFinalizeInputData &aggr_input_data, Vector &result, idx_t count,
 	                     idx_t offset) {
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 
@@ -2854,7 +3004,7 @@ struct GEOSCoverageAggFunction {
 
 	static void Destroy(Vector &state_vec, AggregateInputData &aggr, idx_t count) {
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
@@ -2896,16 +3046,16 @@ struct ST_CoverageSimplify_Agg : GEOSCoverageAggFunction {
 		auto &geom_vec = inputs[0];
 
 		UnifiedVectorFormat geom_format;
-		geom_vec.ToUnifiedFormat(count, geom_format);
+		geom_vec.ToUnifiedFormat(geom_format);
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		UnifiedVectorFormat tolerance_format;
-		inputs[1].ToUnifiedFormat(count, tolerance_format);
+		inputs[1].ToUnifiedFormat(tolerance_format);
 
 		UnifiedVectorFormat simplify_boundary_format;
-		inputs[2].ToUnifiedFormat(count, simplify_boundary_format);
+		inputs[2].ToUnifiedFormat(simplify_boundary_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		const auto geom_ptr = UnifiedVectorFormat::GetData<string_t>(geom_format);
@@ -2988,10 +3138,10 @@ struct ST_CoverageUnion_Agg : GEOSCoverageAggFunction {
 		auto &geom_vec = inputs[0];
 
 		UnifiedVectorFormat geom_format;
-		geom_vec.ToUnifiedFormat(count, geom_format);
+		geom_vec.ToUnifiedFormat(geom_format);
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		const auto geom_ptr = UnifiedVectorFormat::GetData<string_t>(geom_format);
@@ -3067,13 +3217,13 @@ struct ST_CoverageInvalidEdges_Agg : GEOSCoverageAggFunction {
 		auto &geom_vec = inputs[0];
 
 		UnifiedVectorFormat geom_format;
-		geom_vec.ToUnifiedFormat(count, geom_format);
+		geom_vec.ToUnifiedFormat(geom_format);
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		UnifiedVectorFormat tolerance_format;
-		inputs[1].ToUnifiedFormat(count, tolerance_format);
+		inputs[1].ToUnifiedFormat(tolerance_format);
 
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 		const auto geom_ptr = UnifiedVectorFormat::GetData<string_t>(geom_format);
@@ -3162,6 +3312,7 @@ void RegisterGEOSModule(ExtensionLoader &loader) {
 	ST_WithinProperly::Register(loader);
 	ST_ConcaveHull::Register(loader);
 	ST_ConvexHull::Register(loader);
+	ST_CoverageClean::Register(loader);
 	ST_CoverageInvalidEdges::Register(loader);
 	ST_CoverageSimplify::Register(loader);
 	ST_CoverageUnion::Register(loader);
@@ -3194,6 +3345,7 @@ void RegisterGEOSModule(ExtensionLoader &loader) {
 	ST_ShortestLine::Register(loader);
 	ST_Simplify::Register(loader);
 	ST_SimplifyPreserveTopology::Register(loader);
+	ST_SymDifference::Register(loader);
 	ST_Touches::Register(loader);
 	ST_Union::Register(loader);
 	ST_VoronoiDiagram::Register(loader);

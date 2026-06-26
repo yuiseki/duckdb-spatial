@@ -436,11 +436,39 @@ public:
 		VSIFileManager::RemoveHandler(client_prefix);
 	}
 
+	// Check if a path looks like a GDAL driver-prefixed URL (e.g., "WFS:https://...", "OAPIF:https://...")
+	// These need to be passed directly to GDALOpenEx without our custom VSI prefix.
+	static bool IsGDALDriverPrefixedURL(const string &value) {
+		auto colon_pos = value.find(':');
+		if (colon_pos == string::npos || colon_pos == 0 || colon_pos > 20) {
+			return false;
+		}
+		// Check that the prefix is all uppercase letters (GDAL driver names are uppercase)
+		for (idx_t i = 0; i < colon_pos; i++) {
+			char c = value[i];
+			if (!StringUtil::CharacterIsAlpha(c) || c != StringUtil::CharacterToUpper(c)) {
+				return false;
+			}
+		}
+		// Check that after the colon there is a URL scheme (http:// or https://)
+		// This excludes database connection strings like "PG:dbname=..." which are not supported.
+		auto rest = value.substr(colon_pos + 1);
+		return StringUtil::StartsWith(rest, "http://") || StringUtil::StartsWith(rest, "https://");
+	}
+
 	string AddPrefix(const string &value) const {
 		// If the user explicitly asked for a VSI prefix, we don't add our own
 		if (StringUtil::StartsWith(value, "/vsi")) {
 			if (!Settings::Get<EnableExternalAccessSetting>(context)) {
 				throw PermissionException("Cannot open file '%s' with VSI prefix: External access is disabled", value);
+			}
+			return value;
+		}
+		// If the path is a GDAL driver-prefixed URL (e.g., "WFS:https://..."), pass it through directly
+		if (IsGDALDriverPrefixedURL(value)) {
+			if (!Settings::Get<EnableExternalAccessSetting>(context)) {
+				throw PermissionException(
+				    "Cannot open file '%s' with GDAL driver prefix: External access is disabled", value);
 			}
 			return value;
 		}
@@ -618,12 +646,15 @@ auto Bind(ClientContext &ctx, TableFunctionBindInput &input, vector<LogicalType>
 		// Get the layer geometry type if available
 		result->layer_type = OGR_L_GetGeomType(layer);
 
-		// Check FID column
+		// Only suppress the FID if the layer already exposes it as a regular attribute field
 		const auto fid_col = OGR_L_GetFIDColumn(layer);
 		if (fid_col && strcmp(fid_col, "") != 0) {
-			// Do not include the explicit FID if we already have it as a column
-			result->layer_options.AddString("INCLUDE_FID=NO");
+			const auto layer_defn = OGR_L_GetLayerDefn(layer);
+			if (OGR_FD_GetFieldIndex(layer_defn, fid_col) >= 0) {
+				result->layer_options.AddString("INCLUDE_FID=NO");
+			}
 		}
+
 		const auto geom_col_name = OGR_L_GetGeometryColumn(layer);
 
 		// Get the arrow stream
@@ -743,12 +774,12 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 			continue;
 		}
 		const auto &func = expr->Cast<BoundFunctionExpression>();
-		if (func.children.size() != 2) {
+		if (func.GetChildren().size() != 2) {
 			continue;
 		}
 
-		if (func.children[0]->GetReturnType().id() != LogicalTypeId::GEOMETRY ||
-		    func.children[1]->GetReturnType().id() != LogicalTypeId::GEOMETRY) {
+		if (func.GetChildren()[0]->GetReturnType().id() != LogicalTypeId::GEOMETRY ||
+		    func.GetChildren()[1]->GetReturnType().id() != LogicalTypeId::GEOMETRY) {
 			continue;
 		}
 
@@ -759,7 +790,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 
 		auto found = false;
 		for (const auto &name : geometry_predicates) {
-			if (StringUtil::CIEquals(func.function.GetName().c_str(), name)) {
+			if (StringUtil::CIEquals(func.Function().GetName().c_str(), name)) {
 				found = true;
 				break;
 			}
@@ -769,8 +800,8 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 			continue;
 		}
 
-		const auto lhs_kind = func.children[0]->GetExpressionType();
-		const auto rhs_kind = func.children[1]->GetExpressionType();
+		const auto lhs_kind = func.GetChildren()[0]->GetExpressionType();
+		const auto rhs_kind = func.GetChildren()[1]->GetExpressionType();
 
 		const auto lhs_is_const = lhs_kind == ExpressionType::VALUE_CONSTANT;
 		const auto rhs_is_const = rhs_kind == ExpressionType::VALUE_CONSTANT;
@@ -780,8 +811,8 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 			continue;
 		}
 
-		auto &constant_expr = func.children[lhs_is_const ? 0 : 1]->Cast<BoundConstantExpression>();
-		auto &geometry_expr = func.children[lhs_is_const ? 1 : 0];
+		auto &constant_expr = func.GetChildren()[lhs_is_const ? 0 : 1]->Cast<BoundConstantExpression>();
+		auto &geometry_expr = func.GetChildren()[lhs_is_const ? 1 : 0];
 
 		auto found_geom_expr = false;
 		auto multi_geom_expr = false;
@@ -791,13 +822,13 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 				    multi_geom_expr = true;
 				    return;
 			    }
-			    if (ref.binding.table_index != get.table_index) {
+			    if (ref.Binding().table_index != get.table_index) {
 				    // Not from the same table
 				    return;
 			    }
 
 			    const auto &col_ids = get.GetColumnIds();
-			    const auto &col = col_ids[ref.binding.column_index];
+			    const auto &col = col_ids[ref.Binding().column_index];
 
 			    if (!col.HasPrimaryIndex()) {
 				    return;
@@ -813,11 +844,11 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 			continue;
 		}
 
-		if (constant_expr.value.type().id() != LogicalTypeId::GEOMETRY) {
+		if (constant_expr.GetValue().type().id() != LogicalTypeId::GEOMETRY) {
 			// Constant is not geometry
 			continue;
 		}
-		if (constant_expr.value.IsNull()) {
+		if (constant_expr.GetValue().IsNull()) {
 			// Constant is NULL
 			continue;
 		}
@@ -827,7 +858,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		}
 
 		auto geom_extent = GeometryExtent::Empty();
-		auto geom_binary = string_t(StringValue::Get(constant_expr.value));
+		auto geom_binary = string_t(StringValue::Get(constant_expr.GetValue()));
 
 		if (Geometry::GetExtent(geom_binary, geom_extent)) {
 			bdata.has_filter = true;
@@ -841,7 +872,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		// We can __ONLY__ do this if the filter predicate is "&&" or "st_intersects_extent"
 		// as other predicates may require exact geometry evaluation, the filter cannot be fully removed
 		for (auto &name : {"&&", "ST_Intersects_Extent"}) {
-			if (StringUtil::CIEquals(func.function.GetName().c_str(), name)) {
+			if (StringUtil::CIEquals(func.Function().GetName().c_str(), name)) {
 				geom_filter_idx = expr_idx;
 				break;
 			}
@@ -1253,7 +1284,7 @@ bool MatchOption(const char *name, const pair<string, vector<Value>> &option, bo
 	return false;
 }
 
-auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<string> &names,
+auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<Identifier> &names,
           const vector<LogicalType> &sql_types) -> unique_ptr<FunctionData> {
 	auto result = make_uniq<BindData>();
 
@@ -1383,7 +1414,7 @@ auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<str
 	// Setup arrow schema
 	result->props = context.GetClientProperties();
 	result->extension_type_cast = duckdb::ArrowTypeExtensionData::GetExtensionTypes(context, sql_types);
-	ArrowConverter::ToArrowSchema(&result->schema, sql_types, names, result->props);
+	ArrowConverter::ToArrowSchema(&result->schema, sql_types, IdentifiersToStrings(names), result->props);
 
 	return std::move(result);
 }
@@ -1783,11 +1814,30 @@ auto Bind(ClientContext &context, TableFunctionBindInput &input, vector<LogicalT
 	types.push_back(LogicalType::VARCHAR);
 	types.push_back(LogicalType::LIST(GetLayerType()));
 
-	const auto mf_reader = MultiFileReader::Create(input.table_function);
-	const auto mf_inputs = mf_reader->CreateFileList(context, input.inputs[0], FileGlobOptions::ALLOW_EMPTY);
-
 	auto result = make_uniq<BindData>();
-	result->files = mf_inputs->GetAllFiles();
+
+	// For /vsi* paths and GDAL driver-prefixed URLs (e.g., "WFS:https://..."),
+	// bypass MultiFileReader since these are not local file globs.
+	// We must check the input type first because MultiFileReader::CreateFunctionSet
+	// adds a VARCHAR[] overload, and GetValue<string>() on a LIST would return
+	// the string representation of the list, not an actual path.
+	auto &input_val = input.inputs[0];
+	if (input_val.type().id() == LogicalTypeId::VARCHAR) {
+		auto raw_path = input_val.GetValue<string>();
+		if (StringUtil::StartsWith(raw_path, "/vsi") ||
+		    DuckDBFileSystemPrefix::IsGDALDriverPrefixedURL(raw_path)) {
+			result->files.emplace_back(std::move(raw_path));
+		} else {
+			const auto mf_reader = MultiFileReader::Create(input.table_function);
+			const auto mf_inputs = mf_reader->CreateFileList(context, input_val, FileGlobOptions::ALLOW_EMPTY);
+			result->files = mf_inputs->GetAllFiles();
+		}
+	} else {
+		const auto mf_reader = MultiFileReader::Create(input.table_function);
+		const auto mf_inputs = mf_reader->CreateFileList(context, input_val, FileGlobOptions::ALLOW_EMPTY);
+		result->files = mf_inputs->GetAllFiles();
+	}
+
 	return std::move(result);
 }
 

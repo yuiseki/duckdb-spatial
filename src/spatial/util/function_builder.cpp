@@ -64,8 +64,8 @@ void FunctionBuilder::Register(ExtensionLoader &loader, const char *name, Scalar
 	// Also add the parameter names. We need to access the catalog entry for this.
 	auto &catalog = Catalog::GetSystemCatalog(db);
 	auto transaction = CatalogTransaction::GetSystemTransaction(db);
-	auto &schema = catalog.GetSchema(transaction, DEFAULT_SCHEMA);
-	auto catalog_entry = schema.GetEntry(transaction, CatalogType::SCALAR_FUNCTION_ENTRY, name);
+	auto &schema = catalog.GetSchema(transaction, Identifier::DefaultSchema());
+	auto catalog_entry = schema.GetEntry(transaction, CatalogType::SCALAR_FUNCTION_ENTRY, Identifier(name));
 	if (!catalog_entry) {
 		// This should not happen, we just registered the function
 		throw InternalException("Function with name \"%s\" not found in FunctionBuilder::AddScalar", name);
@@ -108,8 +108,8 @@ void FunctionBuilder::Register(ExtensionLoader &loader, const char *name, Aggreg
 	// Also add the parameter names. We need to access the catalog entry for this.
 	auto &catalog = Catalog::GetSystemCatalog(db);
 	auto transaction = CatalogTransaction::GetSystemTransaction(db);
-	auto &schema = catalog.GetSchema(transaction, DEFAULT_SCHEMA);
-	auto catalog_entry = schema.GetEntry(transaction, CatalogType::AGGREGATE_FUNCTION_ENTRY, name);
+	auto &schema = catalog.GetSchema(transaction, Identifier::DefaultSchema());
+	auto catalog_entry = schema.GetEntry(transaction, CatalogType::AGGREGATE_FUNCTION_ENTRY, Identifier(name));
 	if (!catalog_entry) {
 		// This should not happen, we just registered the function
 		throw InternalException("Function with name \"%s\" not found in FunctionBuilder::AddAggregate", name);
@@ -182,8 +182,8 @@ void FunctionBuilder::AddTableFunctionDocs(ExtensionLoader &loader, const char *
 	auto &db = loader.GetDatabaseInstance();
 	auto &catalog = Catalog::GetSystemCatalog(db);
 	auto transaction = CatalogTransaction::GetSystemTransaction(db);
-	auto &schema = catalog.GetSchema(transaction, DEFAULT_SCHEMA);
-	auto catalog_entry = schema.GetEntry(transaction, CatalogType::TABLE_FUNCTION_ENTRY, name);
+	auto &schema = catalog.GetSchema(transaction, Identifier::DefaultSchema());
+	auto catalog_entry = schema.GetEntry(transaction, CatalogType::TABLE_FUNCTION_ENTRY, Identifier(name));
 	if (!catalog_entry) {
 		// This should not happen, we just registered the function
 		throw InternalException("Function with name \"%s\" not found in FunctionBuilder::AddScalar", name);

@@ -72,8 +72,8 @@ static void RTreeIndexInfoExecute(ClientContext &context, TableFunctionInput &da
 	idx_t row = 0;
 	while (data.offset < data.entries.size() && row < STANDARD_VECTOR_SIZE) {
 		auto &index_entry = data.entries[data.offset++].get();
-		auto &table_entry = index_entry.schema.catalog.GetEntry<TableCatalogEntry>(context, index_entry.GetSchemaName(),
-		                                                                           index_entry.GetTableName());
+		auto &table_entry = index_entry.schema.catalog.GetEntry<TableCatalogEntry>(
+		    context, index_entry.GetSchemaName(), index_entry.GetTableName());
 		auto &storage = table_entry.GetStorage();
 		RTreeIndex *rtree_index = nullptr;
 
@@ -97,9 +97,9 @@ static void RTreeIndexInfoExecute(ClientContext &context, TableFunctionInput &da
 		idx_t col = 0;
 
 		output.data[col++].SetValue(row, Value(index_entry.catalog.GetName()));
-		output.data[col++].SetValue(row, Value(index_entry.schema.name));
-		output.data[col++].SetValue(row, Value(index_entry.name));
-		output.data[col++].SetValue(row, Value(table_entry.name));
+		output.data[col++].SetValue(row, Value(index_entry.schema.name.GetIdentifierName()));
+		output.data[col++].SetValue(row, Value(index_entry.name.GetIdentifierName()));
+		output.data[col++].SetValue(row, Value(table_entry.name.GetIdentifierName()));
 
 		row++;
 	}
@@ -113,7 +113,8 @@ static optional_ptr<RTreeIndex> TryGetIndex(ClientContext &context, const string
 	Binder::BindSchemaOrCatalog(context, qname.catalog, qname.schema);
 	auto &index_entry = Catalog::GetEntry(context, CatalogType::INDEX_ENTRY, qname.catalog, qname.schema, qname.name)
 	                        .Cast<IndexCatalogEntry>();
-	auto &table_entry = Catalog::GetEntry(context, CatalogType::TABLE_ENTRY, qname.catalog, index_entry.GetSchemaName(),
+	auto &table_entry = Catalog::GetEntry(context, CatalogType::TABLE_ENTRY, qname.catalog,
+	                                      index_entry.GetSchemaName(),
 	                                      index_entry.GetTableName())
 	                        .Cast<TableCatalogEntry>();
 

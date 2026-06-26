@@ -982,7 +982,7 @@ struct ST_AsMVT {
 					                            "DOUBLE, INTEGER, BIGINT, BOOLEAN",
 					                            name.c_str(), type_name.c_str());
 				}
-				result->tag_names.push_back(name);
+				result->tag_names.emplace_back(name);
 			}
 		}
 
@@ -1033,17 +1033,17 @@ struct ST_AsMVT {
 		vector<UnifiedVectorFormat> property_formats;
 		vector<LogicalType> property_types;
 
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 
 		for (idx_t col_idx = 0; col_idx < row_cols.size(); col_idx++) {
 			if (col_idx == bdata.geometry_column_idx) {
-				row_cols[col_idx].ToUnifiedFormat(count, geom_format);
+				row_cols[col_idx].ToUnifiedFormat(geom_format);
 			} else if (bdata.feature_id_column_idx.IsValid() && col_idx == bdata.feature_id_column_idx.GetIndex()) {
-				row_cols[col_idx].ToUnifiedFormat(count, fid_format);
+				row_cols[col_idx].ToUnifiedFormat(fid_format);
 				fid_type = row_cols[col_idx].GetType();
 			} else {
 				property_formats.emplace_back();
-				row_cols[col_idx].ToUnifiedFormat(count, property_formats.back());
+				row_cols[col_idx].ToUnifiedFormat(property_formats.back());
 				property_types.push_back(row_cols[col_idx].GetType());
 			}
 		}
@@ -1156,7 +1156,7 @@ struct ST_AsMVT {
 	//------------------------------------------------------------------------------------------------------------------
 	static void Combine(Vector &source_vec, Vector &target_vec, AggregateInputData &aggr, idx_t count) {
 		UnifiedVectorFormat source_format;
-		source_vec.ToUnifiedFormat(count, source_format);
+		source_vec.ToUnifiedFormat(source_format);
 
 		const auto source_ptr = UnifiedVectorFormat::GetData<State *>(source_format);
 		const auto target_ptr = FlatVector::GetDataMutable<State *>(target_vec);
@@ -1178,11 +1178,11 @@ struct ST_AsMVT {
 	//------------------------------------------------------------------------------------------------------------------
 	// Finalize
 	//------------------------------------------------------------------------------------------------------------------
-	static void Finalize(Vector &state_vec, AggregateInputData &aggr, Vector &result, idx_t count, idx_t offset) {
+	static void Finalize(Vector &state_vec, AggregateFinalizeInputData &aggr, Vector &result, idx_t count, idx_t offset) {
 		const auto &bdata = aggr.bind_data->Cast<BindData>();
 
 		UnifiedVectorFormat state_format;
-		state_vec.ToUnifiedFormat(count, state_format);
+		state_vec.ToUnifiedFormat(state_format);
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_format);
 
 		vector<char> buffer;
