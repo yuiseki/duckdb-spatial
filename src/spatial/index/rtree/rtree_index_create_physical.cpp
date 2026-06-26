@@ -79,7 +79,7 @@ unique_ptr<GlobalSinkState> PhysicalCreateRTreeIndex::GetGlobalSinkState(ClientC
 	auto &constraint_type = info->constraint_type;
 	auto &db = storage.db;
 	gstate->rtree =
-	    make_uniq<RTreeIndex>(Identifier(info->index_name.GetIdentifierName()), constraint_type, storage_ids, table_manager, unbound_expressions, db,
+	    make_uniq<RTreeIndex>(Identifier(info->GetIndexName().GetIdentifierName()), constraint_type, storage_ids, table_manager, unbound_expressions, db,
 	                          info->options, context, IndexStorageInfo(), estimated_cardinality);
 
 	gstate->max_node_capacity = gstate->rtree->tree->GetConfig().max_node_capacity;
@@ -284,9 +284,9 @@ static void AddIndexToCatalog(ClientContext &context, CreateRTreeIndexGlobalStat
 	// Create the index entry in the catalog
 	auto &schema = table.schema;
 
-	if (schema.GetEntry(schema.GetCatalogTransaction(context), CatalogType::INDEX_ENTRY, info.index_name)) {
+	if (schema.GetEntry(schema.GetCatalogTransaction(context), CatalogType::INDEX_ENTRY, info.GetIndexName())) {
 		if (info.on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT) {
-			throw CatalogException("Index with name \"%s\" already exists", info.index_name);
+			throw CatalogException("Index with name \"%s\" already exists", info.GetIndexName());
 		}
 		// IF NOT EXISTS on existing index. We are done.
 		// TODO: Early out before this.

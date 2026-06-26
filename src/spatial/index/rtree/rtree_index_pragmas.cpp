@@ -110,10 +110,10 @@ static optional_ptr<RTreeIndex> TryGetIndex(ClientContext &context, const string
 	auto qname = QualifiedName::Parse(index_name);
 
 	// look up the index name in the catalog
-	Binder::BindSchemaOrCatalog(context, qname.catalog, qname.schema);
-	auto &index_entry = Catalog::GetEntry(context, CatalogType::INDEX_ENTRY, qname.catalog, qname.schema, qname.name)
+	Binder::BindSchemaOrCatalog(context, qname.CatalogMutable(), qname.SchemaMutable());
+	auto &index_entry = Catalog::GetEntry(context, CatalogType::INDEX_ENTRY, qname.Catalog(), qname.Schema(), qname.Name())
 	                        .Cast<IndexCatalogEntry>();
-	auto &table_entry = Catalog::GetEntry(context, CatalogType::TABLE_ENTRY, qname.catalog,
+	auto &table_entry = Catalog::GetEntry(context, CatalogType::TABLE_ENTRY, qname.Catalog(),
 	                                      index_entry.GetSchemaName(),
 	                                      index_entry.GetTableName())
 	                        .Cast<TableCatalogEntry>();
