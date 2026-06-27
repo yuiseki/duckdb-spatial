@@ -2071,12 +2071,6 @@ void RegisterGDALModule(ExtensionLoader &loader) {
 		// Register all embedded drivers (dont go looking for plugins)
 		OGRRegisterAllInternal();
 
-		std::atexit([]() {
-			// Cleanup GDAL on exit
-			OGRCleanupAll();
-			OSRCleanup();
-		});
-
 		// Set GDAL error handler
 		CPLSetErrorHandler([](CPLErr e, int code, const char *raw_msg) {
 			// DuckDB doesn't do warnings, so we only throw on errors
