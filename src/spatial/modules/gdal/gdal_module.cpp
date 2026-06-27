@@ -1254,6 +1254,35 @@ public:
 	ArrowSchema schema;
 	unordered_map<idx_t, const shared_ptr<ArrowTypeExtensionData>> extension_type_cast;
 
+	BindData() : geometry_type(wkbUnknown) {
+		schema.release = nullptr;
+	}
+
+	// Move constructor
+	BindData(BindData &&other) noexcept
+	    : driver_name(std::move(other.driver_name)), layer_name(std::move(other.layer_name)),
+	      driver_options(std::move(other.driver_options)), layer_options(std::move(other.layer_options)),
+	      target_srs(std::move(other.target_srs)), always_xy(other.always_xy),
+	      geometry_type(other.geometry_type), props(std::move(other.props)), schema(other.schema),
+	      extension_type_cast(std::move(other.extension_type_cast)) {
+		other.schema.release = nullptr;
+	}
+
+	// Move assignment operator
+	BindData &operator=(BindData &&other) noexcept {
+		std::swap(driver_name, other.driver_name);
+		std::swap(layer_name, other.layer_name);
+		std::swap(driver_options, other.driver_options);
+		std::swap(layer_options, other.layer_options);
+		std::swap(target_srs, other.target_srs);
+		std::swap(always_xy, other.always_xy);
+		std::swap(geometry_type, other.geometry_type);
+		std::swap(props, other.props);
+		std::swap(schema, other.schema);
+		std::swap(extension_type_cast, other.extension_type_cast);
+		return *this;
+	}
+
 	~BindData() override {
 		if (schema.release) {
 			schema.release(&schema);
@@ -1425,6 +1454,29 @@ auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<Ide
 //----------------------------------------------------------------------------------------------------------------------
 class GlobalState final : public GlobalFunctionData {
 public:
+
+	GlobalState() {
+		dataset = nullptr;
+		layer = nullptr;
+		srs = nullptr;
+	}
+
+	// Move constructor
+	GlobalState(GlobalState &&other) noexcept
+	    : dataset(other.dataset), layer(other.layer), srs(other.srs) {
+		other.dataset = nullptr;
+		other.layer = nullptr;
+		other.srs = nullptr;
+	}
+
+	// Move assignment operator
+	GlobalState &operator=(GlobalState &&other) noexcept {
+		std::swap(dataset, other.dataset);
+		std::swap(layer, other.layer);
+		std::swap(srs, other.srs);
+		return *this;
+	}
+
 	~GlobalState() override {
 		if (dataset) {
 			GDALClose(dataset);
@@ -1437,9 +1489,9 @@ public:
 	}
 
 	mutex lock;
-	GDALDatasetH dataset = nullptr;
-	OGRLayerH layer = nullptr;
-	OGRSpatialReferenceH srs = nullptr;
+	GDALDatasetH dataset;
+	OGRLayerH layer;
+	OGRSpatialReferenceH srs;
 };
 
 auto InitGlobal(ClientContext &context, FunctionData &bdata_p, const string &real_file_path)
@@ -1537,6 +1589,22 @@ auto InitGlobal(ClientContext &context, FunctionData &bdata_p, const string &rea
 //----------------------------------------------------------------------------------------------------------------------
 class LocalState final : public LocalFunctionData {
 public:
+
+	LocalState() {
+		array.release = nullptr;
+	}
+
+	// Move constructor
+	LocalState(LocalState &&other) noexcept : array(other.array) {
+		other.array.release = nullptr;
+	}
+
+	// Move assignment operator
+	LocalState &operator=(LocalState &&other) noexcept {
+		std::swap(array, other.array);
+		return *this;
+	}
+
 	~LocalState() override {
 		if (array.release) {
 			array.release(&array);
