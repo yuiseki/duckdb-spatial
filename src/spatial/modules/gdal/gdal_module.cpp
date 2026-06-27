@@ -893,13 +893,17 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 class GlobalState final : public GlobalTableFunctionState {
 public:
 	~GlobalState() override {
+		if (stream.release) {
+			stream.release(&stream);
+		}
+
+		if (schema.release) {
+			schema.release(&schema);
+		}
+
 		if (dataset) {
 			GDALClose(dataset);
 			dataset = nullptr;
-		}
-
-		if (stream.release) {
-			stream.release(&stream);
 		}
 	}
 
@@ -907,6 +911,7 @@ public:
 	CPLStringList layer_options;
 	OGRLayerH layer;
 	ArrowArrayStream stream;
+	ArrowSchema schema;
 	vector<unique_ptr<ArrowType>> col_types;
 	atomic<idx_t> features_read = {0};
 };
@@ -959,20 +964,16 @@ auto InitGlobal(ClientContext &context, TableFunctionInitInput &input) -> unique
 
 	// Open the Arrow stream
 	if (!OGR_L_GetArrowStream(result->layer, &result->stream, result->layer_options.List())) {
-		GDALClose(dataset);
 		throw IOException("Could not get GDAL Arrow stream");
 	}
 
-	ArrowSchema schema;
-	if (result->stream.get_schema(&result->stream, &schema) != 0) {
-		result->stream.release(&result->stream);
-		GDALClose(dataset);
+	if (result->stream.get_schema(&result->stream, &result->schema) != 0) {
 		throw IOException("Could not get GDAL Arrow schema");
 	}
 
 	// Store the column types
-	for (int64_t i = 0; i < schema.n_children; i++) {
-		auto &child_schema = *schema.children[i];
+	for (int64_t i = 0; i < result->schema.n_children; i++) {
+		auto &child_schema = *result->schema.children[i];
 		result->col_types.push_back(ArrowType::GetTypeFromSchema(context, child_schema));
 	}
 

@@ -1709,6 +1709,7 @@ bool IdentifyProjCRS(const char *crs, string &auth_name, string &auth_code) {
 	auto n_candidates = proj_list_get_count(candidates);
 	if (n_candidates == 0) {
 		proj_list_destroy(candidates);
+		proj_int_list_destroy(confidence);
 		proj_destroy(pj);
 		proj_context_destroy(ctx);
 		return false;
@@ -1718,6 +1719,7 @@ bool IdentifyProjCRS(const char *crs, string &auth_name, string &auth_code) {
 	auto candidate = proj_list_get(ctx, candidates, 0);
 	if (!candidate) {
 		proj_list_destroy(candidates);
+		proj_int_list_destroy(confidence);
 		proj_destroy(pj);
 		proj_context_destroy(ctx);
 		return false;
@@ -1726,7 +1728,9 @@ bool IdentifyProjCRS(const char *crs, string &auth_name, string &auth_code) {
 	if (confidence[0] < 70) {
 		// The confidence is too low, so we consider it a failed identification
 		proj_list_destroy(candidates);
+		proj_int_list_destroy(confidence);
 		proj_destroy(pj);
+		proj_destroy(candidate);
 		proj_context_destroy(ctx);
 		return false;
 	}
@@ -1736,7 +1740,9 @@ bool IdentifyProjCRS(const char *crs, string &auth_name, string &auth_code) {
 
 	if (!proj_auth_name || !proj_auth_code) {
 		proj_list_destroy(candidates);
+		proj_int_list_destroy(confidence);
 		proj_destroy(pj);
+		proj_destroy(candidate);
 		proj_context_destroy(ctx);
 		return false;
 	}
@@ -1745,7 +1751,9 @@ bool IdentifyProjCRS(const char *crs, string &auth_name, string &auth_code) {
 	auth_code = proj_auth_code;
 
 	proj_list_destroy(candidates);
+	proj_int_list_destroy(confidence);
 	proj_destroy(pj);
+	proj_destroy(candidate);
 	proj_context_destroy(ctx);
 
 	return true;
