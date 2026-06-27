@@ -3,6 +3,9 @@ require parquet
 require spatial
 
 statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+statement ok
 CREATE TABLE t1 as SELECT st_point(pickup_longitude, pickup_latitude) as geom, trip_distance, fare_amount
 FROM read_parquet('{WORKING_DIRECTORY}/test/data/nyc_taxi/yellow_tripdata_2010-01-limit1mil.parquet');
 

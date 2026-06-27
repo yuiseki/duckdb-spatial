@@ -1,6 +1,9 @@
 require spatial
 
 statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+statement ok
 CREATE TABLE t1 AS
 SELECT
     ST_Buffer(ST_Point(x, y), 5) as geom,

@@ -69,9 +69,10 @@ static unique_ptr<Expression> GetInversePredicate(ClientContext &context, unique
 
 	// Get the function from the catalog
 	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, Identifier::DefaultSchema(), Identifier(it->second));
-	const auto &inverse_func =
-	    entry.functions.GetFunctionByArguments(context, {func.GetChildren()[0]->GetReturnType(), func.GetChildren()[1]->GetReturnType()});
+	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(
+	    context, QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), Identifier(it->second)));
+	const auto &inverse_func = entry.functions.GetFunctionByArguments(
+	    context, {func.GetChildren()[0]->GetReturnType(), func.GetChildren()[1]->GetReturnType()});
 
 	auto func_expr = inverse_func.Bind(context, std::move(func.GetChildrenMutable()));
 	return std::move(func_expr);

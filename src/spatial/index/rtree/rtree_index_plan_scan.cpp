@@ -120,7 +120,8 @@ public:
 
 		// make a new box expression
 		auto &catalog = Catalog::GetSystemCatalog(context);
-		auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, Identifier::DefaultSchema(), "ST_Extent_Approx");
+		auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(
+		    context, QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), "ST_Extent_Approx"));
 		const auto &func = entry.functions.GetFunctionByArguments(context, {LogicalType::GEOMETRY()});
 
 		vector<unique_ptr<Expression>> children;
@@ -236,8 +237,7 @@ public:
 			bool rewrite_possible = true;
 			auto index_expr = index_entry.unbound_expressions[0]->Copy();
 			if (filter_column_idx) {
-				RewriteIndexExpressionForFilter(index_entry, get, index_expr, *filter_column_idx,
-				                                rewrite_possible);
+				RewriteIndexExpressionForFilter(index_entry, get, index_expr, *filter_column_idx, rewrite_possible);
 			} else {
 				RewriteIndexExpression(index_entry, get, *index_expr, rewrite_possible);
 			}
