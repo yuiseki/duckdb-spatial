@@ -1483,7 +1483,7 @@ public:
 			dataset = nullptr;
 		}
 		if (srs) {
-			OSRDestroySpatialReference(srs);
+			OSRRelease(srs);
 			srs = nullptr;
 		}
 	}
@@ -2071,6 +2071,12 @@ void RegisterGDALModule(ExtensionLoader &loader) {
 		// Register all embedded drivers (dont go looking for plugins)
 		OGRRegisterAllInternal();
 
+		std::atexit([]() {
+			// Cleanup GDAL on exit
+			OGRCleanupAll();
+			OSRCleanup();
+		});
+
 		// Set GDAL error handler
 		CPLSetErrorHandler([](CPLErr e, int code, const char *raw_msg) {
 			// DuckDB doesn't do warnings, so we only throw on errors
@@ -2121,5 +2127,6 @@ void RegisterGDALModule(ExtensionLoader &loader) {
 	gdal_copy::Register(loader);
 	gdal_list::Register(loader);
 	gdal_meta::Register(loader);
+
 }
 } // namespace duckdb

@@ -92,6 +92,11 @@ void ProjModule::RegisterVFS(ExtensionLoader &loader) {
 		// this way we don't have to worry about the user having the proj.db database installed
 		// on their system. We therefore have to tell proj to use memvfs as the sqlite3 vfs and
 		// point it to the segment of the binary that contains the proj.db database
+		std::atexit([]() {
+			// Cleanup sqlite3 on exit
+			sqlite3_shutdown();
+			proj_cleanup();
+		});
 
 		sqlite3_initialize();
 		sqlite3_memvfs_init(nullptr, nullptr, nullptr);
