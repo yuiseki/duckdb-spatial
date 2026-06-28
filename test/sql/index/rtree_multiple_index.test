@@ -2,6 +2,9 @@ require spatial
 
 # Create a table with 10_000 random points, where the table also has an ART primary key index
 statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+statement ok
 CREATE TABLE IF NOT EXISTS t1 (
             id          LONG PRIMARY KEY,
             geom        GEOMETRY

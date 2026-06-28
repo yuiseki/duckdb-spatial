@@ -3,6 +3,9 @@ require spatial
 # Create a bunch of points on a grid
 # between 0 and 500 in both x and y directions
 statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+statement ok
 CREATE TABLE lhs AS
 SELECT
     ST_Point(x, y) as geom,

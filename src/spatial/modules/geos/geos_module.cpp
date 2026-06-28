@@ -2663,6 +2663,16 @@ struct ST_Union_Agg {
 	struct State {
 		GEOSContextHandle_t context = nullptr;
 		vector<GEOSGeometry *> geoms;
+
+		~State() {
+			if (context) {
+				for (auto geom : geoms) {
+					GEOSGeom_destroy_r(context, geom);
+				}
+				GEOS_finish_r(context);
+				context = nullptr;
+			}
+		}
 	};
 
 	static idx_t StateSize(const BoundAggregateFunction &) {
@@ -2823,14 +2833,8 @@ struct ST_Union_Agg {
 		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
 			const auto row_idx = state_format.sel->get_index(raw_idx);
 			if (state_format.validity.RowIsValid(row_idx)) {
-				auto &state = *state_ptr[row_idx];
-
-				state.geoms.clear();
-
-				if (state.context) {
-					GEOS_finish_r(state.context);
-					state.context = nullptr;
-				}
+				// Destroy the state object
+				state_ptr[row_idx]->~State();
 			}
 		}
 	}
@@ -2867,6 +2871,16 @@ struct GEOSCoverageAggFunction {
 		double tolerance = 0;
 		bool parameters_set = false;
 		bool simplify_boundary = false;
+
+		~State() {
+			if (context) {
+				for (auto geom : geoms) {
+					GEOSGeom_destroy_r(context, geom);
+				}
+				GEOS_finish_r(context);
+				context = nullptr;
+			}
+		}
 	};
 
 	// Serialize a GEOS geometry
@@ -3010,14 +3024,7 @@ struct GEOSCoverageAggFunction {
 		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
 			const auto row_idx = state_format.sel->get_index(raw_idx);
 			if (state_format.validity.RowIsValid(row_idx)) {
-				auto &state = *state_ptr[row_idx];
-
-				state.geoms.clear();
-
-				if (state.context) {
-					GEOS_finish_r(state.context);
-					state.context = nullptr;
-				}
+				state_ptr[row_idx]->~State();
 			}
 		}
 	}

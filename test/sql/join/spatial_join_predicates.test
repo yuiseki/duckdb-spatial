@@ -2,6 +2,9 @@ require spatial
 
 # Set up test tables
 statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+statement ok
 CREATE TABLE lhs AS
 SELECT
     ST_Point(x, y) as geom,

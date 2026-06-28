@@ -290,10 +290,10 @@ unique_ptr<LogicalExtensionOperator> LogicalCreateRTreeIndex::Deserialize(Deseri
 
 	// We also need to rebind the table
 	auto &context = reader.Get<ClientContext &>();
-	const auto &catalog = info->catalog;
-	const auto &schema = info->schema;
+	const auto &catalog = info->GetQualifiedName().Catalog();
+	const auto &schema = info->GetQualifiedName().Schema();
 	const auto &table_name = info->table;
-	auto &table_entry = Catalog::GetEntry<TableCatalogEntry>(context, catalog, schema, table_name);
+	auto &table_entry = Catalog::GetEntry<TableCatalogEntry>(context, QualifiedName(catalog, schema, table_name));
 
 	// Return the new operator
 	return make_uniq_base<LogicalExtensionOperator, LogicalCreateRTreeIndex>(

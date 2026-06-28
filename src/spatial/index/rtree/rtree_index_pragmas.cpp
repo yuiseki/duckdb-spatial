@@ -73,7 +73,8 @@ static void RTreeIndexInfoExecute(ClientContext &context, TableFunctionInput &da
 	while (data.offset < data.entries.size() && row < STANDARD_VECTOR_SIZE) {
 		auto &index_entry = data.entries[data.offset++].get();
 		auto &table_entry = index_entry.schema.catalog.GetEntry<TableCatalogEntry>(
-		    context, index_entry.GetSchemaName(), index_entry.GetTableName());
+		    context, QualifiedName(index_entry.schema.catalog.GetName(), index_entry.GetSchemaName(),
+		                           index_entry.GetTableName()));
 		auto &storage = table_entry.GetStorage();
 		RTreeIndex *rtree_index = nullptr;
 
@@ -110,12 +111,12 @@ static optional_ptr<RTreeIndex> TryGetIndex(ClientContext &context, const string
 	auto qname = QualifiedName::Parse(index_name);
 
 	// look up the index name in the catalog
-	Binder::BindSchemaOrCatalog(context, qname.catalog, qname.schema);
-	auto &index_entry = Catalog::GetEntry(context, CatalogType::INDEX_ENTRY, qname.catalog, qname.schema, qname.name)
-	                        .Cast<IndexCatalogEntry>();
-	auto &table_entry = Catalog::GetEntry(context, CatalogType::TABLE_ENTRY, qname.catalog,
-	                                      index_entry.GetSchemaName(),
-	                                      index_entry.GetTableName())
+	Binder::BindSchemaOrCatalog(context, qname);
+	auto &index_entry =
+	    Catalog::GetEntry(context, CatalogType::INDEX_ENTRY, qname.Catalog(), qname.Schema(), qname.Name())
+	        .Cast<IndexCatalogEntry>();
+	auto &table_entry = Catalog::GetEntry(context, CatalogType::TABLE_ENTRY, qname.Catalog(),
+	                                      index_entry.GetSchemaName(), index_entry.GetTableName())
 	                        .Cast<TableCatalogEntry>();
 
 	auto &storage = table_entry.GetStorage();

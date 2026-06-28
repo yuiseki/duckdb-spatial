@@ -1,6 +1,9 @@
 require spatial
 
 statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+statement ok
 CREATE TABLE t1 (geom GEOMETRY, id INT);
 
 statement ok

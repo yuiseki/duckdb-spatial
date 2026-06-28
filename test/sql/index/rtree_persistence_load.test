@@ -4,6 +4,9 @@ require spatial
 load {TEST_DIR}/rtree_persistence_test.db
 
 statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+statement ok
 CREATE TABLE t1 AS SELECT point::GEOMETRY as geom
 FROM st_generatepoints({min_x: 0, min_y: 0, max_x: 10000, max_y: 10000}::BOX_2D, 100_000, 1337);
 
@@ -22,6 +25,9 @@ physical_plan	<REGEX>:.*RTREE_INDEX_SCAN.*
 
 restart no_extension_load
 
+statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
 # Try to modify the table
 statement error
 DELETE FROM t1 WHERE rowid < 1000;
@@ -29,6 +35,9 @@ DELETE FROM t1 WHERE rowid < 1000;
 Missing Extension Error: Cannot bind index 't1', unknown index type 'RTREE'. You need to load the extension that provides this index type before table 't1' can be modified.
 
 restart
+
+statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
 
 # We should still have the index
 query II

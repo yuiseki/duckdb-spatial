@@ -386,7 +386,8 @@ private:
 
 static unique_ptr<Expression> GetBBOXExpression(ClientContext &context, const LogicalType &geom_type) {
 	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, Identifier::DefaultSchema(), "ST_Extent_Approx");
+	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(
+	    context, QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), "ST_Extent_Approx"));
 	const auto &func = entry.functions.GetFunctionByArguments(context, {geom_type});
 
 	auto child_expr = make_uniq<BoundReferenceExpression>(geom_type, 0);
@@ -546,8 +547,8 @@ public:
 		auto &geom_type = op.build_side_key->GetReturnType();
 
 		auto &catalog = Catalog::GetSystemCatalog(context);
-		auto &entry =
-	    catalog.GetEntry<ScalarFunctionCatalogEntry>(context, Identifier::DefaultSchema(), "ST_IsEmpty");
+		auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(
+		    context, QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), "ST_IsEmpty"));
 		const auto &func = entry.functions.GetFunctionByArguments(context, {geom_type});
 
 		vector<unique_ptr<Expression>> children;
@@ -560,7 +561,8 @@ public:
 
 		auto is_not_null_expr =
 		    make_uniq<BoundOperatorExpression>(ExpressionType::OPERATOR_IS_NOT_NULL, LogicalTypeId::BOOLEAN);
-		is_not_null_expr->GetChildrenMutable().push_back(make_uniq_base<Expression, BoundReferenceExpression>(geom_type, 0));
+		is_not_null_expr->GetChildrenMutable().push_back(
+		    make_uniq_base<Expression, BoundReferenceExpression>(geom_type, 0));
 
 		auto filter_expr = make_uniq_base<Expression, BoundConjunctionExpression>(
 		    ExpressionType::CONJUNCTION_AND, std::move(is_not_empty_expr), std::move(is_not_null_expr));
@@ -857,7 +859,8 @@ unique_ptr<OperatorState> PhysicalSpatialJoin::GetOperatorState(ExecutionContext
 	lstate->probe_side_key_chunk.Initialize(context.client, {probe_side_key->GetReturnType()});
 	lstate->probe_side_box_chunk.Initialize(context.client, {lstate->bound_expr->GetReturnType()});
 	lstate->build_side_key_chunk.Initialize(context.client, {build_side_key->GetReturnType()});
-	lstate->match_pred_arg_chunk.Initialize(context.client, {probe_side_key->GetReturnType(), build_side_key->GetReturnType()});
+	lstate->match_pred_arg_chunk.Initialize(context.client,
+	                                        {probe_side_key->GetReturnType(), build_side_key->GetReturnType()});
 
 	return std::move(lstate);
 }
