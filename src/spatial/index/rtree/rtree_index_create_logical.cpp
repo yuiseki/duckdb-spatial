@@ -51,8 +51,9 @@ static PhysicalOperator &CreateNullFilter(PhysicalPlanGenerator &generator, cons
 
 	// Filter IS_NOT_EMPTY on the GEOMETRY column
 	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto &is_empty_entry = catalog.GetEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY, Identifier::DefaultSchema(), "ST_IsEmpty")
-	                           .Cast<ScalarFunctionCatalogEntry>();
+	auto &is_empty_entry =
+	    catalog.GetEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY, Identifier::DefaultSchema(), "ST_IsEmpty")
+	        .Cast<ScalarFunctionCatalogEntry>();
 
 	auto is_empty_func = is_empty_entry.functions.GetFunctionByArguments(context, {LogicalType::GEOMETRY()});
 	vector<unique_ptr<Expression>> is_empty_args;
@@ -114,8 +115,9 @@ static PhysicalOperator &CreateOrderByMinX(PhysicalPlanGenerator &planner, const
 	auto centroid_expr = centroid_func.Bind(context, std::move(centroid_func_args));
 
 	// Get the xmin value function
-	auto &xmin_func_entry = catalog.GetEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY, Identifier::DefaultSchema(), "st_xmin")
-	                            .Cast<ScalarFunctionCatalogEntry>();
+	auto &xmin_func_entry =
+	    catalog.GetEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY, Identifier::DefaultSchema(), "st_xmin")
+	        .Cast<ScalarFunctionCatalogEntry>();
 	const auto &xmin_func = xmin_func_entry.functions.GetFunctionByArguments(context, {GeoTypes::POINT_2D()});
 	vector<unique_ptr<Expression>> xmin_func_args;
 
