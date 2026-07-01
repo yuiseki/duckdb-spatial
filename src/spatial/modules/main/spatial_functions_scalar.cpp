@@ -6,6 +6,7 @@
 #include "spatial/spatial_types.hpp"
 #include "spatial/util/binary_reader.hpp"
 #include "spatial/util/function_builder.hpp"
+#include "spatial/util/geometry_predicate_stats.hpp"
 #include "spatial/util/math.hpp"
 
 // DuckDB
@@ -2652,7 +2653,7 @@ struct ST_DistanceWithin {
 		}
 
 		static void Serialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
-                                     const BoundScalarFunction &function) {
+		                      const BoundScalarFunction &function) {
 
 			const auto &bind_data = bind_data_p->Cast<BindData>();
 			serializer.WritePropertyWithDefault<bool>(100, "is_constant", bind_data.is_constant);
@@ -2683,6 +2684,50 @@ struct ST_DistanceWithin {
 		}
 
 		return make_uniq<BindData>(0.0, false);
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Statistics pruning
+	//------------------------------------------------------------------------------------------------------------------
+	// ST_DWithin(col, const, d) can only be satisfied if the column zonemap intersects the constant's bounding
+	// box grown by the (constant) target distance. We can only prune when the distance was constant-folded.
+	static FilterPropagateResult Prune(const FunctionStatisticsPruneInput &input) {
+		if (!input.bind_data) {
+			return FilterPropagateResult::NO_PRUNING_POSSIBLE;
+		}
+		const auto &bind_data = input.bind_data->Cast<BindData>();
+		if (!bind_data.is_constant) {
+			// The distance is not known at plan time, so we cannot grow the constant's bounding box.
+			return FilterPropagateResult::NO_PRUNING_POSSIBLE;
+		}
+
+		idx_t column_idx;
+		if (!TryGetGeometryPredicateColumn(input.function, column_idx)) {
+			return FilterPropagateResult::NO_PRUNING_POSSIBLE;
+		}
+		auto column_stats = input.ChildStats(column_idx);
+		auto constant_stats = input.ChildStats(1 - column_idx);
+		if (!column_stats || !constant_stats || constant_stats->GetStatsType() != StatisticsType::GEOMETRY_STATS) {
+			return FilterPropagateResult::NO_PRUNING_POSSIBLE;
+		}
+		// The constant's derived geometry stats already carry its bounding box; grow a copy by the distance.
+		auto const_extent = GeometryStats::GetExtent(*constant_stats);
+		if (!const_extent.CanPruneXY() || bind_data.distance < 0) {
+			// An empty constant or a negative distance can never be satisfied.
+			return ExecuteGeometryPredicatePrune(GeometryPrunePredicate::UNSATISFIABLE, const_extent, *column_stats);
+		}
+
+		// Grow the constant's bounding box by the target distance on all set axes.
+		const auto distance = bind_data.distance;
+		if (const_extent.HasX()) {
+			const_extent.x_min -= distance;
+			const_extent.x_max += distance;
+		}
+		if (const_extent.HasY()) {
+			const_extent.y_min -= distance;
+			const_extent.y_max += distance;
+		}
+		return ExecuteGeometryPredicatePrune(GeometryPrunePredicate::COLUMN_INTERSECTS, const_extent, *column_stats);
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -2799,6 +2844,7 @@ struct ST_DistanceWithin {
 				variant.SetBind(GeoTypes::PropagateCRS<Bind>);
 				variant.SetSerialize(BindData::Serialize);
 				variant.SetDeserialize(BindData::Deserialize);
+				variant.SetFilterPrune(Prune);
 			});
 
 			func.SetDescription(R"(
@@ -4648,24 +4694,24 @@ struct ST_GeomFromText {
 
 		sgl::wkt_reader reader(alloc);
 
-		UnaryExecutor::Execute<string_t, string_t>(
-		    args.data[0], result, args.size(), [&](const string_t &wkt) -> optional<string_t> {
-			    const auto wkt_ptr = wkt.GetDataUnsafe();
-			    const auto wkt_len = wkt.GetSize();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
+		                                           [&](const string_t &wkt) -> optional<string_t> {
+			                                           const auto wkt_ptr = wkt.GetDataUnsafe();
+			                                           const auto wkt_len = wkt.GetSize();
 
-			    sgl::geometry geom;
+			                                           sgl::geometry geom;
 
-			    if (!reader.try_parse(geom, wkt_ptr, wkt_len)) {
+			                                           if (!reader.try_parse(geom, wkt_ptr, wkt_len)) {
 
-				    if (ignore_invalid) {
-					    return nullopt;
-				    }
-				    const auto error = reader.get_error_message();
-				    throw InvalidInputException(error);
-			    }
+				                                           if (ignore_invalid) {
+					                                           return nullopt;
+				                                           }
+				                                           const auto error = reader.get_error_message();
+				                                           throw InvalidInputException(error);
+			                                           }
 
-			    return lstate.Serialize(result, geom);
-		    });
+			                                           return lstate.Serialize(result, geom);
+		                                           });
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -6017,22 +6063,22 @@ struct ST_Hilbert {
 	// GEOMETRY
 	//------------------------------------------------------------------------------------------------------------------
 	static void ExecuteGeometry(DataChunk &args, ExpressionState &state, Vector &result) {
-		UnaryExecutor::Execute<string_t, uint32_t>(
-		    args.data[0], result, args.size(), [&](const string_t &geom) -> optional<uint32_t> {
-			    // TODO: This is shit, dont rely on cached bounds
-			    Box2D<float> bounds;
-			    if (!Serde::TryGetBounds(geom, bounds)) {
-				    return nullopt;
-			    }
+		UnaryExecutor::Execute<string_t, uint32_t>(args.data[0], result, args.size(),
+		                                           [&](const string_t &geom) -> optional<uint32_t> {
+			                                           // TODO: This is shit, dont rely on cached bounds
+			                                           Box2D<float> bounds;
+			                                           if (!Serde::TryGetBounds(geom, bounds)) {
+				                                           return nullopt;
+			                                           }
 
-			    const auto dx = bounds.min.x + (bounds.max.x - bounds.min.x) / 2;
-			    const auto dy = bounds.min.y + (bounds.max.y - bounds.min.y) / 2;
+			                                           const auto dx = bounds.min.x + (bounds.max.x - bounds.min.x) / 2;
+			                                           const auto dy = bounds.min.y + (bounds.max.y - bounds.min.y) / 2;
 
-			    const auto hx = sgl::math::hilbert_f32_to_u32(dx);
-			    const auto hy = sgl::math::hilbert_f32_to_u32(dy);
+			                                           const auto hx = sgl::math::hilbert_f32_to_u32(dx);
+			                                           const auto hy = sgl::math::hilbert_f32_to_u32(dy);
 
-			    return sgl::math::hilbert_encode(16, hx, hy);
-		    });
+			                                           return sgl::math::hilbert_encode(16, hx, hy);
+		                                           });
 	}
 
 	static void ExecuteGeometryWithBounds(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -7512,18 +7558,18 @@ struct ST_NInteriorRings {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::Execute<string_t, int32_t>(
-		    args.data[0], result, args.size(), [&](const string_t &blob) -> optional<int32_t> {
-			    sgl::geometry geom;
-			    lstate.Deserialize(blob, geom);
+		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(),
+		                                          [&](const string_t &blob) -> optional<int32_t> {
+			                                          sgl::geometry geom;
+			                                          lstate.Deserialize(blob, geom);
 
-			    if (geom.get_type() != sgl::geometry_type::POLYGON) {
-				    return nullopt;
-			    }
+			                                          if (geom.get_type() != sgl::geometry_type::POLYGON) {
+				                                          return nullopt;
+			                                          }
 
-			    const auto n_rings = static_cast<int32_t>(geom.get_part_count());
-			    return n_rings == 0 ? 0 : n_rings - 1;
-		    });
+			                                          const auto n_rings = static_cast<int32_t>(geom.get_part_count());
+			                                          return n_rings == 0 ? 0 : n_rings - 1;
+		                                          });
 	}
 
 	//------------------------------------------------------------------------------

@@ -1,0 +1,204 @@
+# name: test/sql/geometry/st_predicate_filter_pushdown.test
+# description: Test that ST_ spatial predicates are pushed down and used to prune scans via geometry statistics
+# group: [geometry]
+
+require spatial
+
+require parquet
+
+# Render operator names in upper case so the EMPTY_RESULT operator is easy to match
+statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+# A GeoParquet file whose geometry column has a known bounding box of [1, 5] x [1, 5].
+# Parquet exposes that bounding box to the optimizer, which lets it prune the scan at plan time.
+statement ok
+COPY (
+    SELECT ST_Point(x, y)::GEOMETRY AS geom FROM range(1, 6) a(x), range(1, 6) b(y)
+) TO '{TEST_DIR}/pts.parquet' (FORMAT parquet, GEOPARQUET_VERSION 'NONE', ROW_GROUP_SIZE 100);
+
+#-------------------------------------------------------------------------------
+# ST_Intersects
+#-------------------------------------------------------------------------------
+
+# A constant disjoint from the column extent prunes the whole scan to EMPTY_RESULT
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/pts.parquet' WHERE ST_Intersects(geom, ST_Point(100, 100));
+----
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
+
+# ... and the result is correct (empty)
+query I
+SELECT count(*) FROM '{TEST_DIR}/pts.parquet' WHERE ST_Intersects(geom, ST_Point(100, 100));
+----
+0
+
+# A constant overlapping the column extent cannot be pruned
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/pts.parquet' WHERE ST_Intersects(geom, ST_Point(3, 3));
+----
+physical_plan	<!REGEX>:.*EMPTY_RESULT.*
+
+# ... and the result is correct
+query I
+SELECT ST_AsText(geom) FROM '{TEST_DIR}/pts.parquet' WHERE ST_Intersects(geom, ST_Point(3, 3));
+----
+POINT (3 3)
+
+# The constant may also appear on the left-hand side (pruning works regardless of operand order)
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/pts.parquet' WHERE ST_Intersects(ST_Point(100, 100), geom);
+----
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
+
+query I
+SELECT count(*) FROM '{TEST_DIR}/pts.parquet' WHERE ST_Intersects(ST_Point(100, 100), geom);
+----
+0
+
+#-------------------------------------------------------------------------------
+# ST_Contains / ST_ContainsProperly / ST_Covers - containment pruning
+#-------------------------------------------------------------------------------
+
+# ST_Contains(col, const): the column zonemap must CONTAIN the constant bbox.
+# This envelope [3, 100] x [3, 100] intersects the column extent but is not contained,
+# so containment pruning still folds the filter to EMPTY_RESULT.
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/pts.parquet' WHERE ST_Contains(geom, ST_MakeEnvelope(3, 3, 100, 100));
+----
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
+
+query I
+SELECT count(*) FROM '{TEST_DIR}/pts.parquet' WHERE ST_Contains(geom, ST_MakeEnvelope(3, 3, 100, 100));
+----
+0
+
+# The same envelope with ST_Intersects only requires intersection, so it is NOT pruned
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/pts.parquet' WHERE ST_Intersects(geom, ST_MakeEnvelope(3, 3, 100, 100));
+----
+physical_plan	<!REGEX>:.*EMPTY_RESULT.*
+
+# ... and returns the 9 points with x >= 3 and y >= 3
+query I
+SELECT count(*) FROM '{TEST_DIR}/pts.parquet' WHERE ST_Intersects(geom, ST_MakeEnvelope(3, 3, 100, 100));
+----
+9
+
+# ST_ContainsProperly behaves like ST_Contains for bounding-box containment pruning
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/pts.parquet' WHERE ST_ContainsProperly(geom, ST_MakeEnvelope(3, 3, 100, 100));
+----
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
+
+# ST_Covers(col, const) also requires the column zonemap to contain the constant
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/pts.parquet' WHERE ST_Covers(geom, ST_Point(100, 100));
+----
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
+
+#-------------------------------------------------------------------------------
+# ST_Within / ST_CoveredBy - column is the contained side, only intersection pruning
+#-------------------------------------------------------------------------------
+
+# Disjoint envelope -> pruned to EMPTY_RESULT
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/pts.parquet' WHERE ST_Within(geom, ST_MakeEnvelope(100, 100, 200, 200));
+----
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
+
+# An envelope that fully covers the column extent intersects it, so no pruning, all rows match
+query I
+SELECT count(*) FROM '{TEST_DIR}/pts.parquet' WHERE ST_Within(geom, ST_MakeEnvelope(0, 0, 10, 10));
+----
+25
+
+# An envelope overlapping (but not containing) the extent cannot be pruned for ST_Within,
+# because containment of the column is not implied (the column is the contained side)
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/pts.parquet' WHERE ST_Within(geom, ST_MakeEnvelope(3, 3, 100, 100));
+----
+physical_plan	<!REGEX>:.*EMPTY_RESULT.*
+
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/pts.parquet' WHERE ST_CoveredBy(geom, ST_MakeEnvelope(100, 100, 200, 200));
+----
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
+
+#-------------------------------------------------------------------------------
+# ST_Touches / ST_Crosses / ST_Overlaps - plain intersection pruning
+#-------------------------------------------------------------------------------
+
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/pts.parquet' WHERE ST_Touches(geom, ST_Point(100, 100));
+----
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
+
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/pts.parquet' WHERE ST_Crosses(geom, ST_MakeEnvelope(100, 100, 200, 200));
+----
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
+
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/pts.parquet' WHERE ST_Overlaps(geom, ST_MakeEnvelope(100, 100, 200, 200));
+----
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
+
+#-------------------------------------------------------------------------------
+# ST_Equals - a match implies identical bounding boxes (containment pruning)
+#-------------------------------------------------------------------------------
+
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/pts.parquet' WHERE ST_Equals(geom, ST_Point(100, 100));
+----
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
+
+query I
+SELECT count(*) FROM '{TEST_DIR}/pts.parquet' WHERE ST_Equals(geom, ST_Point(3, 3));
+----
+1
+
+#-------------------------------------------------------------------------------
+# ST_DWithin - prunes only when the distance is a constant
+#-------------------------------------------------------------------------------
+
+# The constant grown by the distance [15, 25] x [15, 25] is disjoint from the column extent
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/pts.parquet' WHERE ST_DWithin(geom, ST_Point(20, 20), 5);
+----
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
+
+query I
+SELECT count(*) FROM '{TEST_DIR}/pts.parquet' WHERE ST_DWithin(geom, ST_Point(20, 20), 5);
+----
+0
+
+# The constant grown by the distance [4, 10] x [4, 10] intersects the column extent -> no pruning
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/pts.parquet' WHERE ST_DWithin(geom, ST_Point(7, 7), 3);
+----
+physical_plan	<!REGEX>:.*EMPTY_RESULT.*
+
+# ... only (5, 5) is within distance 3 of (7, 7)
+query I
+SELECT count(*) FROM '{TEST_DIR}/pts.parquet' WHERE ST_DWithin(geom, ST_Point(7, 7), 3);
+----
+1
+
+#-------------------------------------------------------------------------------
+# An empty constant geometry can never be satisfied -> EMPTY_RESULT
+#-------------------------------------------------------------------------------
+
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/pts.parquet' WHERE ST_Intersects(geom, ST_GeomFromText('POLYGON EMPTY'));
+----
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
+
+#-------------------------------------------------------------------------------
+# Pruning must not apply to a spatial join (no constant operand)
+#-------------------------------------------------------------------------------
+
+query I
+SELECT count(*) FROM '{TEST_DIR}/pts.parquet' a, '{TEST_DIR}/pts.parquet' b WHERE ST_Intersects(a.geom, b.geom);
+----
+25
