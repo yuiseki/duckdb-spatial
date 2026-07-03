@@ -2701,33 +2701,24 @@ struct ST_DistanceWithin {
 			return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 		}
 
-		idx_t column_idx;
-		if (!TryGetGeometryPredicateColumn(input.function, column_idx)) {
+		GeometryPredicateOperands operands;
+		if (!TryGetGeometryPredicateOperands(input, operands)) {
 			return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 		}
-		auto column_stats = input.ChildStats(column_idx);
-		auto constant_stats = input.ChildStats(1 - column_idx);
-		if (!column_stats || !constant_stats || constant_stats->GetStatsType() != StatisticsType::GEOMETRY_STATS) {
-			return FilterPropagateResult::NO_PRUNING_POSSIBLE;
-		}
-		// The constant's derived geometry stats already carry its bounding box; grow a copy by the distance.
-		auto const_extent = GeometryStats::GetExtent(*constant_stats);
-		if (!const_extent.CanPruneXY() || bind_data.distance < 0) {
-			// An empty constant or a negative distance can never be satisfied.
-			return ExecuteGeometryPredicatePrune(GeometryPrunePredicate::UNSATISFIABLE, const_extent, *column_stats);
+		if (GeometryExtentIsEmpty(operands.const_extent) || bind_data.distance < 0) {
+			// Nothing is within any distance of an empty geometry, and no distance is within a negative one.
+			return FilterPropagateResult::FILTER_ALWAYS_FALSE;
 		}
 
-		// Grow the constant's bounding box by the target distance on all set axes.
-		const auto distance = bind_data.distance;
-		if (const_extent.HasX()) {
-			const_extent.x_min -= distance;
-			const_extent.x_max += distance;
-		}
-		if (const_extent.HasY()) {
-			const_extent.y_min -= distance;
-			const_extent.y_max += distance;
-		}
-		return ExecuteGeometryPredicatePrune(GeometryPrunePredicate::COLUMN_INTERSECTS, const_extent, *column_stats);
+		// Grow the constant's bounding box by the target distance. Non-finite (unknown or NaN) bounds are
+		// unaffected and degrade to no pruning in the intersection check.
+		auto &const_extent = operands.const_extent;
+		const_extent.x_min -= bind_data.distance;
+		const_extent.x_max += bind_data.distance;
+		const_extent.y_min -= bind_data.distance;
+		const_extent.y_max += bind_data.distance;
+		return ExecuteGeometryPredicatePrune(GeometryZonemapCheck::COLUMN_INTERSECTS, const_extent,
+		                                     *operands.column_stats);
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -6598,6 +6589,7 @@ struct ST_Intersects_Extent {
 				variant.SetBind(GeoTypes::PropagateCRS);
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
+				variant.SetFilterPrune(GeometryPredicatePruneCallback<GeometryPredicateBBox::INTERSECTS>);
 			});
 
 			func.SetDescription(DESCRIPTION);

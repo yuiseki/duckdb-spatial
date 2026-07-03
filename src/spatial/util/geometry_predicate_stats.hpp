@@ -12,10 +12,12 @@ namespace duckdb {
 //------------------------------------------------------------------------------
 // Geometry predicate statistics pruning
 //------------------------------------------------------------------------------
-// Shared helpers that let the spatial "ST_" predicates participate in zonemap pruning via the
-// scalar-function filter_prune callback. When a predicate is evaluated against a constant geometry, the
-// callback reads the constant operand's bounding box from its derived statistics and prunes row groups whose
-// column zonemap can never satisfy the predicate.
+// Shared helpers that let the spatial "ST_" predicates participate in zonemap pruning via the scalar-function
+// filter_prune callback. When a predicate is evaluated against a constant geometry, the callback reads the constant
+// operands bbox from its derived statistics and prunes row groups whose column zonemap can never satisfy the predicate.
+//
+// Note that in this context FILTER_ALWAYS_FALSE means "no rows pass the filter", which also covers rows where the
+// predicate evaluates to NULL.
 
 //! How the bounding boxes of the two operands must relate for a row to possibly match the predicate.
 enum class GeometryPredicateBBox : uint8_t {
@@ -30,24 +32,37 @@ enum class GeometryPredicateBBox : uint8_t {
 };
 
 //! How the column zonemap must relate to the constant bounding box for a row to possibly match.
-enum class GeometryPrunePredicate : uint8_t {
-	//! No constant operand was found; pruning is not possible.
-	NONE,
-	//! The predicate can never be satisfied (e.g. the constant operand is an empty geometry).
-	UNSATISFIABLE,
+enum class GeometryZonemapCheck : uint8_t {
 	//! The column zonemap must intersect the constant bounding box.
 	COLUMN_INTERSECTS,
 	//! The column zonemap must contain the constant bounding box.
 	COLUMN_CONTAINS,
 };
 
-//! Identify the operands of a binary geometry predicate: exactly one of the first two arguments must be a
-//! (folded) constant. On success sets `column_idx` to the other (column) operand's index. Returns false if the
-//! operands don't match that shape (e.g. a spatial join, or both operands constant). The caller prunes against
-//! the per-argument statistics, which are derived for us: the constant's geometry stats already carry its
-//! bounding box, and the column's look through any CRS-only cast.
-inline bool TryGetGeometryPredicateColumn(const BoundFunctionExpression &func, idx_t &column_idx) {
-	auto &children = func.GetChildren();
+//! The resolved operands of a binary geometry predicate: the column operand's statistics and the constant operand bbox.
+struct GeometryPredicateOperands {
+	//! Which of the first two arguments is the column operand.
+	idx_t column_idx;
+	//! The column operand's statistics (the per-argument statistics look through any CRS-only cast).
+	optional_ptr<const BaseStatistics> column_stats;
+	//! The constant operand's bounding box, from its derived statistics.
+	GeometryExtent const_extent;
+};
+
+//! Does this extent belong to a provably empty (or NULL) geometry? Only an extent never extended by any vertex keeps
+//! the initial EMPTY bounds; an unknown or NaN-poisoned extent does not, so the two cases are distinguishable.
+inline bool GeometryExtentIsEmpty(const GeometryExtent &extent) {
+	return extent.x_min == GeometryExtent::EMPTY_MIN && extent.x_max == GeometryExtent::EMPTY_MAX &&
+	       extent.y_min == GeometryExtent::EMPTY_MIN && extent.y_max == GeometryExtent::EMPTY_MAX;
+}
+
+//! Identify the operands of a binary geometry predicate:
+//! - exactly one of the first two arguments must be a (folded) constant
+//! - statistics must be available for both.
+//! Returns false if the operands don't match that shape (e.g. a spatial join, or both operands constant).
+inline bool TryGetGeometryPredicateOperands(const FunctionStatisticsPruneInput &input,
+                                            GeometryPredicateOperands &operands) {
+	auto &children = input.function.GetChildren();
 	if (children.size() < 2) {
 		return false;
 	}
@@ -58,85 +73,80 @@ inline bool TryGetGeometryPredicateColumn(const BoundFunctionExpression &func, i
 		// Need exactly one constant operand and one column operand.
 		return false;
 	}
-	column_idx = lhs_const ? 1 : 0;
+	operands.column_idx = lhs_const ? 1 : 0;
+	operands.column_stats = input.ChildStats(operands.column_idx);
+	const auto constant_stats = input.ChildStats(1 - operands.column_idx);
+	if (!operands.column_stats || !constant_stats || constant_stats->GetStatsType() != StatisticsType::GEOMETRY_STATS) {
+		return false;
+	}
+	operands.const_extent = GeometryStats::GetExtent(*constant_stats);
 	return true;
 }
 
-//! Resolve the runtime pruning predicate given the predicate's bbox semantics and the column operand's index.
-inline GeometryPrunePredicate ResolveGeometryPrunePredicate(GeometryPredicateBBox bbox, idx_t column_idx) {
+//! Resolve the zonemap check given the predicate's bbox semantics and the column operand's index.
+inline GeometryZonemapCheck ResolveGeometryZonemapCheck(GeometryPredicateBBox bbox, idx_t column_idx) {
 	switch (bbox) {
-	case GeometryPredicateBBox::INTERSECTS:
-		return GeometryPrunePredicate::COLUMN_INTERSECTS;
 	case GeometryPredicateBBox::EQUALS:
 		// A match implies identical bounding boxes, so the zonemap must contain the constant.
-		return GeometryPrunePredicate::COLUMN_CONTAINS;
+		return GeometryZonemapCheck::COLUMN_CONTAINS;
 	case GeometryPredicateBBox::ARG0_COVERS_ARG1:
 		// Containment pruning is only possible when the column is the covering operand (arg0).
-		return column_idx == 0 ? GeometryPrunePredicate::COLUMN_CONTAINS : GeometryPrunePredicate::COLUMN_INTERSECTS;
+		return column_idx == 0 ? GeometryZonemapCheck::COLUMN_CONTAINS : GeometryZonemapCheck::COLUMN_INTERSECTS;
 	case GeometryPredicateBBox::ARG1_COVERS_ARG0:
 		// Containment pruning is only possible when the column is the covering operand (arg1).
-		return column_idx == 1 ? GeometryPrunePredicate::COLUMN_CONTAINS : GeometryPrunePredicate::COLUMN_INTERSECTS;
+		return column_idx == 1 ? GeometryZonemapCheck::COLUMN_CONTAINS : GeometryZonemapCheck::COLUMN_INTERSECTS;
 	default:
-		return GeometryPrunePredicate::COLUMN_INTERSECTS;
+		// INTERSECTS, and the conservatively safe fallback for any future bbox relation.
+		return GeometryZonemapCheck::COLUMN_INTERSECTS;
 	}
 }
 
-//! Execute the actual pruning given the predicate, the constant bounding box and the column zonemap.
-inline FilterPropagateResult ExecuteGeometryPredicatePrune(GeometryPrunePredicate predicate,
+//! Execute the actual pruning given the zonemap check, the constant bounding box and the column statistics.
+//! The constant extent must not be empty (the caller handles that case, as it depends on the predicate).
+inline FilterPropagateResult ExecuteGeometryPredicatePrune(GeometryZonemapCheck check,
                                                            const GeometryExtent &const_extent,
                                                            const BaseStatistics &stats) {
-	if (predicate == GeometryPrunePredicate::NONE) {
-		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
-	}
 	if (stats.GetStatsType() != StatisticsType::GEOMETRY_STATS) {
 		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 	}
 	if (!stats.CanHaveNoNull()) {
-		// No non-null values are possible: the predicate is always false.
+		// Only NULL values are possible, and NULL never passes the filter.
 		return FilterPropagateResult::FILTER_ALWAYS_FALSE;
 	}
-	if (predicate == GeometryPrunePredicate::UNSATISFIABLE) {
-		return FilterPropagateResult::FILTER_ALWAYS_FALSE;
-	}
-
 	const auto &col_extent = GeometryStats::GetExtent(stats);
-	if (!col_extent.CanPruneXY()) {
-		// If neither axis is set (the extent is empty or fully unknown), we cannot prune.
-		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
-	}
 
-	switch (predicate) {
-	case GeometryPrunePredicate::COLUMN_INTERSECTS:
-		// Every matching row's bbox intersects the constant, so the union (zonemap) must too.
-		return col_extent.IntersectsXY(const_extent) ? FilterPropagateResult::NO_PRUNING_POSSIBLE
-		                                             : FilterPropagateResult::FILTER_ALWAYS_FALSE;
-	case GeometryPrunePredicate::COLUMN_CONTAINS:
+	// The containment check is only trustworthy when both bounding boxes are fully finite: an unknown or NaN-poisoned
+	// axis would make ContainsXY() fail and wrongly prune, so degrade to the intersection check.
+	if (check == GeometryZonemapCheck::COLUMN_CONTAINS && col_extent.HasXY() && const_extent.HasXY()) {
 		// Every matching row's bbox contains the constant, so the union (zonemap) must contain it too.
 		return col_extent.ContainsXY(const_extent) ? FilterPropagateResult::NO_PRUNING_POSSIBLE
-		                                            : FilterPropagateResult::FILTER_ALWAYS_FALSE;
-	default:
-		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
+		                                           : FilterPropagateResult::FILTER_ALWAYS_FALSE;
 	}
+
+	// Every matching row's bbox intersects the constant, so the union (zonemap) must too.
+	// This is safe for unknown or NaN-poisoned extents on either side: their comparisons make IntersectsXY() report an
+	// intersection, degrading to no pruning. An empty column extent (all rows NULL or empty geometries) is disjoint
+	// from the non-empty constant and prunes.
+	return col_extent.IntersectsXY(const_extent) ? FilterPropagateResult::NO_PRUNING_POSSIBLE
+	                                             : FilterPropagateResult::FILTER_ALWAYS_FALSE;
 }
 
 //! filter_prune callback for the symmetric/asymmetric binary geometry predicates.
 template <GeometryPredicateBBox BBOX>
 FilterPropagateResult GeometryPredicatePruneCallback(const FunctionStatisticsPruneInput &input) {
-	idx_t column_idx;
-	if (!TryGetGeometryPredicateColumn(input.function, column_idx)) {
+	GeometryPredicateOperands operands;
+	if (!TryGetGeometryPredicateOperands(input, operands)) {
 		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 	}
-	auto column_stats = input.ChildStats(column_idx);
-	auto constant_stats = input.ChildStats(1 - column_idx);
-	if (!column_stats || !constant_stats || constant_stats->GetStatsType() != StatisticsType::GEOMETRY_STATS) {
-		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
+	if (GeometryExtentIsEmpty(operands.const_extent)) {
+		// An empty constant intersects/contains/covers nothing, so those predicates can never be satisfied.
+		// ST_Equals is the exception: two empty geometries are equal, and empty geometries are invisible to the zonemap
+		// so we cannot prune it.
+		return BBOX == GeometryPredicateBBox::EQUALS ? FilterPropagateResult::NO_PRUNING_POSSIBLE
+		                                             : FilterPropagateResult::FILTER_ALWAYS_FALSE;
 	}
-	// The constant's derived geometry stats already carry its bounding box; an empty constant has an empty
-	// (non-prunable) extent and can never be satisfied.
-	const auto &const_extent = GeometryStats::GetExtent(*constant_stats);
-	const auto predicate =
-	    const_extent.CanPruneXY() ? ResolveGeometryPrunePredicate(BBOX, column_idx) : GeometryPrunePredicate::UNSATISFIABLE;
-	return ExecuteGeometryPredicatePrune(predicate, const_extent, *column_stats);
+	const auto check = ResolveGeometryZonemapCheck(BBOX, operands.column_idx);
+	return ExecuteGeometryPredicatePrune(check, operands.const_extent, *operands.column_stats);
 }
 
 } // namespace duckdb

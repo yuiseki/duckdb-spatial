@@ -747,15 +747,36 @@ struct ST_ContainsProperly : AsymmetricPreparedBinaryFunction<ST_ContainsProperl
 	}
 };
 
-struct ST_WithinProperly : AsymmetricPreparedBinaryFunction<ST_WithinProperly> {
-	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
-		// We have no choice but to prepare the right geometry
-		const auto rhs_prep = rhs.get_prepared();
-		return rhs_prep.contains_properly(lhs);
-	}
+struct ST_WithinProperly {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
-	static bool ExecutePredicatePrepared(const PreparedGeosGeometry &lhs, const GeosGeometry &rhs) {
-		return lhs.contains_properly(rhs);
+		auto &lhs_vec = args.data[0];
+		auto &rhs_vec = args.data[1];
+
+		// within_properly(lhs, rhs) is contains_properly(rhs, lhs), and GEOS can only accelerate the
+		// containing side, so prepare the right operand when it is constant.
+		const auto rhs_is_const =
+		    rhs_vec.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(rhs_vec);
+
+		if (rhs_is_const) {
+			const auto &rhs_blob = ConstantVector::GetData<string_t>(rhs_vec)[0];
+			const auto rhs_geom = lstate.Deserialize(rhs_blob);
+			const auto rhs_prep = rhs_geom.get_prepared();
+
+			UnaryExecutor::Execute<string_t, bool>(lhs_vec, result, args.size(), [&](const string_t &lhs_blob) {
+				const auto lhs_geom = lstate.Deserialize(lhs_blob);
+				return rhs_prep.contains_properly(lhs_geom);
+			});
+		} else {
+			BinaryExecutor::Execute<string_t, string_t, bool>(lhs_vec, rhs_vec, result, args.size(),
+			                                                  [&](const string_t &lhs_blob, const string_t &rhs_blob) {
+				                                                  const auto lhs_geom = lstate.Deserialize(lhs_blob);
+				                                                  const auto rhs_geom = lstate.Deserialize(rhs_blob);
+				                                                  const auto rhs_prep = rhs_geom.get_prepared();
+				                                                  return rhs_prep.contains_properly(lhs_geom);
+			                                                  });
+		}
 	}
 
 	static void Register(ExtensionLoader &loader) {
