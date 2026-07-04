@@ -55,6 +55,7 @@ public:
 	void SetBind(bind_scalar_function_t bind);
 	void SetSerialize(function_serialize_t serialize);
 	void SetDeserialize(function_deserialize_t deserialize);
+	void SetFilterPrune(propagate_filter_t filter_prune);
 	void SetDescription(const string &desc);
 	void SetExample(const string &ex);
 	void CanThrowErrors();
@@ -93,6 +94,10 @@ inline void ScalarFunctionVariantBuilder::SetSerialize(function_serialize_t seri
 }
 inline void ScalarFunctionVariantBuilder::SetDeserialize(function_deserialize_t deserialize) {
 	function.SetDeserializeCallback(deserialize);
+}
+
+inline void ScalarFunctionVariantBuilder::SetFilterPrune(propagate_filter_t filter_prune) {
+	function.SetFilterPruneCallback(filter_prune);
 }
 
 inline void ScalarFunctionVariantBuilder::SetDescription(const string &desc) {

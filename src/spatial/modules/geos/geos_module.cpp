@@ -3,6 +3,7 @@
 #include "spatial/modules/geos/geos_serde.hpp"
 #include "spatial/spatial_types.hpp"
 #include "spatial/util/function_builder.hpp"
+#include "spatial/util/geometry_predicate_stats.hpp"
 
 #include "duckdb/common/vector_operations/variadic_executor.hpp"
 #include "duckdb/common/vector_operations/generic_executor.hpp"
@@ -479,16 +480,16 @@ struct ST_Boundary {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
-		UnaryExecutor::Execute<string_t, string_t>(
-		    args.data[0], result, args.size(), [&](const string_t &geom_blob) -> optional<string_t> {
-			    const auto geom = lstate.Deserialize(geom_blob);
-			    if (geom.type() == GEOS_GEOMETRYCOLLECTION) {
-				    return nullopt;
-			    }
-			    const auto boundary = geom.get_boundary();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
+		                                           [&](const string_t &geom_blob) -> optional<string_t> {
+			                                           const auto geom = lstate.Deserialize(geom_blob);
+			                                           if (geom.type() == GEOS_GEOMETRYCOLLECTION) {
+				                                           return nullopt;
+			                                           }
+			                                           const auto boundary = geom.get_boundary();
 
-			    return lstate.Serialize(result, boundary);
-		    });
+			                                           return lstate.Serialize(result, boundary);
+		                                           });
 	}
 
 	static void Register(ExtensionLoader &loader) {
@@ -693,6 +694,7 @@ struct ST_Contains : AsymmetricPreparedBinaryFunction<ST_Contains> {
 				variant.SetBind(GeoTypes::PropagateCRS);
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
+				variant.SetFilterPrune(GeometryPredicatePruneCallback<GeometryPredicateBBox::ARG0_COVERS_ARG1>);
 				variant.CanThrowErrors();
 			});
 
@@ -729,6 +731,7 @@ struct ST_ContainsProperly : AsymmetricPreparedBinaryFunction<ST_ContainsProperl
 				variant.SetBind(GeoTypes::PropagateCRS);
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
+				variant.SetFilterPrune(GeometryPredicatePruneCallback<GeometryPredicateBBox::ARG0_COVERS_ARG1>);
 				variant.CanThrowErrors();
 			});
 
@@ -744,15 +747,36 @@ struct ST_ContainsProperly : AsymmetricPreparedBinaryFunction<ST_ContainsProperl
 	}
 };
 
-struct ST_WithinProperly : AsymmetricPreparedBinaryFunction<ST_WithinProperly> {
-	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
-		// We have no choice but to prepare the right geometry
-		const auto rhs_prep = rhs.get_prepared();
-		return rhs_prep.contains_properly(lhs);
-	}
+struct ST_WithinProperly {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
 
-	static bool ExecutePredicatePrepared(const PreparedGeosGeometry &lhs, const GeosGeometry &rhs) {
-		return lhs.contains_properly(rhs);
+		auto &lhs_vec = args.data[0];
+		auto &rhs_vec = args.data[1];
+
+		// within_properly(lhs, rhs) is contains_properly(rhs, lhs), and GEOS can only accelerate the
+		// containing side, so prepare the right operand when it is constant.
+		const auto rhs_is_const =
+		    rhs_vec.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(rhs_vec);
+
+		if (rhs_is_const) {
+			const auto &rhs_blob = ConstantVector::GetData<string_t>(rhs_vec)[0];
+			const auto rhs_geom = lstate.Deserialize(rhs_blob);
+			const auto rhs_prep = rhs_geom.get_prepared();
+
+			UnaryExecutor::Execute<string_t, bool>(lhs_vec, result, args.size(), [&](const string_t &lhs_blob) {
+				const auto lhs_geom = lstate.Deserialize(lhs_blob);
+				return rhs_prep.contains_properly(lhs_geom);
+			});
+		} else {
+			BinaryExecutor::Execute<string_t, string_t, bool>(lhs_vec, rhs_vec, result, args.size(),
+			                                                  [&](const string_t &lhs_blob, const string_t &rhs_blob) {
+				                                                  const auto lhs_geom = lstate.Deserialize(lhs_blob);
+				                                                  const auto rhs_geom = lstate.Deserialize(rhs_blob);
+				                                                  const auto rhs_prep = rhs_geom.get_prepared();
+				                                                  return rhs_prep.contains_properly(lhs_geom);
+			                                                  });
+		}
 	}
 
 	static void Register(ExtensionLoader &loader) {
@@ -765,6 +789,7 @@ struct ST_WithinProperly : AsymmetricPreparedBinaryFunction<ST_WithinProperly> {
 				variant.SetBind(GeoTypes::PropagateCRS);
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
+				variant.SetFilterPrune(GeometryPredicatePruneCallback<GeometryPredicateBBox::ARG1_COVERS_ARG0>);
 				variant.CanThrowErrors();
 			});
 
@@ -849,111 +874,110 @@ struct ST_ConvexHull {
 
 struct ST_CoverageClean {
 
-       static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
-               auto &arguments = input.GetArguments();
-               auto &bound_function = input.GetBoundFunction();
-               // set default values for coverage_clean parameters
-               // also extend the declared argument types so they match the padded argument expressions
-               const size_t num_args = arguments.size();
-               if (num_args == 2) { // gap max width
-                    arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
-                    bound_function.GetArguments().push_back(LogicalType::DOUBLE);
-               }
+	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+		auto &arguments = input.GetArguments();
+		auto &bound_function = input.GetBoundFunction();
+		// set default values for coverage_clean parameters
+		// also extend the declared argument types so they match the padded argument expressions
+		const size_t num_args = arguments.size();
+		if (num_args == 2) { // gap max width
+			arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
+			bound_function.GetArguments().push_back(LogicalType::DOUBLE);
+		}
 
-               if (num_args == 1) { // snapping distance, gap max width
-               		arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
-                    arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
-                    bound_function.GetArguments().push_back(LogicalType::DOUBLE);
-                    bound_function.GetArguments().push_back(LogicalType::DOUBLE);
-               }
+		if (num_args == 1) { // snapping distance, gap max width
+			arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
+			arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
+			bound_function.GetArguments().push_back(LogicalType::DOUBLE);
+			bound_function.GetArguments().push_back(LogicalType::DOUBLE);
+		}
 
-               return nullptr;
-       }
+		return nullptr;
+	}
 
-       static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-               auto &lstate = LocalState::ResetAndGet(state);
-               UnifiedVectorFormat format;
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnifiedVectorFormat format;
 
-               auto &list_vec = args.data[0];
-               auto &item_vec = ListVector::GetChild(list_vec);
-               item_vec.ToUnifiedFormat(format);
+		auto &list_vec = args.data[0];
+		auto &item_vec = ListVector::GetChild(list_vec);
+		item_vec.ToUnifiedFormat(format);
 
-               // Collection to hold the working set of geometries
-               GeosCollection collection(lstate.GetContext());
+		// Collection to hold the working set of geometries
+		GeosCollection collection(lstate.GetContext());
 
-               TernaryExecutor::Execute<list_entry_t, double, double, string_t>(
-                   list_vec, args.data[1], args.data[2],
-                   result, [&](const list_entry_t &list,
-                       double snapping_distance, double gap_maximum_width) {
-                           // Reset the collection
-                           collection.clear();
-                           collection.reserve(list.length);
+		TernaryExecutor::Execute<list_entry_t, double, double, string_t>(
+		    list_vec, args.data[1], args.data[2], result,
+		    [&](const list_entry_t &list, double snapping_distance, double gap_maximum_width) {
+			    // Reset the collection
+			    collection.clear();
+			    collection.reserve(list.length);
 
-                           const auto offset = list.offset;
-                           const auto length = list.length;
+			    const auto offset = list.offset;
+			    const auto length = list.length;
 
-                           // Collect all geometries in the list into the collection
-                           for (idx_t i = offset; i < offset + length; i++) {
-                                   const auto mapped_idx = format.sel->get_index(i);
+			    // Collect all geometries in the list into the collection
+			    for (idx_t i = offset; i < offset + length; i++) {
+				    const auto mapped_idx = format.sel->get_index(i);
 
-                                   if (!format.validity.RowIsValid(mapped_idx)) {
-                                           continue;
-                                   }
+				    if (!format.validity.RowIsValid(mapped_idx)) {
+					    continue;
+				    }
 
-                                   const auto &geom_blob = UnifiedVectorFormat::GetData<string_t>(format)[mapped_idx];
+				    const auto &geom_blob = UnifiedVectorFormat::GetData<string_t>(format)[mapped_idx];
 
-                                   auto geom = lstate.Deserialize(geom_blob);
-                                   collection.add(std::move(geom));
-                           }
+				    auto geom = lstate.Deserialize(geom_blob);
+				    collection.add(std::move(geom));
+			    }
 
-                           // Now make a geometrycollection and simplify
-                           const auto geometry_col = collection.get_collection();
-                           const auto cleaned = geometry_col.get_coverage_clean(snapping_distance, gap_maximum_width);
-                           return lstate.Serialize(result, cleaned);
-                   });
-       }
+			    // Now make a geometrycollection and simplify
+			    const auto geometry_col = collection.get_collection();
+			    const auto cleaned = geometry_col.get_coverage_clean(snapping_distance, gap_maximum_width);
+			    return lstate.Serialize(result, cleaned);
+		    });
+	}
 
-       static void Register(ExtensionLoader &loader) {
-               FunctionBuilder::RegisterScalar(loader, "ST_CoverageClean", [](ScalarFunctionBuilder &func) {
-                       func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-                               variant.AddParameter("geoms", LogicalType::LIST(LogicalType::GEOMETRY()));
-                               variant.AddParameter("snapping_distance", LogicalType::DOUBLE);
-                               variant.AddParameter("gap_maximum_width", LogicalType::DOUBLE);
-                               variant.SetReturnType(LogicalType::GEOMETRY());
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_CoverageClean", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geoms", LogicalType::LIST(LogicalType::GEOMETRY()));
+				variant.AddParameter("snapping_distance", LogicalType::DOUBLE);
+				variant.AddParameter("gap_maximum_width", LogicalType::DOUBLE);
+				variant.SetReturnType(LogicalType::GEOMETRY());
 
-                               variant.SetInit(LocalState::Init);
-                       	       variant.SetBind(Bind);
-                               variant.SetFunction(Execute);
-                       });
+				variant.SetInit(LocalState::Init);
+				variant.SetBind(Bind);
+				variant.SetFunction(Execute);
+			});
 
-                       func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-                               variant.AddParameter("geoms", LogicalType::LIST(LogicalType::GEOMETRY()));
-                               variant.AddParameter("snapping_distance", LogicalType::DOUBLE);
-                               variant.SetReturnType(LogicalType::GEOMETRY());
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geoms", LogicalType::LIST(LogicalType::GEOMETRY()));
+				variant.AddParameter("snapping_distance", LogicalType::DOUBLE);
+				variant.SetReturnType(LogicalType::GEOMETRY());
 
-                               variant.SetInit(LocalState::Init);
-                               variant.SetBind(Bind);
-                               variant.SetFunction(Execute);
-                       });
+				variant.SetInit(LocalState::Init);
+				variant.SetBind(Bind);
+				variant.SetFunction(Execute);
+			});
 
-                       func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-                               variant.AddParameter("geoms", LogicalType::LIST(LogicalType::GEOMETRY()));
-                               variant.SetReturnType(LogicalType::GEOMETRY());
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geoms", LogicalType::LIST(LogicalType::GEOMETRY()));
+				variant.SetReturnType(LogicalType::GEOMETRY());
 
-                               variant.SetInit(LocalState::Init);
-                               variant.SetBind(Bind);
-                               variant.SetFunction(Execute);
-                       });
+				variant.SetInit(LocalState::Init);
+				variant.SetBind(Bind);
+				variant.SetFunction(Execute);
+			});
 
-                       func.SetDescription(R"(
+			func.SetDescription(R"(
                                Aligns the edges of a list of polygons whose edges are meant to align but are in fact exact matches.
 
                                Returns a collection of fixed polygons with the same size and order as the input polygons. EMPTY will be used in place of collapsed polygons.
                        )");
-                       func.SetTag("ext", "spatial");
-                       func.SetTag("category", "construction");
-               });
-       }
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
 };
 
 struct ST_CoverageInvalidEdges {
@@ -1224,6 +1248,7 @@ struct ST_CoveredBy : AsymmetricPreparedBinaryFunction<ST_CoveredBy> {
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
+				variant.SetFilterPrune(GeometryPredicatePruneCallback<GeometryPredicateBBox::ARG1_COVERS_ARG0>);
 				variant.CanThrowErrors();
 			});
 
@@ -1251,6 +1276,7 @@ struct ST_Covers : AsymmetricPreparedBinaryFunction<ST_Covers> {
 				variant.SetBind(GeoTypes::PropagateCRS);
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
+				variant.SetFilterPrune(GeometryPredicatePruneCallback<GeometryPredicateBBox::ARG0_COVERS_ARG1>);
 				variant.CanThrowErrors();
 			});
 
@@ -1278,6 +1304,7 @@ struct ST_Crosses : SymmetricPreparedBinaryFunction<ST_Crosses> {
 				variant.SetBind(GeoTypes::PropagateCRS);
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
+				variant.SetFilterPrune(GeometryPredicatePruneCallback<GeometryPredicateBBox::INTERSECTS>);
 				variant.CanThrowErrors();
 			});
 
@@ -1492,6 +1519,7 @@ struct ST_Equals {
 				variant.SetBind(GeoTypes::PropagateCRS);
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
+				variant.SetFilterPrune(GeometryPredicatePruneCallback<GeometryPredicateBBox::EQUALS>);
 				variant.CanThrowErrors();
 			});
 
@@ -1584,6 +1612,7 @@ struct ST_Intersects : SymmetricPreparedBinaryFunction<ST_Intersects> {
 				variant.SetBind(GeoTypes::PropagateCRS);
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
+				variant.SetFilterPrune(GeometryPredicatePruneCallback<GeometryPredicateBBox::INTERSECTS>);
 				variant.CanThrowErrors();
 			});
 
@@ -1992,6 +2021,7 @@ struct ST_Overlaps : SymmetricPreparedBinaryFunction<ST_Overlaps> {
 				variant.SetBind(GeoTypes::PropagateCRS);
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
+				variant.SetFilterPrune(GeometryPredicatePruneCallback<GeometryPredicateBBox::INTERSECTS>);
 				variant.CanThrowErrors();
 			});
 
@@ -2398,6 +2428,7 @@ struct ST_Touches : SymmetricPreparedBinaryFunction<ST_Touches> {
 				variant.SetBind(GeoTypes::PropagateCRS);
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
+				variant.SetFilterPrune(GeometryPredicatePruneCallback<GeometryPredicateBBox::INTERSECTS>);
 				variant.CanThrowErrors();
 			});
 
@@ -2487,6 +2518,7 @@ struct ST_Within : AsymmetricPreparedBinaryFunction<ST_Within> {
 				variant.SetBind(GeoTypes::PropagateCRS);
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
+				variant.SetFilterPrune(GeometryPredicatePruneCallback<GeometryPredicateBBox::ARG1_COVERS_ARG0>);
 				variant.CanThrowErrors();
 			});
 
@@ -2639,9 +2671,8 @@ struct ST_Intersection_Agg : GeosUnaryAggFunction {
 	}
 
 	static void Register(ExtensionLoader &loader) {
-		auto agg =
-		    AggregateFunction::UnaryAggregate<GeosUnaryAggState, string_t, string_t, ST_Intersection_Agg>(
-		        LogicalType::GEOMETRY(), LogicalType::GEOMETRY());
+		auto agg = AggregateFunction::UnaryAggregate<GeosUnaryAggState, string_t, string_t, ST_Intersection_Agg>(
+		    LogicalType::GEOMETRY(), LogicalType::GEOMETRY());
 
 		agg.SetBindCallback(GeoTypes::PropagateCRS);
 		FunctionBuilder::RegisterAggregate(loader, "ST_Intersection_Agg", [&](AggregateFunctionBuilder &func) {

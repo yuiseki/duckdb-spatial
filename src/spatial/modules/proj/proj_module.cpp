@@ -256,11 +256,13 @@ struct ST_Transform {
 		// Get CRS from source geometry
 		const auto &geo_arg = args[0];
 		if (!GeoType::HasCRS(geo_arg->GetReturnType())) {
-			throw BinderException(geo_arg->GetQueryLocation(), "Source geometry must have a coordinate reference system");
+			throw BinderException(geo_arg->GetQueryLocation(),
+			                      "Source geometry must have a coordinate reference system");
 		}
 		result->source_crs = GeoType::GetCRS(geo_arg->GetReturnType()).GetDefinition();
 		if (result->source_crs.empty()) {
-			throw BinderException(geo_arg->GetQueryLocation(), "Source geometry must have a coordinate reference system");
+			throw BinderException(geo_arg->GetQueryLocation(),
+			                      "Source geometry must have a coordinate reference system");
 		}
 
 		// Constant-fold target_crs

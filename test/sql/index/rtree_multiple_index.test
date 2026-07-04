@@ -1,3 +1,6 @@
+# name: test/sql/index/rtree_multiple_index.test
+# group: [index]
+
 require spatial
 
 # Create a table with 10_000 random points, where the table also has an ART primary key index
