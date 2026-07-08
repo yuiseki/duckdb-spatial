@@ -126,7 +126,7 @@ auto VSIGuard(FUNC &&func, decltype(std::declval<FUNC &>()()) error_value) -> de
 class DuckDBFileHandle final : public VSIVirtualHandle {
 public:
 	explicit DuckDBFileHandle(unique_ptr<FileHandle> file_handle_p)
-	    : file_handle(std::move(file_handle_p)), is_eof(false), can_seek(file_handle->CanSeek()) {
+	    : file_handle(std::move(file_handle_p)), is_eof(false), is_error(false), can_seek(file_handle->CanSeek()) {
 	}
 
 	vsi_l_offset Tell() override {
@@ -185,9 +185,11 @@ public:
 			if (file_handle->SeekPosition() == file_handle->GetFileSize()) {
 				is_eof = true;
 			} else {
+				is_error = true;
 				VSIError(VSIE_FileError, "%s", CleanGDALMessage(ex.what()).c_str());
 			}
 		} catch (...) {
+			is_error = true;
 			VSIError(VSIE_FileError, "Unknown error reading file");
 		}
 
@@ -196,6 +198,15 @@ public:
 
 	int Eof() override {
 		return is_eof ? TRUE : FALSE;
+	}
+
+	int Error() override {
+		return is_error ? TRUE : FALSE;
+	}
+
+	void ClearErr() override {
+		is_eof = false;
+		is_error = false;
 	}
 
 	size_t Write(const void *buffer, size_t size, size_t count) override {
@@ -238,6 +249,7 @@ public:
 private:
 	unique_ptr<FileHandle> file_handle = nullptr;
 	bool is_eof = false;
+	bool is_error = false;
 	bool can_seek = false;
 };
 
@@ -253,8 +265,8 @@ public:
 		return client_prefix + value;
 	}
 
-	VSIVirtualHandle *Open(const char *gdal_file_path, const char *access, bool set_error,
-	                       CSLConstList /*papszoptions */) override {
+	VSIVirtualHandleUniquePtr Open(const char *gdal_file_path, const char *access, bool set_error,
+	                               CSLConstList /*papszoptions */) override {
 
 		// Strip the prefix to get the real file path
 		const auto real_file_path = StripPrefix(gdal_file_path);
@@ -302,7 +314,7 @@ public:
 
 		try {
 			auto file = fs.OpenFile(real_file_path, flags | FileCompressionType::AUTO_DETECT);
-			return new DuckDBFileHandle(std::move(file));
+			return VSIVirtualHandleUniquePtr(new DuckDBFileHandle(std::move(file)));
 
 		} catch (std::exception &ex) {
 
@@ -407,7 +419,7 @@ public:
 		    -1);
 	}
 
-	bool IsLocal(const char *gdal_file_path) override {
+	bool IsLocal(const char *gdal_file_path) const override {
 		const auto real_file_path = StripPrefix(gdal_file_path);
 		return !FileSystem::IsRemoteFile(real_file_path);
 	}
@@ -510,7 +522,8 @@ public:
 		}
 	}
 
-	int Rename(const char *oldpath, const char *newpath) override {
+	int Rename(const char *oldpath, const char *newpath, GDALProgressFunc /*pfnProgress*/,
+	           void * /*pProgressData*/) override {
 		auto &fs = FileSystem::GetFileSystem(context);
 		const auto real_old_path = StripPrefix(oldpath);
 		const auto real_new_path = StripPrefix(newpath);
