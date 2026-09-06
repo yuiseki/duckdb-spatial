@@ -98,6 +98,11 @@ static void SerializeVertices(BinaryWriter &cursor, const sgl::geometry *geom, c
 	// Copy the vertices to the cursor
 	const auto dst = cursor.Reserve(count * vsize);
 
+	if (count == 0) {
+		// Empty geometries have no vertex data, and memcpy may not be handed a null source even for zero bytes.
+		return;
+	}
+
 	if (!has_bbox) {
 		// Fast path, issue on memcpy to the cursor
 		memcpy(dst, verts, count * vsize);
