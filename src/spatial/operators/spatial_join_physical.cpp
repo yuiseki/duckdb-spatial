@@ -592,7 +592,10 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
                                                OperatorSinkFinalizeInput &input) const {
 	auto &gstate = input.global_state.Cast<SpatialJoinGlobalState>();
 
-	if (gstate.collection->Count() == 0) {
+	// The R-Tree is sized by the number of non-null and non-empty geometries, which can be zero even when the
+	// build side has rows. Building a zero-sized R-Tree would write out of bounds, and no probe could ever match
+	// a null or empty geometry anyway, so leave the R-Tree unset and let the operator take the empty-build path.
+	if (gstate.collection->Count() == 0 || gstate.total_rtree_size == 0) {
 		return EmptyResultIfRHSIsEmpty() ? SinkFinalizeType::NO_OUTPUT_POSSIBLE : SinkFinalizeType::READY;
 	}
 

@@ -1,0 +1,54 @@
+# name: test/sql/join/spatial_join_all_null_build.test
+# description: Spatial join where every build-side geometry is NULL or EMPTY
+# group: [join]
+
+require spatial
+
+statement ok
+PRAGMA enable_verification
+
+statement ok
+CREATE TABLE lhs AS SELECT ST_Point(i, i) AS geom, i AS id FROM range(100) r(i);
+
+# The build side has rows, but not a single one of them has a bounding box.
+# The R-Tree is therefore sized zero while the build collection is non-empty.
+statement ok
+CREATE TABLE rhs (geom geometry, id integer);
+
+statement ok
+INSERT INTO rhs (VALUES
+    (ST_GeomFromText('MULTIPOLYGON EMPTY'), 1),
+    (ST_GeomFromText('GEOMETRYCOLLECTION EMPTY'), 2),
+    (NULL, 3));
+
+query I
+SELECT count(*) FROM lhs JOIN rhs ON ST_Intersects(lhs.geom, rhs.geom);
+----
+0
+
+query I
+SELECT count(*) FROM lhs JOIN rhs ON ST_DWithin(lhs.geom, rhs.geom, 500);
+----
+0
+
+query I
+SELECT count(*) FROM lhs LEFT JOIN rhs ON ST_Intersects(lhs.geom, rhs.geom);
+----
+100
+
+# The build side must still be propagated for a right join
+query I
+SELECT count(*) FROM lhs RIGHT JOIN rhs ON ST_Intersects(lhs.geom, rhs.geom);
+----
+3
+
+# A scalar subquery that returns no rows reaches the join as a single NULL row
+query I
+SELECT count(*) FROM lhs WHERE ST_Intersects(geom, (SELECT geom FROM rhs WHERE false));
+----
+0
+
+query I
+SELECT count(*) FROM lhs WHERE ST_DWithin(geom, (SELECT geom FROM rhs WHERE false), 500);
+----
+0
