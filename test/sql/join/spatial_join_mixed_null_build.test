@@ -1,0 +1,50 @@
+# name: test/sql/join/spatial_join_mixed_null_build.test
+# description: Spatial join where the build side mixes NULL geometries with real ones
+# group: [join]
+
+require spatial
+
+statement ok
+PRAGMA enable_verification
+
+# Keep the plan single threaded so the build side is combined in a fixed order
+statement ok
+SET threads=1;
+
+statement ok
+CREATE TABLE lhs AS SELECT ST_Point(i, i) AS geom, i AS id FROM range(1000) r(i);
+
+# The two UNION ALL branches sink into separate build-side collections, so the
+# R-Tree build gathers a chunk of only NULLs followed by a chunk of only real
+# geometries. The vector it gathers into is reused between the two, so a stale
+# validity mask would drop every real geometry and leave the R-Tree empty.
+query I
+SELECT count(*) FROM lhs
+JOIN (
+    SELECT NULL::GEOMETRY AS geom FROM range(5)
+    UNION ALL
+    SELECT ST_Point(i, i) FROM range(10) s(i)
+) u ON ST_Intersects(lhs.geom, u.geom);
+----
+10
+
+query I
+SELECT count(*) FROM lhs
+JOIN (
+    SELECT NULL::GEOMETRY AS geom FROM range(5)
+    UNION ALL
+    SELECT ST_Point(i, i) FROM range(10) s(i)
+) u ON ST_DWithin(lhs.geom, u.geom, 0);
+----
+10
+
+# The NULL branch arriving second must give the same answer
+query I
+SELECT count(*) FROM lhs
+JOIN (
+    SELECT ST_Point(i, i) AS geom FROM range(10) s(i)
+    UNION ALL
+    SELECT NULL::GEOMETRY FROM range(5)
+) u ON ST_Intersects(lhs.geom, u.geom);
+----
+10

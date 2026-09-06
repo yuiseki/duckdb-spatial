@@ -621,6 +621,12 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 		constexpr auto build_side_key_col = 0;      // TODO: layout_key_col_idx
 		D_ASSERT(build_side_key_types.size() == 1); // TODO: remove this
 
+		// The gather vector is reused across iterations, so its validity mask still holds the nulls of the
+		// previous chunk. Without resetting it here, a non-null geometry can inherit a null from an earlier
+		// chunk and silently be left out of the R-Tree.
+		geom_vec.SetVectorType(VectorType::FLAT_VECTOR);
+		FlatVector::Validity(geom_vec).Reset();
+
 		gstate.collection->Gather(row_pointer_vector, sel, row_count, build_side_key_col, geom_vec, sel, nullptr);
 
 		// Get a pointer to what we just gathered
